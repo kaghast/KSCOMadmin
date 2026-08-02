@@ -25,6 +25,8 @@ type TaskPriority = 'high' | 'medium' | 'low';
 const app = express();
 const PORT = 3000;
 
+app.set('trust proxy', true);
+
 app.use(express.json());
 app.use(cookieParser());
 
@@ -40,9 +42,9 @@ const OAUTH_SCOPES = [
 ];
 
 function getAppUrl(req?: express.Request) {
-  if (process.env.APP_URL) return process.env.APP_URL;
+  if (process.env.APP_URL) return process.env.APP_URL.replace(/\/$/, '');
   if (req) {
-    const host = req.get('host');
+    const host = req.get('x-forwarded-host') || req.get('host');
     const proto = req.get('x-forwarded-proto') || req.protocol || 'https';
     if (host) return `${proto}://${host}`;
   }
