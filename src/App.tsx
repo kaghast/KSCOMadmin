@@ -17,6 +17,7 @@ import { Sidebar, NavTab } from './components/Sidebar';
 import { GmailSection } from './components/GmailSection';
 import { CalendarSection } from './components/CalendarSection';
 import { DriveSection } from './components/DriveSection';
+import { DriveFileManager } from './components/DriveFileManager';
 import { TasksSection } from './components/TasksSection';
 import { ContactsSection } from './components/ContactsSection';
 import { NotesSection } from './components/NotesSection';
@@ -84,6 +85,7 @@ export default function App() {
   const [isLoadingCalendar, setIsLoadingCalendar] = useState(false);
   const [isLoadingDrive, setIsLoadingDrive] = useState(false);
   const [isLoadingTasks, setIsLoadingTasks] = useState(false);
+  const [tasksRequiresReauth, setTasksRequiresReauth] = useState(false);
   const [isLoadingContacts, setIsLoadingContacts] = useState(false);
   const [isLoadingNotes, setIsLoadingNotes] = useState(false);
 
@@ -264,6 +266,7 @@ export default function App() {
       if (res.ok && res.headers.get('content-type')?.includes('application/json')) {
         const data = await res.json();
         if (data.tasks) setTasks(data.tasks);
+        setTasksRequiresReauth(Boolean(data.requiresReauth));
       }
     } catch {
       // Silent error handling
@@ -790,6 +793,8 @@ export default function App() {
                   onRefresh={fetchTasks}
                   onToggleLinkToProject={handleToggleLinkToProject}
                   isLoading={isLoadingTasks}
+                  requiresReauth={tasksRequiresReauth}
+                  onReauth={handleLogin}
                 />
                 <ContactsSection
                   contacts={contacts}
@@ -841,17 +846,16 @@ export default function App() {
             </div>
           )}
 
-          {/* 6. DRIVE INDIVIDUAL FOCUS VIEW */}
+          {/* 6. DRIVE FILE MANAGER VIEW */}
           {sidebarTab === 'drive' && (
-            <div className="max-w-4xl mx-auto">
-              <DriveSection
-                files={driveFiles}
+            <div className="max-w-6xl mx-auto">
+              <DriveFileManager
                 projects={projects}
                 projectTasks={projectTasks}
-                onAddDriveDoc={() => setIsAddDriveOpen(true)}
-                onRefresh={fetchDrive}
                 onToggleLinkToProject={handleToggleLinkToProject}
-                isLoading={isLoadingDrive}
+                onAddDriveDoc={() => setIsAddDriveOpen(true)}
+                isAuthenticated={authStatus.isAuthenticated}
+                onLogin={handleLogin}
               />
             </div>
           )}
@@ -868,6 +872,8 @@ export default function App() {
                 onRefresh={fetchTasks}
                 onToggleLinkToProject={handleToggleLinkToProject}
                 isLoading={isLoadingTasks}
+                requiresReauth={tasksRequiresReauth}
+                onReauth={handleLogin}
               />
             </div>
           )}

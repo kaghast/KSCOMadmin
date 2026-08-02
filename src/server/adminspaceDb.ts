@@ -111,40 +111,32 @@ export async function getAdminSpaceDb(): Promise<Database> {
          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         [
           demoProjId,
-          'AdminSpace v2.0 Dönüşümü',
-          'AdminSpace kişisel yönetim platformunun Kanban projesi, Google Drive markdown çıktıları ve Workspace entegrasyonu.',
+          'Kanban Projesi',
+          'Kişisel yönetim platformunun Kanban projesi.',
           'indigo',
           defaultCols,
-          JSON.stringify(['demo-email-1']),
-          JSON.stringify(['demo-evt-1']),
-          JSON.stringify(['demo-doc-1']),
-          JSON.stringify(['people/c1']),
+          JSON.stringify([]),
+          JSON.stringify([]),
+          JSON.stringify([]),
+          JSON.stringify([]),
           new Date().toISOString(),
           new Date().toISOString(),
         ]
-      );
-
-      // Seed demo tasks
-      dbInstance.run(
-        `INSERT INTO project_tasks (id, projectId, columnId, title, description, priority, dueDate, assignee, createdAt)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-        ['pt-1', demoProjId, 'col-4', 'SideNavbar Projeler Modülü Tasarımı', 'SideNavbar menüsüne Projeler sekmesini entegre et.', 'high', '2026-08-01', 'Kemal Şahin', new Date().toISOString()]
-      );
-      dbInstance.run(
-        `INSERT INTO project_tasks (id, projectId, columnId, title, description, priority, dueDate, assignee, createdAt)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-        ['pt-2', demoProjId, 'col-2', 'Google Drive Markdown Senkronizasyonu', 'Proje kaydını Markdown formatında oluşturup Drive adminspace klasörüne kaydet.', 'high', '2026-08-05', 'Kemal Şahin', new Date().toISOString()]
-      );
-      dbInstance.run(
-        `INSERT INTO project_tasks (id, projectId, columnId, title, description, priority, dueDate, assignee, createdAt)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-        ['pt-3', demoProjId, 'col-1', 'E-Posta & Takvim İlişki Bağlayıcısı', 'Gmail, Takvim ve Rehber ögelerini Kanban projelerine dinamik bağlama arayüzü.', 'medium', '2026-08-10', 'Kemal Şahin', new Date().toISOString()]
       );
     } else {
       projCheck.free();
     }
   } catch (err) {
     console.error('Error seeding demo projects:', err);
+  }
+
+  // Clean any legacy dummy notes/locations/tasks from SQLite table
+  try {
+    dbInstance.run("DELETE FROM notes WHERE id LIKE 'note-demo-%'");
+    dbInstance.run("DELETE FROM locations WHERE id LIKE 'loc-%'");
+    dbInstance.run("DELETE FROM project_tasks WHERE id LIKE 'pt-%' OR id LIKE 'demo-%'");
+  } catch (err) {
+    console.error('Error cleaning dummy data from SQLite:', err);
   }
 
   saveDbToDisk();

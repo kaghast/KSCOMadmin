@@ -34,6 +34,8 @@ export interface DriveFile {
   modifiedTime: string;
   size?: string;
   starred: boolean;
+  isFolder?: boolean;
+  parents?: string[];
 }
 
 export type TaskPriority = 'high' | 'medium' | 'low';

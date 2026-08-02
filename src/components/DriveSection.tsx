@@ -1,5 +1,5 @@
-import React from 'react';
-import { HardDrive, Star, Plus, ExternalLink, FileText, FileSpreadsheet, Presentation, File, RefreshCw, FolderKanban } from 'lucide-react';
+import React, { useState } from 'react';
+import { HardDrive, Star, Plus, ExternalLink, FileText, FileSpreadsheet, Presentation, File, RefreshCw, FolderKanban, Search, X } from 'lucide-react';
 import { DriveFile, Project, ProjectTask } from '../types';
 import { formatDistanceToNow } from 'date-fns';
 import { tr } from 'date-fns/locale';
@@ -23,6 +23,8 @@ export const DriveSection: React.FC<Props> = ({
   onToggleLinkToProject,
   isLoading,
 }) => {
+  const [searchQuery, setSearchQuery] = useState('');
+
   const getFileIcon = (mimeType: string) => {
     if (mimeType.includes('document')) {
       return <FileText className="w-5 h-5 text-blue-600" />;
@@ -35,6 +37,10 @@ export const DriveSection: React.FC<Props> = ({
     }
     return <File className="w-5 h-5 text-slate-500" />;
   };
+
+  const filteredFiles = files.filter((f) =>
+    f.name.toLowerCase().includes(searchQuery.trim().toLowerCase())
+  );
 
   return (
     <div className="bg-white rounded-2xl border border-slate-200/80 shadow-xs overflow-hidden flex flex-col h-full">
@@ -67,15 +73,41 @@ export const DriveSection: React.FC<Props> = ({
         </div>
       </div>
 
+      {/* Real-time Search Bar */}
+      <div className="p-3 bg-slate-50/40 border-b border-slate-100">
+        <div className="relative">
+          <Search className="w-4 h-4 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2" />
+          <input
+            type="text"
+            value={searchQuery}
+            onChange={(e) => setSearchQuery(e.target.value)}
+            placeholder="Yıldızlı dosyalar içinde gerçek zamanlı ara..."
+            className="w-full pl-9 pr-8 py-1.5 bg-white border border-slate-200 rounded-xl text-xs text-slate-800 placeholder-slate-400 focus:outline-hidden focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-500 transition-all shadow-2xs"
+          />
+          {searchQuery && (
+            <button
+              onClick={() => setSearchQuery('')}
+              className="absolute right-2.5 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600 p-0.5 rounded-md cursor-pointer"
+            >
+              <X className="w-3.5 h-3.5" />
+            </button>
+          )}
+        </div>
+      </div>
+
       {/* Files List */}
       <div className="p-3 overflow-y-auto max-h-[380px] space-y-2 flex-1">
-        {files.length === 0 ? (
+        {filteredFiles.length === 0 ? (
           <div className="py-12 text-center text-slate-400 flex flex-col items-center justify-center gap-2">
             <HardDrive className="w-8 h-8 stroke-1 text-slate-300" />
-            <p className="text-xs font-medium">Drive'da yıldızlı doküman bulunamadı.</p>
+            <p className="text-xs font-medium">
+              {searchQuery
+                ? `"${searchQuery}" aramasına uygun yıldızlı dosya bulunamadı.`
+                : "Drive'da yıldızlı doküman bulunamadı."}
+            </p>
           </div>
         ) : (
-          files.map((file) => (
+          filteredFiles.map((file) => (
             <div
               key={file.id}
               className="p-3 rounded-xl border border-slate-100 bg-slate-50/40 hover:bg-slate-50 transition-all flex items-center justify-between gap-3 group"

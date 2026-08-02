@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { CheckSquare, Plus, ArrowUpDown, Check, RefreshCw, Flag, Calendar, FolderKanban } from 'lucide-react';
+import { CheckSquare, Plus, ArrowUpDown, Check, RefreshCw, Flag, Calendar, FolderKanban, AlertTriangle } from 'lucide-react';
 import { TaskItem, TaskPriority, Project, ProjectTask } from '../types';
 import { formatDistanceToNow } from 'date-fns';
 import { tr } from 'date-fns/locale';
@@ -13,6 +13,8 @@ interface Props {
   onRefresh: () => void;
   onToggleLinkToProject?: (type: 'task', itemId: string, projectId: string) => Promise<void>;
   isLoading: boolean;
+  requiresReauth?: boolean;
+  onReauth?: () => void;
 }
 
 export const TasksSection: React.FC<Props> = ({
@@ -24,6 +26,8 @@ export const TasksSection: React.FC<Props> = ({
   onRefresh,
   onToggleLinkToProject,
   isLoading,
+  requiresReauth,
+  onReauth,
 }) => {
   const [sortBy, setSortBy] = useState<'priority' | 'due'>('priority');
 
@@ -101,6 +105,24 @@ export const TasksSection: React.FC<Props> = ({
           </button>
         </div>
       </div>
+
+      {/* Reauth Warning */}
+      {requiresReauth && (
+        <div className="m-3 p-3 bg-amber-50 border border-amber-200 rounded-xl text-amber-900 text-xs flex flex-col sm:flex-row items-start sm:items-center justify-between gap-2 shadow-2xs">
+          <div className="flex items-center gap-2">
+            <AlertTriangle className="w-4 h-4 text-amber-600 shrink-0" />
+            <span>Google Tasks izni henüz verilmedi veya süresi doldu. Görev senkronizasyonu için lütfen izinleri yenileyin.</span>
+          </div>
+          {onReauth && (
+            <button
+              onClick={onReauth}
+              className="px-3 py-1 bg-amber-600 hover:bg-amber-700 text-white font-semibold rounded-lg shrink-0 cursor-pointer text-xs"
+            >
+              Google ile İzinleri Yenile
+            </button>
+          )}
+        </div>
+      )}
 
       {/* Sorting Control */}
       <div className="px-4 py-2 bg-slate-50/40 border-b border-slate-100 flex items-center justify-between text-xs text-slate-500">

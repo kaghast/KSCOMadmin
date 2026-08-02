@@ -37,6 +37,7 @@ const OAUTH_SCOPES = [
   'https://www.googleapis.com/auth/calendar',
   'https://www.googleapis.com/auth/drive.file',
   'https://www.googleapis.com/auth/contacts',
+  'https://www.googleapis.com/auth/tasks',
   'https://www.googleapis.com/auth/userinfo.email',
   'https://www.googleapis.com/auth/userinfo.profile',
 ];
@@ -83,148 +84,10 @@ function getAuthenticatedClient(req: express.Request) {
 
 // In-memory demo state storage for fallback/demo mode additions
 let demoState = {
-  emails: [
-    {
-      id: 'demo-email-1',
-      threadId: 't1',
-      sender: 'Ahmet Yılmaz',
-      senderEmail: 'ahmet.yilmaz@firma.com',
-      subject: 'Q3 Strateji ve Bütçe İncelemesi',
-      snippet: 'Merhaba Kemal, Önümüzdeki çeyrek için hazırladığımız bütçe taslağı ektedir. İnceleyip geri bildirim yapabilir misin?',
-      date: new Date(Date.now() - 1000 * 60 * 30).toISOString(),
-      isRead: false,
-      isStarred: false,
-      labels: ['INBOX'],
-    },
-    {
-      id: 'demo-email-2',
-      threadId: 't2',
-      sender: 'Zeynep Kaya',
-      senderEmail: 'zeynep.kaya@tech.io',
-      subject: 'Yazılım Mimarisi Dokümantasyonu',
-      snippet: 'Proje mimarisine dair hazırladığımız güncellenmiş diyagramları paylaşıyorum.',
-      date: new Date(Date.now() - 1000 * 60 * 120).toISOString(),
-      isRead: false,
-      isStarred: true,
-      labels: ['INBOX', 'STARRED'],
-    },
-    {
-      id: 'demo-email-3',
-      threadId: 't3',
-      sender: 'Google Cloud Platform',
-      senderEmail: 'no-reply@cloud.google.com',
-      subject: 'Aylık Kaynak Kullanım Raporu',
-      snippet: 'Temmuz ayı Cloud Run ve Cloud SQL servislerinizin kullanım özeti hazırlandı.',
-      date: new Date(Date.now() - 1000 * 60 * 360).toISOString(),
-      isRead: true,
-      isStarred: true,
-      labels: ['STARRED'],
-    },
-    {
-      id: 'demo-email-4',
-      threadId: 't4',
-      sender: 'Caner Demir',
-      senderEmail: 'caner@tasarim.com',
-      subject: 'Yeni Tasarım Konsepti ve UI Kit',
-      snippet: 'Tasarım sisteminde yaptığımız renk ve tipografi güncellemelerini test sunucusuna aktardık.',
-      date: new Date(Date.now() - 1000 * 60 * 1440).toISOString(),
-      isRead: true,
-      isStarred: false,
-      labels: ['INBOX'],
-    },
-  ],
-  events: [
-    {
-      id: 'demo-evt-1',
-      summary: 'Haftalık Senkronizasyon Toplantısı',
-      description: 'Ekip içi haftalık sprint planlaması ve genel durum değerlendirmesi.',
-      location: 'Google Meet (meet.google.com/xyz-abc)',
-      start: new Date(Date.now() + 1000 * 60 * 60 * 2).toISOString(),
-      end: new Date(Date.now() + 1000 * 60 * 60 * 3).toISOString(),
-      colorId: '1',
-    },
-    {
-      id: 'demo-evt-2',
-      summary: 'Müşteri Sunumu & Demo',
-      description: 'Yeni geliştirilen dashboard modülünün müşteri yönetimine sunulması.',
-      location: 'Ana Toplantı Salonu B / Online',
-      start: new Date(Date.now() + 1000 * 60 * 60 * 26).toISOString(),
-      end: new Date(Date.now() + 1000 * 60 * 60 * 27.5).toISOString(),
-      colorId: '2',
-    },
-    {
-      id: 'demo-evt-3',
-      summary: 'Yazılım Mimarısı & Kod İncelemesi',
-      description: 'Refactoring adımlarının incelenmesi ve test kapsama oranlarının tartışılması.',
-      location: 'Google Meet',
-      start: new Date(Date.now() + 1000 * 60 * 60 * 50).toISOString(),
-      end: new Date(Date.now() + 1000 * 60 * 60 * 51).toISOString(),
-      colorId: '3',
-    },
-  ],
-  driveFiles: [
-    {
-      id: 'demo-doc-1',
-      name: '2026 Ürün Yol Haritası & hedefler.gdoc',
-      mimeType: 'application/vnd.google-apps.document',
-      webViewLink: 'https://docs.google.com',
-      modifiedTime: new Date(Date.now() - 1000 * 60 * 60 * 5).toISOString(),
-      starred: true,
-      size: '2.4 MB',
-    },
-    {
-      id: 'demo-doc-2',
-      name: 'Q3 Finansal Raporlar & Gelir Tablosu.gsheet',
-      mimeType: 'application/vnd.google-apps.spreadsheet',
-      webViewLink: 'https://sheets.google.com',
-      modifiedTime: new Date(Date.now() - 1000 * 60 * 60 * 24).toISOString(),
-      starred: true,
-      size: '1.8 MB',
-    },
-    {
-      id: 'demo-doc-3',
-      name: 'Yatırımcı Sunumu 2026 v3.gslides',
-      mimeType: 'application/vnd.google-apps.presentation',
-      webViewLink: 'https://slides.google.com',
-      modifiedTime: new Date(Date.now() - 1000 * 60 * 60 * 72).toISOString(),
-      starred: true,
-      size: '14.2 MB',
-    },
-  ],
-  tasks: [
-    {
-      id: 'demo-tsk-1',
-      title: 'Q3 Finansal Raporu İncele',
-      notes: 'Bütçe sapmalarını kontrol et ve mail ile görüş bildir.',
-      status: 'needsAction' as const,
-      due: new Date(Date.now() + 1000 * 60 * 60 * 24).toISOString(),
-      priority: 'high' as TaskPriority,
-    },
-    {
-      id: 'demo-tsk-2',
-      title: 'Google OAuth Entegrasyonunu Test Et',
-      notes: 'Gmail, Calendar, Drive ve Tasks izinlerini kontrol et.',
-      status: 'needsAction' as const,
-      due: new Date(Date.now() + 1000 * 60 * 60 * 48).toISOString(),
-      priority: 'high' as TaskPriority,
-    },
-    {
-      id: 'demo-tsk-3',
-      title: 'Zaman Yönetimi Pomodoro Seanslarını Tamamla',
-      notes: 'Günde en az 4 derin çalışma bloğunu hedefle.',
-      status: 'needsAction' as const,
-      due: new Date(Date.now() + 1000 * 60 * 60 * 72).toISOString(),
-      priority: 'medium' as TaskPriority,
-    },
-    {
-      id: 'demo-tsk-4',
-      title: 'Ekip Haftalık Raporunu Güncelle',
-      notes: 'Tamamlanan maddeleri Jira board üzerinden eşle.',
-      status: 'completed' as const,
-      due: new Date(Date.now() - 1000 * 60 * 60 * 12).toISOString(),
-      priority: 'low' as TaskPriority,
-    },
-  ] as Array<{
+  emails: [] as Array<any>,
+  events: [] as Array<any>,
+  driveFiles: [] as Array<any>,
+  tasks: [] as Array<{
     id: string;
     title: string;
     notes: string;
@@ -232,102 +95,9 @@ let demoState = {
     due?: string;
     priority: TaskPriority;
   }>,
-  contacts: [
-    {
-      resourceName: 'people/demo-c1',
-      etag: 'etag-demo-1',
-      displayName: 'Ahmet Yılmaz',
-      givenName: 'Ahmet',
-      familyName: 'Yılmaz',
-      email: 'ahmet.yilmaz@firma.com',
-      phone: '+90 532 123 45 67',
-      organization: 'Firma A.Ş.',
-      jobTitle: 'Senior Ürün Müdürü',
-      photoUrl: '',
-    },
-    {
-      resourceName: 'people/demo-c2',
-      etag: 'etag-demo-2',
-      displayName: 'Zeynep Kaya',
-      givenName: 'Zeynep',
-      familyName: 'Kaya',
-      email: 'zeynep.kaya@tech.io',
-      phone: '+90 533 987 65 43',
-      organization: 'Tech IO',
-      jobTitle: 'Lead Software Architect',
-      photoUrl: '',
-    },
-    {
-      resourceName: 'people/demo-c3',
-      etag: 'etag-demo-3',
-      displayName: 'Caner Demir',
-      givenName: 'Caner',
-      familyName: 'Demir',
-      email: 'caner@tasarim.com',
-      phone: '+90 505 555 44 33',
-      organization: 'Tasarım Stüdyosu',
-      jobTitle: 'UI/UX Designer',
-      photoUrl: '',
-    },
-    {
-      resourceName: 'people/demo-c4',
-      etag: 'etag-demo-4',
-      displayName: 'Elif Şahin',
-      givenName: 'Elif',
-      familyName: 'Şahin',
-      email: 'elif.sahin@startup.co',
-      phone: '+90 542 111 22 33',
-      organization: 'Startup Co',
-      jobTitle: 'Pazarlama Direktörü',
-      photoUrl: '',
-    },
-  ],
-  locations: [
-    { id: 'loc-1', name: 'Istanbul Levent Ofis', lat: 41.0782, lng: 29.0121 },
-    { id: 'loc-2', name: 'Kadıköy Kahve Modu', lat: 40.9901, lng: 29.0252 },
-    { id: 'loc-3', name: 'Maslak Teknoloji Üssü', lat: 41.1128, lng: 29.0213 },
-  ],
-  notes: [
-    {
-      id: 'note-demo-1',
-      title: 'Q3 Ürün Yol Haritası & Proje Bütçesi',
-      content: '### Toplantı Notları\n- **Ahmet Yılmaz** ile Q3 roadmap gözden geçirildi.\n- Bütçe onayı önümüzdeki haftaya planlandı.\n\n- [x] Bütçe taslağı hazırlandı\n- [ ] Maliye onayı beklentisi',
-      contactResourceName: 'people/demo-c1',
-      contactDisplayName: 'Ahmet Yılmaz',
-      tags: ['Toplantı', 'Q3', 'Bütçe'],
-      location: { id: 'loc-1', name: 'Istanbul Levent Ofis', lat: 41.0782, lng: 29.0121 },
-      date: '2026-08-02',
-      createdAt: new Date().toISOString(),
-      updatedAt: new Date().toISOString(),
-      pinned: true,
-    },
-    {
-      id: 'note-demo-2',
-      title: 'Sistem Mimarisi ve Cloud Migration',
-      content: '**Zeynep Kaya** ile teknik altyapı kararları alındı.\n\n* Database indexing optimizasyonları yapıldı.\n* OAuth2 entegrasyon süreçleri tamamlandı.',
-      contactResourceName: 'people/demo-c2',
-      contactDisplayName: 'Zeynep Kaya',
-      tags: ['Mimari', 'Teknoloji'],
-      location: { id: 'loc-3', name: 'Maslak Teknoloji Üssü', lat: 41.1128, lng: 29.0213 },
-      date: '2026-08-02',
-      createdAt: new Date().toISOString(),
-      updatedAt: new Date().toISOString(),
-      pinned: false,
-    },
-    {
-      id: 'note-demo-3',
-      title: 'UI/UX Tasarım ve Mobil Arayüz Testleri',
-      content: 'Caner ile mobil ekran revizyonları tamamlandı. Dark mode & light mode renk paleti onaylandı.',
-      contactResourceName: 'people/demo-c3',
-      contactDisplayName: 'Caner Demir',
-      tags: ['Tasarım', 'UI/UX'],
-      location: { id: 'loc-2', name: 'Kadıköy Kahve Modu', lat: 40.9901, lng: 29.0252 },
-      date: '2026-08-04',
-      createdAt: new Date().toISOString(),
-      updatedAt: new Date().toISOString(),
-      pinned: false,
-    },
-  ],
+  contacts: [] as Array<any>,
+  locations: [] as Array<any>,
+  notes: [] as Array<any>,
 };
 
 // ================= AUTH ROUTES =================
@@ -718,15 +488,23 @@ app.post('/api/calendar/events', async (req, res) => {
 // ================= DRIVE ROUTES =================
 
 app.get('/api/drive/starred', async (req, res) => {
+  const { search } = req.query;
   const authClient = getAuthenticatedClient(req);
 
   if (authClient) {
     try {
       const drive = google.drive({ version: 'v3', auth: authClient });
+      let qStr = 'starred = true and trashed = false';
+      if (search && typeof search === 'string' && search.trim()) {
+        const cleanSearch = search.trim().replace(/'/g, "\\'");
+        qStr += ` and name contains '${cleanSearch}'`;
+      }
+
       const response = await drive.files.list({
-        q: 'starred = true and trashed = false',
-        fields: 'files(id, name, mimeType, webViewLink, iconLink, thumbnailLink, modifiedTime, size, starred)',
-        pageSize: 15,
+        q: qStr,
+        fields: 'files(id, name, mimeType, webViewLink, iconLink, thumbnailLink, modifiedTime, size, starred, parents)',
+        pageSize: 30,
+        orderBy: 'modifiedTime desc',
       });
 
       const files = (response.data.files || []).map((f) => ({
@@ -738,31 +516,204 @@ app.get('/api/drive/starred', async (req, res) => {
         thumbnailLink: f.thumbnailLink,
         modifiedTime: f.modifiedTime || new Date().toISOString(),
         size: f.size ? `${(parseInt(f.size) / (1024 * 1024)).toFixed(1)} MB` : undefined,
-        starred: true,
+        starred: Boolean(f.starred),
+        isFolder: f.mimeType === 'application/vnd.google-apps.folder',
+        parents: f.parents || [],
       }));
 
       return res.json({ files, demoMode: false });
-    } catch (err) {
-      console.error('Drive API Error:', err);
+    } catch (err: any) {
+      console.error('Drive Starred API Error:', err?.message || err);
     }
   }
 
-  res.json({ files: demoState.driveFiles, demoMode: true });
+  let files = demoState.driveFiles || [];
+  if (search && typeof search === 'string' && search.trim()) {
+    const s = search.trim().toLowerCase();
+    files = files.filter((f) => f.name.toLowerCase().includes(s));
+  }
+  res.json({ files, demoMode: true });
 });
 
-app.post('/api/drive/create', async (req, res) => {
-  const { name, content, mimeType } = req.body;
+app.get('/api/drive/files', async (req, res) => {
+  const { folderId, search, starredOnly } = req.query;
   const authClient = getAuthenticatedClient(req);
 
   if (authClient) {
     try {
       const drive = google.drive({ version: 'v3', auth: authClient });
+      let qStr = 'trashed = false';
+
+      if (starredOnly === 'true') {
+        qStr += ' and starred = true';
+      }
+
+      if (search && typeof search === 'string' && search.trim()) {
+        const cleanSearch = search.trim().replace(/'/g, "\\'");
+        qStr += ` and name contains '${cleanSearch}'`;
+      } else if (folderId && typeof folderId === 'string' && folderId !== 'all') {
+        const parent = folderId === 'root' ? 'root' : folderId;
+        qStr += ` and '${parent}' in parents`;
+      }
+
+      const response = await drive.files.list({
+        q: qStr,
+        fields: 'files(id, name, mimeType, webViewLink, iconLink, thumbnailLink, modifiedTime, size, starred, parents)',
+        pageSize: 50,
+        orderBy: 'folder,name',
+      });
+
+      const files = (response.data.files || []).map((f) => ({
+        id: f.id!,
+        name: f.name || 'İsimsiz Dosya',
+        mimeType: f.mimeType || 'application/octet-stream',
+        webViewLink: f.webViewLink || '#',
+        iconLink: f.iconLink,
+        thumbnailLink: f.thumbnailLink,
+        modifiedTime: f.modifiedTime || new Date().toISOString(),
+        size: f.size ? `${(parseInt(f.size) / (1024 * 1024)).toFixed(1)} MB` : undefined,
+        starred: Boolean(f.starred),
+        isFolder: f.mimeType === 'application/vnd.google-apps.folder',
+        parents: f.parents || [],
+      }));
+
+      return res.json({ files, currentFolderId: folderId || 'root', demoMode: false });
+    } catch (err: any) {
+      console.error('Drive Files API Error:', err?.message || err);
+    }
+  }
+
+  let files = demoState.driveFiles || [];
+  if (search && typeof search === 'string' && search.trim()) {
+    const s = search.trim().toLowerCase();
+    files = files.filter((f) => f.name.toLowerCase().includes(s));
+  }
+  res.json({ files, currentFolderId: folderId || 'root', demoMode: true });
+});
+
+app.post('/api/drive/create-folder', async (req, res) => {
+  const { name, parentId } = req.body;
+  const authClient = getAuthenticatedClient(req);
+
+  if (authClient) {
+    try {
+      const drive = google.drive({ version: 'v3', auth: authClient });
+      const requestBody: any = {
+        name: name || 'Yeni Klasör',
+        mimeType: 'application/vnd.google-apps.folder',
+      };
+      if (parentId && parentId !== 'root') {
+        requestBody.parents = [parentId];
+      }
+
       const response = await drive.files.create({
+        requestBody,
+        fields: 'id, name, mimeType, webViewLink, modifiedTime, starred, parents',
+      });
+
+      const f = response.data;
+      const folderItem = {
+        id: f.id!,
+        name: f.name || name || 'Yeni Klasör',
+        mimeType: 'application/vnd.google-apps.folder',
+        webViewLink: f.webViewLink || '#',
+        modifiedTime: f.modifiedTime || new Date().toISOString(),
+        starred: false,
+        isFolder: true,
+        parents: f.parents || [],
+      };
+
+      return res.json({ success: true, folder: folderItem, demoMode: false });
+    } catch (err: any) {
+      console.error('Drive Create Folder Error:', err?.message || err);
+      return res.status(500).json({ error: 'Klasör oluşturulamadı: ' + (err?.message || err) });
+    }
+  }
+
+  const newFolder = {
+    id: `demo-folder-${Date.now()}`,
+    name: name || 'Yeni Klasör',
+    mimeType: 'application/vnd.google-apps.folder',
+    webViewLink: 'https://drive.google.com',
+    modifiedTime: new Date().toISOString(),
+    starred: false,
+    isFolder: true,
+  };
+  demoState.driveFiles.unshift(newFolder as any);
+
+  res.json({ success: true, folder: newFolder, demoMode: true });
+});
+
+app.patch('/api/drive/files/:id/star', async (req, res) => {
+  const { id } = req.params;
+  const { starred } = req.body;
+  const authClient = getAuthenticatedClient(req);
+
+  if (authClient) {
+    try {
+      const drive = google.drive({ version: 'v3', auth: authClient });
+      await drive.files.update({
+        fileId: id,
         requestBody: {
-          name: name || 'Yeni Doküman.gdoc',
-          mimeType: mimeType || 'application/vnd.google-apps.document',
-          starred: true,
+          starred: Boolean(starred),
         },
+      });
+      return res.json({ success: true, demoMode: false });
+    } catch (err: any) {
+      console.error('Drive Star Error:', err?.message || err);
+      return res.status(500).json({ error: 'Yıldız durumu değiştirilemedi: ' + (err?.message || err) });
+    }
+  }
+
+  const file = demoState.driveFiles.find((f) => f.id === id);
+  if (file) {
+    file.starred = Boolean(starred);
+  }
+  res.json({ success: true, demoMode: true });
+});
+
+app.delete('/api/drive/files/:id', async (req, res) => {
+  const { id } = req.params;
+  const authClient = getAuthenticatedClient(req);
+
+  if (authClient) {
+    try {
+      const drive = google.drive({ version: 'v3', auth: authClient });
+      await drive.files.update({
+        fileId: id,
+        requestBody: {
+          trashed: true,
+        },
+      });
+      return res.json({ success: true, demoMode: false });
+    } catch (err: any) {
+      console.error('Drive Trash Error:', err?.message || err);
+      return res.status(500).json({ error: 'Dosya silinemedi: ' + (err?.message || err) });
+    }
+  }
+
+  demoState.driveFiles = demoState.driveFiles.filter((f) => f.id !== id);
+  res.json({ success: true, demoMode: true });
+});
+
+app.post('/api/drive/create', async (req, res) => {
+  const { name, content, mimeType, parentId } = req.body;
+  const authClient = getAuthenticatedClient(req);
+
+  if (authClient) {
+    try {
+      const drive = google.drive({ version: 'v3', auth: authClient });
+      const requestBody: any = {
+        name: name || 'Yeni Doküman.gdoc',
+        mimeType: mimeType || 'application/vnd.google-apps.document',
+        starred: true,
+      };
+      if (parentId && parentId !== 'root') {
+        requestBody.parents = [parentId];
+      }
+
+      const response = await drive.files.create({
+        requestBody,
         media: {
           mimeType: 'text/plain',
           body: content || '',
@@ -771,8 +722,9 @@ app.post('/api/drive/create', async (req, res) => {
       });
 
       return res.json({ success: true, file: response.data, demoMode: false });
-    } catch (err) {
-      console.error('Drive Create Error:', err);
+    } catch (err: any) {
+      console.error('Drive Create Error:', err?.message || err);
+      return res.status(500).json({ error: 'Doküman oluşturulamadı: ' + (err?.message || err) });
     }
   }
 
@@ -802,12 +754,13 @@ app.get('/api/tasks', async (req, res) => {
       const response = await tasksApi.tasks.list({
         tasklist: '@default',
         showCompleted: true,
+        showHidden: true,
       });
 
       const tasks = (response.data.items || []).map((t, idx) => ({
         id: t.id!,
         title: t.title || 'Başlıksız Görev',
-        notes: t.notes,
+        notes: t.notes || '',
         status: (t.status === 'completed' ? 'completed' : 'needsAction') as 'needsAction' | 'completed',
         due: t.due ? new Date(t.due).toISOString() : undefined,
         priority: (idx % 3 === 0 ? 'high' : idx % 3 === 1 ? 'medium' : 'low') as TaskPriority,
@@ -815,8 +768,19 @@ app.get('/api/tasks', async (req, res) => {
       }));
 
       return res.json({ tasks, demoMode: false });
-    } catch (err) {
-      console.error('Tasks API Error:', err);
+    } catch (err: any) {
+      console.error('Tasks API Error:', err?.message || err);
+      const isScopeError =
+        err?.message?.toLowerCase().includes('scope') ||
+        err?.message?.toLowerCase().includes('permission') ||
+        err?.code === 403 ||
+        err?.code === 401;
+      return res.json({
+        tasks: [],
+        error: err?.message || 'Google Tasks erişim hatası',
+        requiresReauth: isScopeError,
+        demoMode: false,
+      });
     }
   }
 
@@ -830,25 +794,38 @@ app.post('/api/tasks', async (req, res) => {
   if (authClient) {
     try {
       const tasksApi = google.tasks({ version: 'v1', auth: authClient });
+      const requestBody: any = {
+        title: title || 'Yeni Görev',
+        notes: notes || '',
+      };
+      if (due) {
+        requestBody.due = new Date(due).toISOString();
+      }
+
       const response = await tasksApi.tasks.insert({
         tasklist: '@default',
-        requestBody: {
-          title,
-          notes,
-          due: due ? new Date(due).toISOString() : undefined,
-        },
+        requestBody,
       });
+
+      const t = response.data;
+      const formattedTask = {
+        id: t.id!,
+        title: t.title || title || 'Yeni Görev',
+        notes: t.notes || notes || '',
+        status: (t.status === 'completed' ? 'completed' : 'needsAction') as 'needsAction' | 'completed',
+        due: t.due ? new Date(t.due).toISOString() : (due ? new Date(due).toISOString() : undefined),
+        priority: (priority as TaskPriority) || 'medium',
+        updatedAt: t.updated || new Date().toISOString(),
+      };
 
       return res.json({
         success: true,
-        task: {
-          ...response.data,
-          priority: priority || 'medium',
-        },
+        task: formattedTask,
         demoMode: false,
       });
-    } catch (err) {
-      console.error('Tasks Insert Error:', err);
+    } catch (err: any) {
+      console.error('Tasks Insert Error:', err?.message || err);
+      return res.status(500).json({ error: 'Google Tasks eklenirken hata oluştu: ' + (err?.message || err) });
     }
   }
 
@@ -868,23 +845,35 @@ app.post('/api/tasks', async (req, res) => {
 
 app.patch('/api/tasks/:id', async (req, res) => {
   const { id } = req.params;
-  const { status, title } = req.body;
+  const { status, title, notes, due } = req.body;
   const authClient = getAuthenticatedClient(req);
 
   if (authClient) {
     try {
       const tasksApi = google.tasks({ version: 'v1', auth: authClient });
-      await tasksApi.tasks.patch({
+      const requestBody: any = {};
+      if (status !== undefined) {
+        requestBody.status = status === 'completed' ? 'completed' : 'needsAction';
+        if (status === 'completed') {
+          requestBody.completed = new Date().toISOString();
+        } else {
+          requestBody.completed = null;
+        }
+      }
+      if (title !== undefined) requestBody.title = title;
+      if (notes !== undefined) requestBody.notes = notes;
+      if (due !== undefined) requestBody.due = due ? new Date(due).toISOString() : null;
+
+      const response = await tasksApi.tasks.patch({
         tasklist: '@default',
         task: id,
-        requestBody: {
-          status: status === 'completed' ? 'completed' : 'needsAction',
-          title,
-        },
+        requestBody,
       });
-      return res.json({ success: true, demoMode: false });
-    } catch (err) {
-      console.error('Task Patch Error:', err);
+
+      return res.json({ success: true, task: response.data, demoMode: false });
+    } catch (err: any) {
+      console.error('Task Patch Error:', err?.message || err);
+      return res.status(500).json({ error: 'Google Tasks güncellenirken hata oluştu: ' + (err?.message || err) });
     }
   }
 
@@ -893,8 +882,31 @@ app.patch('/api/tasks/:id', async (req, res) => {
   if (task) {
     if (status !== undefined) task.status = status;
     if (title !== undefined) task.title = title;
+    if (notes !== undefined) task.notes = notes;
   }
 
+  res.json({ success: true, demoMode: true });
+});
+
+app.delete('/api/tasks/:id', async (req, res) => {
+  const { id } = req.params;
+  const authClient = getAuthenticatedClient(req);
+
+  if (authClient) {
+    try {
+      const tasksApi = google.tasks({ version: 'v1', auth: authClient });
+      await tasksApi.tasks.delete({
+        tasklist: '@default',
+        task: id,
+      });
+      return res.json({ success: true, demoMode: false });
+    } catch (err: any) {
+      console.error('Task Delete Error:', err?.message || err);
+      return res.status(500).json({ error: 'Google Tasks silinirken hata oluştu: ' + (err?.message || err) });
+    }
+  }
+
+  demoState.tasks = demoState.tasks.filter((t) => t.id !== id);
   res.json({ success: true, demoMode: true });
 });
 
@@ -1082,14 +1094,6 @@ app.get('/api/notes', async (req, res) => {
   await getAdminSpaceDb();
   let notes = getAllNotesFromDb();
   let locations = getAllLocationsFromDb();
-
-  // If DB is newly created/empty, seed initial demo notes into SQLite
-  if (notes.length === 0) {
-    demoState.locations.forEach((loc) => saveLocationToDb(loc));
-    demoState.notes.forEach((note) => saveNoteToDb(note));
-    notes = getAllNotesFromDb();
-    locations = getAllLocationsFromDb();
-  }
 
   // Attempt background sync to Google Drive 'adminspace' folder if user is authenticated
   const authClient = getAuthenticatedClient(req);

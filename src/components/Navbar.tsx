@@ -1,18 +1,16 @@
 import React from 'react';
-import { LayoutDashboard, Clock, LogIn, LogOut, CheckCircle, AlertTriangle, Sparkles } from 'lucide-react';
+import { LogIn, LogOut, Sparkles } from 'lucide-react';
 import { AuthStatus } from '../types';
 
 interface Props {
-  activeScreen: 'workspace' | 'timeManagement';
-  onScreenChange: (screen: 'workspace' | 'timeManagement') => void;
   authStatus: AuthStatus;
   onLogin: () => void;
   onLogout: () => void;
+  activeScreen?: 'workspace' | 'timeManagement';
+  onScreenChange?: (screen: 'workspace' | 'timeManagement') => void;
 }
 
 export const Navbar: React.FC<Props> = ({
-  activeScreen,
-  onScreenChange,
   authStatus,
   onLogin,
   onLogout,
@@ -21,7 +19,7 @@ export const Navbar: React.FC<Props> = ({
     <header className="sticky top-0 z-40 bg-slate-900/95 backdrop-blur-md text-white border-b border-slate-800 shadow-md">
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
         <div className="flex items-center justify-between h-16 gap-4">
-          {/* Brand / Logo */}
+          {/* Brand / Logo (Left Aligned) */}
           <div className="flex items-center gap-3">
             <div className="w-10 h-10 rounded-2xl bg-gradient-to-tr from-indigo-500 via-purple-500 to-pink-500 p-0.5 shadow-md">
               <div className="w-full h-full bg-slate-900 rounded-[14px] flex items-center justify-center text-white">
@@ -36,31 +34,7 @@ export const Navbar: React.FC<Props> = ({
             </div>
           </div>
 
-          {/* Screen Switcher Navigation */}
-          <nav className="flex items-center p-1 bg-slate-800/80 rounded-2xl border border-slate-700/60 text-xs font-semibold">
-            <button
-              onClick={() => onScreenChange('workspace')}
-              className={`px-4 py-2 rounded-xl flex items-center gap-2 transition-all cursor-pointer ${
-                activeScreen === 'workspace'
-                  ? 'bg-indigo-600 text-white shadow-md'
-                  : 'text-slate-400 hover:text-white'
-              }`}
-            >
-              <LayoutDashboard className="w-4 h-4" /> Workspace Dashboard
-            </button>
-            <button
-              onClick={() => onScreenChange('timeManagement')}
-              className={`px-4 py-2 rounded-xl flex items-center gap-2 transition-all cursor-pointer ${
-                activeScreen === 'timeManagement'
-                  ? 'bg-purple-600 text-white shadow-md'
-                  : 'text-slate-400 hover:text-white'
-              }`}
-            >
-              <Clock className="w-4 h-4" /> Zaman Yönetimi App
-            </button>
-          </nav>
-
-          {/* User Auth & Status Badge */}
+          {/* User Auth & Status Badge (Right Aligned) */}
           <div className="flex items-center gap-3">
             {!authStatus.isAuthenticated ? (
               <button
@@ -96,9 +70,10 @@ export const Navbar: React.FC<Props> = ({
                 <button
                   onClick={onLogout}
                   title="Oturumu Kapat"
-                  className="p-2 text-slate-400 hover:text-white hover:bg-slate-800 rounded-xl transition-colors cursor-pointer"
+                  className="p-2 text-slate-400 hover:text-white hover:bg-slate-800 rounded-xl transition-colors cursor-pointer flex items-center gap-1.5 text-xs font-medium"
                 >
                   <LogOut className="w-4 h-4" />
+                  <span className="hidden sm:inline">Çıkış Yap</span>
                 </button>
               </div>
             )}
@@ -108,3 +83,4 @@ export const Navbar: React.FC<Props> = ({
     </header>
   );
 };
+
