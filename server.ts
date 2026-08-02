@@ -11,6 +11,13 @@ import {
   saveLocationToDb,
   deleteNoteFromDb,
   syncWithGoogleDriveAdminSpace,
+  getAllProjectsFromDb,
+  saveProjectToDb,
+  deleteProjectFromDb,
+  getAllProjectTasksFromDb,
+  saveProjectTaskToDb,
+  deleteProjectTaskFromDb,
+  exportProjectToMarkdownAndDrive,
 } from './src/server/adminspaceDb.js';
 
 type TaskPriority = 'high' | 'medium' | 'low';
@@ -1100,7 +1107,7 @@ app.get('/api/notes', async (req, res) => {
 
 app.post('/api/notes', async (req, res) => {
   await getAdminSpaceDb();
-  const { title, content, contactResourceName, contactDisplayName, contacts, linkedEmails, linkedEvents, tags, location, date, pinned } = req.body;
+  const { title, content, contactResourceName, contactDisplayName, contacts, linkedEmails, linkedEvents, tags, location, date, pinned, projectId } = req.body;
 
   let savedLocation = location;
   if (location && location.lat && location.lng) {
@@ -1135,6 +1142,7 @@ app.post('/api/notes', async (req, res) => {
     createdAt: new Date().toISOString(),
     updatedAt: new Date().toISOString(),
     pinned: !!pinned,
+    projectId: projectId || null,
   };
 
   saveNoteToDb(newNote);
@@ -1150,7 +1158,7 @@ app.post('/api/notes', async (req, res) => {
 app.put('/api/notes/:id', async (req, res) => {
   await getAdminSpaceDb();
   const { id } = req.params;
-  const { title, content, contactResourceName, contactDisplayName, contacts, linkedEmails, linkedEvents, tags, location, date, pinned } = req.body;
+  const { title, content, contactResourceName, contactDisplayName, contacts, linkedEmails, linkedEvents, tags, location, date, pinned, projectId } = req.body;
 
   const notes = getAllNotesFromDb();
   const existingNote = notes.find((n) => n.id === id);
@@ -1187,6 +1195,7 @@ app.put('/api/notes/:id', async (req, res) => {
     location: savedLocation,
     date: date !== undefined ? date : existingNote.date,
     pinned: pinned !== undefined ? pinned : existingNote.pinned,
+    projectId: projectId !== undefined ? projectId : existingNote.projectId,
     updatedAt: new Date().toISOString(),
   };
 
@@ -1198,6 +1207,157 @@ app.put('/api/notes/:id', async (req, res) => {
   }
 
   res.json({ success: true, note: updatedNote });
+});
+
+// ================= PROJECTS & KANBAN ROUTES =================
+
+app.get('/api/projects', async (req, res) => {
+  await getAdminSpaceDb();
+  const projects = getAllProjectsFromDb();
+  const tasks = getAllProjectTasksFromDb();
+
+  res.json({ projects, tasks, storageType: 'sqlite', storageFolder: 'adminspace' });
+});
+
+app.post('/api/projects', async (req, res) => {
+  await getAdminSpaceDb();
+  const { name, description, color, columns, linkedEmailIds, linkedEventIds, linkedDriveFileIds, linkedContactResourceNames } = req.body;
+
+  const defaultColumns = [
+    { id: 'col-1', title: 'Planlanan', color: 'bg-slate-100 text-slate-800' },
+    { id: 'col-2', title: 'Devam Eden', color: 'bg-blue-50 text-blue-800' },
+    { id: 'col-3', title: 'Test / İnceleme', color: 'bg-amber-50 text-amber-800' },
+    { id: 'col-4', title: 'Tamamlandı', color: 'bg-emerald-50 text-emerald-800' },
+  ];
+
+  const newProject = {
+    id: `proj-${Date.now()}`,
+    name: name || 'Yeni Proje',
+    description: description || '',
+    color: color || 'indigo',
+    columns: Array.isArray(columns) && columns.length > 0 ? columns : defaultColumns,
+    linkedEmailIds: Array.isArray(linkedEmailIds) ? linkedEmailIds : [],
+    linkedEventIds: Array.isArray(linkedEventIds) ? linkedEventIds : [],
+    linkedDriveFileIds: Array.isArray(linkedDriveFileIds) ? linkedDriveFileIds : [],
+    linkedContactResourceNames: Array.isArray(linkedContactResourceNames) ? linkedContactResourceNames : [],
+    createdAt: new Date().toISOString(),
+    updatedAt: new Date().toISOString(),
+  };
+
+  saveProjectToDb(newProject);
+  res.json({ success: true, project: newProject });
+});
+
+app.put('/api/projects/:id', async (req, res) => {
+  await getAdminSpaceDb();
+  const { id } = req.params;
+  const { name, description, color, columns, linkedEmailIds, linkedEventIds, linkedDriveFileIds, linkedContactResourceNames } = req.body;
+
+  const projects = getAllProjectsFromDb();
+  const existing = projects.find((p) => p.id === id);
+  if (!existing) {
+    return res.status(404).json({ error: 'Project not found' });
+  }
+
+  const updatedProject = {
+    ...existing,
+    name: name !== undefined ? name : existing.name,
+    description: description !== undefined ? description : existing.description,
+    color: color !== undefined ? color : existing.color,
+    columns: columns !== undefined ? columns : existing.columns,
+    linkedEmailIds: linkedEmailIds !== undefined ? linkedEmailIds : existing.linkedEmailIds,
+    linkedEventIds: linkedEventIds !== undefined ? linkedEventIds : existing.linkedEventIds,
+    linkedDriveFileIds: linkedDriveFileIds !== undefined ? linkedDriveFileIds : existing.linkedDriveFileIds,
+    linkedContactResourceNames: linkedContactResourceNames !== undefined ? linkedContactResourceNames : existing.linkedContactResourceNames,
+    updatedAt: new Date().toISOString(),
+  };
+
+  saveProjectToDb(updatedProject);
+  res.json({ success: true, project: updatedProject });
+});
+
+app.delete('/api/projects/:id', async (req, res) => {
+  await getAdminSpaceDb();
+  const { id } = req.params;
+  deleteProjectFromDb(id);
+  res.json({ success: true });
+});
+
+// PROJECT TASKS ENDPOINTS
+app.get('/api/projects/:id/tasks', async (req, res) => {
+  await getAdminSpaceDb();
+  const { id } = req.params;
+  const tasks = getAllProjectTasksFromDb(id);
+  res.json({ tasks });
+});
+
+app.post('/api/projects/:id/tasks', async (req, res) => {
+  await getAdminSpaceDb();
+  const { id } = req.params;
+  const { columnId, title, description, priority, dueDate, assignee } = req.body;
+
+  const newTask = {
+    id: `pt-${Date.now()}`,
+    projectId: id,
+    columnId: columnId || 'col-1',
+    title: title || 'Yeni Görev',
+    description: description || '',
+    priority: priority || 'medium',
+    dueDate: dueDate || null,
+    assignee: assignee || null,
+    createdAt: new Date().toISOString(),
+  };
+
+  saveProjectTaskToDb(newTask);
+  res.json({ success: true, task: newTask });
+});
+
+app.put('/api/projects/tasks/:taskId', async (req, res) => {
+  await getAdminSpaceDb();
+  const { taskId } = req.params;
+  const { columnId, title, description, priority, dueDate, assignee } = req.body;
+
+  const allTasks = getAllProjectTasksFromDb();
+  const existing = allTasks.find((t) => t.id === taskId);
+  if (!existing) {
+    return res.status(404).json({ error: 'Project task not found' });
+  }
+
+  const updatedTask = {
+    ...existing,
+    columnId: columnId !== undefined ? columnId : existing.columnId,
+    title: title !== undefined ? title : existing.title,
+    description: description !== undefined ? description : existing.description,
+    priority: priority !== undefined ? priority : existing.priority,
+    dueDate: dueDate !== undefined ? dueDate : existing.dueDate,
+    assignee: assignee !== undefined ? assignee : existing.assignee,
+  };
+
+  saveProjectTaskToDb(updatedTask);
+  res.json({ success: true, task: updatedTask });
+});
+
+app.delete('/api/projects/tasks/:taskId', async (req, res) => {
+  await getAdminSpaceDb();
+  const { taskId } = req.params;
+  deleteProjectTaskFromDb(taskId);
+  res.json({ success: true });
+});
+
+// EXPORT PROJECT TO MARKDOWN & DRIVE
+app.post('/api/projects/:id/export-markdown', async (req, res) => {
+  await getAdminSpaceDb();
+  const { id } = req.params;
+  const extraData = req.body || {};
+  const authClient = getAuthenticatedClient(req);
+
+  try {
+    const result = await exportProjectToMarkdownAndDrive(id, authClient, extraData);
+    res.json(result);
+  } catch (err: any) {
+    console.error('Export project markdown error:', err);
+    res.status(500).json({ error: err.message || 'Export failed' });
+  }
 });
 
 app.delete('/api/notes/:id', async (req, res) => {

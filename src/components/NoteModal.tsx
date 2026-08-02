@@ -29,6 +29,8 @@ import {
   LinkedContact,
   LinkedEmail,
   LinkedEvent,
+  Project,
+  ProjectTask,
 } from '../types';
 
 interface Props {
@@ -38,6 +40,8 @@ interface Props {
   emails: EmailItem[];
   events: CalendarEvent[];
   existingLocations: NoteLocation[];
+  projects?: Project[];
+  projectTasks?: ProjectTask[];
   allExistingTags?: string[];
   onClose: () => void;
   onSave: (data: {
@@ -50,6 +54,7 @@ interface Props {
     tags: string[];
     location?: NoteLocation | null;
     date: string;
+    projectId?: string;
   }) => Promise<void>;
 }
 
@@ -60,6 +65,8 @@ export const NoteModal: React.FC<Props> = ({
   emails,
   events,
   existingLocations,
+  projects = [],
+  projectTasks = [],
   allExistingTags = [],
   onClose,
   onSave,
@@ -68,6 +75,7 @@ export const NoteModal: React.FC<Props> = ({
   const [title, setTitle] = useState('');
   const [content, setContent] = useState('');
   const [date, setDate] = useState(new Date().toISOString().split('T')[0]);
+  const [selectedProjectId, setSelectedProjectId] = useState<string>('');
   const [location, setLocation] = useState<NoteLocation | null>(null);
   const [locationName, setLocationName] = useState('');
 
@@ -106,6 +114,7 @@ export const NoteModal: React.FC<Props> = ({
       setTitle(note.title || '');
       setContent(note.content || '');
       setDate(note.date || new Date().toISOString().split('T')[0]);
+      setSelectedProjectId(note.projectId || '');
       setLocation(note.location || null);
       setLocationName(note.location?.name || '');
 
@@ -312,6 +321,7 @@ export const NoteModal: React.FC<Props> = ({
             }
           : null,
         date,
+        projectId: selectedProjectId || undefined,
       });
       onClose();
     } catch (err) {
@@ -366,18 +376,42 @@ export const NoteModal: React.FC<Props> = ({
               />
             </div>
 
-            {/* Note Date */}
-            <div className="w-full sm:w-1/2">
-              <label className="block text-xs font-bold text-slate-700 mb-1">Not Tarihi</label>
-              <div className="relative">
-                <Calendar className="w-4 h-4 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2" />
-                <input
-                  type="date"
-                  value={date}
-                  onChange={(e) => setDate(e.target.value)}
-                  required
-                  className="w-full pl-9 pr-3 py-2 text-xs bg-slate-50 border border-slate-200 rounded-xl focus:outline-hidden focus:ring-2 focus:ring-indigo-500/20 font-semibold text-slate-800"
-                />
+            {/* Note Date & Project Selection */}
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+              <div>
+                <label className="block text-xs font-bold text-slate-700 mb-1">Not Tarihi</label>
+                <div className="relative">
+                  <Calendar className="w-4 h-4 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2" />
+                  <input
+                    type="date"
+                    value={date}
+                    onChange={(e) => setDate(e.target.value)}
+                    required
+                    className="w-full pl-9 pr-3 py-2 text-xs bg-slate-50 border border-slate-200 rounded-xl focus:outline-hidden focus:ring-2 focus:ring-indigo-500/20 font-semibold text-slate-800"
+                  />
+                </div>
+              </div>
+
+              <div>
+                <label className="block text-xs font-bold text-slate-700 mb-1">İlişkili Kanban Kartı (İsteğe Bağlı)</label>
+                <select
+                  value={selectedProjectId}
+                  onChange={(e) => setSelectedProjectId(e.target.value)}
+                  className="w-full px-3 py-2 text-xs bg-slate-50 border border-slate-200 rounded-xl focus:outline-hidden focus:ring-2 focus:ring-indigo-500/20 font-semibold text-slate-800"
+                >
+                  <option value="">Kart Yok (Genel Not)</option>
+                  {projectTasks && projectTasks.length > 0
+                    ? projectTasks.map((t) => (
+                        <option key={t.id} value={t.id}>
+                          {t.title}
+                        </option>
+                      ))
+                    : projects.map((p) => (
+                        <option key={p.id} value={p.id}>
+                          {p.name}
+                        </option>
+                      ))}
+                </select>
               </div>
             </div>
 

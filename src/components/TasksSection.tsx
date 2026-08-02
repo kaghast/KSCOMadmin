@@ -1,22 +1,28 @@
 import React, { useState } from 'react';
-import { CheckSquare, Plus, ArrowUpDown, Check, RefreshCw, Flag, Calendar } from 'lucide-react';
-import { TaskItem, TaskPriority } from '../types';
+import { CheckSquare, Plus, ArrowUpDown, Check, RefreshCw, Flag, Calendar, FolderKanban } from 'lucide-react';
+import { TaskItem, TaskPriority, Project, ProjectTask } from '../types';
 import { formatDistanceToNow } from 'date-fns';
 import { tr } from 'date-fns/locale';
 
 interface Props {
   tasks: TaskItem[];
+  projects?: Project[];
+  projectTasks?: ProjectTask[];
   onAddTask: () => void;
   onToggleTaskStatus: (id: string, currentStatus: 'needsAction' | 'completed') => Promise<void>;
   onRefresh: () => void;
+  onToggleLinkToProject?: (type: 'task', itemId: string, projectId: string) => Promise<void>;
   isLoading: boolean;
 }
 
 export const TasksSection: React.FC<Props> = ({
   tasks,
+  projects = [],
+  projectTasks = [],
   onAddTask,
   onToggleTaskStatus,
   onRefresh,
+  onToggleLinkToProject,
   isLoading,
 }) => {
   const [sortBy, setSortBy] = useState<'priority' | 'due'>('priority');
@@ -178,11 +184,39 @@ export const TasksSection: React.FC<Props> = ({
                   )}
 
                   {task.due && (
-                    <div className="flex items-center gap-1 text-[10px] text-slate-400 font-medium">
+                    <div className="flex items-center gap-1 text-[10px] text-slate-400 font-medium mb-1.5">
                       <Calendar className="w-3 h-3 text-indigo-400" />
                       <span>
                         Son Tarih: {formatDistanceToNow(new Date(task.due), { addSuffix: true, locale: tr })}
                       </span>
+                    </div>
+                  )}
+
+                  {/* Project Selector */}
+                  {(projects.length > 0 || projectTasks.length > 0) && onToggleLinkToProject && (
+                    <div className="flex items-center justify-end pt-1 border-t border-slate-100">
+                      <select
+                        value=""
+                        onChange={(e) => {
+                          if (e.target.value) {
+                            onToggleLinkToProject('task', task.id, e.target.value);
+                          }
+                        }}
+                        className="bg-slate-100 hover:bg-slate-200 text-slate-700 text-[10px] font-bold rounded-lg px-2 py-1 focus:outline-hidden cursor-pointer"
+                      >
+                        <option value="">+ Kanban Kartına Aktar / Bağla</option>
+                        {projectTasks && projectTasks.length > 0
+                          ? projectTasks.map((t) => (
+                              <option key={t.id} value={t.projectId || projects[0]?.id}>
+                                + {t.title}
+                              </option>
+                            ))
+                          : projects.map((p) => (
+                              <option key={p.id} value={p.id}>
+                                + {p.name}
+                              </option>
+                            ))}
+                      </select>
                     </div>
                   )}
                 </div>

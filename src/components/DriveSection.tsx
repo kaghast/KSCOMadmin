@@ -1,20 +1,26 @@
 import React from 'react';
-import { HardDrive, Star, Plus, ExternalLink, FileText, FileSpreadsheet, Presentation, File, RefreshCw } from 'lucide-react';
-import { DriveFile } from '../types';
+import { HardDrive, Star, Plus, ExternalLink, FileText, FileSpreadsheet, Presentation, File, RefreshCw, FolderKanban } from 'lucide-react';
+import { DriveFile, Project, ProjectTask } from '../types';
 import { formatDistanceToNow } from 'date-fns';
 import { tr } from 'date-fns/locale';
 
 interface Props {
   files: DriveFile[];
+  projects?: Project[];
+  projectTasks?: ProjectTask[];
   onAddDriveDoc: () => void;
   onRefresh: () => void;
+  onToggleLinkToProject?: (type: 'drive', itemId: string, projectId: string) => Promise<void>;
   isLoading: boolean;
 }
 
 export const DriveSection: React.FC<Props> = ({
   files,
+  projects = [],
+  projectTasks = [],
   onAddDriveDoc,
   onRefresh,
+  onToggleLinkToProject,
   isLoading,
 }) => {
   const getFileIcon = (mimeType: string) => {
@@ -86,11 +92,55 @@ export const DriveSection: React.FC<Props> = ({
                     </h4>
                     <Star className="w-3.5 h-3.5 fill-amber-400 text-amber-500 shrink-0" />
                   </div>
-                  <div className="flex items-center gap-2 text-[10px] text-slate-400 mt-0.5">
+                  <div className="flex items-center gap-2 text-[10px] text-slate-400 mt-0.5 mb-1.5">
                     <span>
                       {formatDistanceToNow(new Date(file.modifiedTime), { addSuffix: true, locale: tr })} güncellendi
                     </span>
                     {file.size && <span>• {file.size}</span>}
+                  </div>
+
+                  {/* Project Links & Selector */}
+                  <div className="flex items-center justify-between gap-2 pt-1 border-t border-slate-100">
+                    <div className="flex items-center gap-1.5 flex-wrap">
+                      {projects
+                        .filter((p) => p.linkedDriveFileIds?.includes(file.id))
+                        .map((p) => (
+                          <span
+                            key={p.id}
+                            className="px-2 py-0.5 bg-emerald-100 text-emerald-800 text-[10px] font-extrabold rounded-md flex items-center gap-1"
+                          >
+                            <FolderKanban className="w-3 h-3" /> {p.name}
+                          </span>
+                        ))}
+                    </div>
+
+                    {(projects.length > 0 || projectTasks.length > 0) && onToggleLinkToProject && (
+                      <select
+                        value=""
+                        onChange={(e) => {
+                          if (e.target.value) {
+                            onToggleLinkToProject('drive', file.id, e.target.value);
+                          }
+                        }}
+                        className="bg-slate-100 hover:bg-slate-200 text-slate-700 text-[10px] font-bold rounded-lg px-2 py-1 focus:outline-hidden cursor-pointer"
+                      >
+                        <option value="">+ Karta Bağla</option>
+                        {projectTasks && projectTasks.length > 0
+                          ? projectTasks.map((t) => (
+                              <option key={t.id} value={t.projectId || projects[0]?.id}>
+                                + {t.title}
+                              </option>
+                            ))
+                          : projects.map((p) => {
+                              const isLinked = p.linkedDriveFileIds?.includes(file.id);
+                              return (
+                                <option key={p.id} value={p.id}>
+                                  {isLinked ? '✓ ' : '+ '} {p.name}
+                                </option>
+                              );
+                            })}
+                      </select>
+                    )}
                   </div>
                 </div>
               </div>

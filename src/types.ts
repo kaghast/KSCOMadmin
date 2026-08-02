@@ -137,5 +137,42 @@ export interface NoteItem {
   createdAt: string;
   updatedAt: string;
   pinned?: boolean;
+  projectId?: string;
+  projectName?: string;
+}
+
+export interface ProjectColumn {
+  id: string;
+  title: string;
+  color?: string;
+}
+
+export interface ProjectTask {
+  id: string;
+  projectId: string;
+  columnId: string;
+  title: string;
+  description?: string;
+  priority?: 'high' | 'medium' | 'low';
+  dueDate?: string;
+  assignee?: string;
+  createdAt: string;
+}
+
+export interface Project {
+  id: string;
+  name: string;
+  description: string;
+  color?: string;
+  createdAt: string;
+  updatedAt: string;
+  columns: ProjectColumn[];
+  linkedNoteIds?: string[];
+  linkedEmailIds?: string[];
+  linkedEventIds?: string[];
+  linkedDriveFileIds?: string[];
+  linkedContactResourceNames?: string[];
+  driveFileId?: string;
+  driveFileUrl?: string;
 }
 

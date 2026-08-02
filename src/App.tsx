@@ -9,6 +9,8 @@ import {
   ContactItem,
   NoteItem,
   NoteLocation,
+  Project,
+  ProjectTask,
 } from './types';
 import { Navbar } from './components/Navbar';
 import { Sidebar, NavTab } from './components/Sidebar';
@@ -18,6 +20,7 @@ import { DriveSection } from './components/DriveSection';
 import { TasksSection } from './components/TasksSection';
 import { ContactsSection } from './components/ContactsSection';
 import { NotesSection } from './components/NotesSection';
+import { ProjectsSection } from './components/ProjectsSection';
 import { ComposeEmailModal } from './components/ComposeEmailModal';
 import { AddEventModal } from './components/AddEventModal';
 import { AddDriveModal } from './components/AddDriveModal';
@@ -73,6 +76,8 @@ export default function App() {
   const [contacts, setContacts] = useState<ContactItem[]>([]);
   const [notes, setNotes] = useState<NoteItem[]>([]);
   const [locations, setLocations] = useState<NoteLocation[]>([]);
+  const [projects, setProjects] = useState<Project[]>([]);
+  const [projectTasks, setProjectTasks] = useState<ProjectTask[]>([]);
 
   // Loading States
   const [isLoadingGmail, setIsLoadingGmail] = useState(false);
@@ -298,6 +303,170 @@ export default function App() {
     }
   };
 
+  const fetchProjects = async () => {
+    try {
+      const res = await fetch('/api/projects');
+      if (res.ok && res.headers.get('content-type')?.includes('application/json')) {
+        const data = await res.json();
+        if (data.projects) setProjects(data.projects);
+        if (data.tasks) setProjectTasks(data.tasks);
+      }
+    } catch {
+      // Silent error handling
+    }
+  };
+
+  // Auto Drive Sync Trigger
+  const triggerAutoDriveSync = async (projectId: string) => {
+    try {
+      const proj = projects.find((p) => p.id === projectId);
+      if (!proj) return;
+      const projectNotes = notes.filter(
+        (n) => n.projectId === projectId || proj.linkedNoteIds?.includes(n.id)
+      );
+      const linkedEmailsList = emails.filter((e) => proj.linkedEmailIds?.includes(e.id));
+      const linkedEventsList = calendarEvents.filter((evt) => proj.linkedEventIds?.includes(evt.id));
+      const linkedDriveFilesList = driveFiles.filter((f) => proj.linkedDriveFileIds?.includes(f.id));
+      const linkedContactsList = contacts.filter((c) => proj.linkedContactResourceNames?.includes(c.resourceName));
+
+      await fetch(`/api/projects/${projectId}/export-markdown`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          notes: projectNotes,
+          emails: linkedEmailsList,
+          events: linkedEventsList,
+          driveFiles: linkedDriveFilesList,
+          contacts: linkedContactsList,
+        }),
+      });
+    } catch {
+      // Auto sync failover
+    }
+  };
+
+  // Project CRUD Handlers
+  const handleCreateProject = async (projectData: Partial<Project>) => {
+    const res = await fetch('/api/projects', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(projectData),
+    });
+    if (res.ok) {
+      await fetchProjects();
+    }
+  };
+
+  const handleUpdateProject = async (project: Project) => {
+    const res = await fetch(`/api/projects/${project.id}`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(project),
+    });
+    if (res.ok) {
+      await fetchProjects();
+      triggerAutoDriveSync(project.id);
+    }
+  };
+
+  const handleDeleteProject = async (projectId: string) => {
+    const res = await fetch(`/api/projects/${projectId}`, {
+      method: 'DELETE',
+    });
+    if (res.ok) {
+      await fetchProjects();
+    }
+  };
+
+  // Project Tasks CRUD Handlers
+  const handleCreateProjectTask = async (
+    projectId: string,
+    taskData: Partial<ProjectTask>
+  ) => {
+    const res = await fetch(`/api/projects/${projectId}/tasks`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(taskData),
+    });
+    if (res.ok) {
+      await fetchProjects();
+      triggerAutoDriveSync(projectId);
+    }
+  };
+
+  const handleUpdateProjectTask = async (task: ProjectTask) => {
+    const res = await fetch(`/api/projects/tasks/${task.id}`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(task),
+    });
+    if (res.ok) {
+      await fetchProjects();
+      triggerAutoDriveSync(task.projectId);
+    }
+  };
+
+  const handleDeleteProjectTask = async (taskId: string) => {
+    const task = projectTasks.find((t) => t.id === taskId);
+    const res = await fetch(`/api/projects/tasks/${taskId}`, {
+      method: 'DELETE',
+    });
+    if (res.ok) {
+      await fetchProjects();
+      if (task) triggerAutoDriveSync(task.projectId);
+    }
+  };
+
+  // Global Workspace Item -> Project Link Handler
+  const handleToggleLinkToProject = async (
+    type: 'email' | 'event' | 'drive' | 'contact' | 'task',
+    itemId: string,
+    projectId: string
+  ) => {
+    const proj = projects.find((p) => p.id === projectId);
+    if (!proj) return;
+
+    if (type === 'task') {
+      const gTask = tasks.find((t) => t.id === itemId);
+      if (gTask) {
+        const firstCol = proj.columns[0]?.id || 'col-1';
+        await handleCreateProjectTask(projectId, {
+          columnId: firstCol,
+          title: gTask.title,
+          description: gTask.notes || '',
+          priority: gTask.priority || 'medium',
+          dueDate: gTask.due ? gTask.due.split('T')[0] : undefined,
+        });
+      }
+      return;
+    }
+
+    const updatedProject = { ...proj };
+    if (type === 'email') {
+      const current = updatedProject.linkedEmailIds || [];
+      updatedProject.linkedEmailIds = current.includes(itemId)
+        ? current.filter((id) => id !== itemId)
+        : [...current, itemId];
+    } else if (type === 'event') {
+      const current = updatedProject.linkedEventIds || [];
+      updatedProject.linkedEventIds = current.includes(itemId)
+        ? current.filter((id) => id !== itemId)
+        : [...current, itemId];
+    } else if (type === 'drive') {
+      const current = updatedProject.linkedDriveFileIds || [];
+      updatedProject.linkedDriveFileIds = current.includes(itemId)
+        ? current.filter((id) => id !== itemId)
+        : [...current, itemId];
+    } else if (type === 'contact') {
+      const current = updatedProject.linkedContactResourceNames || [];
+      updatedProject.linkedContactResourceNames = current.includes(itemId)
+        ? current.filter((res) => res !== itemId)
+        : [...current, itemId];
+    }
+
+    await handleUpdateProject(updatedProject);
+  };
+
   const fetchAllData = () => {
     fetchEmails();
     fetchCalendar();
@@ -305,6 +474,7 @@ export default function App() {
     fetchTasks();
     fetchContacts();
     fetchNotes();
+    fetchProjects();
   };
 
   useEffect(() => {
@@ -583,37 +753,52 @@ export default function App() {
               <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
                 <GmailSection
                   emails={emails}
+                  projects={projects}
+                  projectTasks={projectTasks}
                   activeTab={gmailTab}
                   onTabChange={setGmailTab}
                   onCompose={() => setIsComposeOpen(true)}
                   onToggleStar={handleToggleStarEmail}
                   onRefresh={fetchEmails}
+                  onToggleLinkToProject={handleToggleLinkToProject}
                   isLoading={isLoadingGmail}
                 />
                 <CalendarSection
                   events={calendarEvents}
+                  projects={projects}
+                  projectTasks={projectTasks}
                   onAddEvent={() => setIsAddEventOpen(true)}
                   onRefresh={fetchCalendar}
+                  onToggleLinkToProject={handleToggleLinkToProject}
                   isLoading={isLoadingCalendar}
                 />
                 <DriveSection
                   files={driveFiles}
+                  projects={projects}
+                  projectTasks={projectTasks}
                   onAddDriveDoc={() => setIsAddDriveOpen(true)}
                   onRefresh={fetchDrive}
+                  onToggleLinkToProject={handleToggleLinkToProject}
                   isLoading={isLoadingDrive}
                 />
                 <TasksSection
                   tasks={tasks}
+                  projects={projects}
+                  projectTasks={projectTasks}
                   onAddTask={() => setIsAddTaskOpen(true)}
                   onToggleTaskStatus={handleToggleTaskStatus}
                   onRefresh={fetchTasks}
+                  onToggleLinkToProject={handleToggleLinkToProject}
                   isLoading={isLoadingTasks}
                 />
                 <ContactsSection
                   contacts={contacts}
+                  projects={projects}
+                  projectTasks={projectTasks}
                   onAddContact={() => setIsAddContactOpen(true)}
                   onEditContact={(contact) => setEditingContact(contact)}
                   onRefresh={fetchContacts}
+                  onToggleLinkToProject={handleToggleLinkToProject}
                   isLoading={isLoadingContacts}
                 />
               </div>
@@ -628,11 +813,14 @@ export default function App() {
             <div className="max-w-4xl mx-auto">
               <GmailSection
                 emails={emails}
+                projects={projects}
+                projectTasks={projectTasks}
                 activeTab={gmailTab}
                 onTabChange={setGmailTab}
                 onCompose={() => setIsComposeOpen(true)}
                 onToggleStar={handleToggleStarEmail}
                 onRefresh={fetchEmails}
+                onToggleLinkToProject={handleToggleLinkToProject}
                 isLoading={isLoadingGmail}
               />
             </div>
@@ -643,8 +831,11 @@ export default function App() {
             <div className="max-w-4xl mx-auto">
               <CalendarSection
                 events={calendarEvents}
+                projects={projects}
+                projectTasks={projectTasks}
                 onAddEvent={() => setIsAddEventOpen(true)}
                 onRefresh={fetchCalendar}
+                onToggleLinkToProject={handleToggleLinkToProject}
                 isLoading={isLoadingCalendar}
               />
             </div>
@@ -655,8 +846,11 @@ export default function App() {
             <div className="max-w-4xl mx-auto">
               <DriveSection
                 files={driveFiles}
+                projects={projects}
+                projectTasks={projectTasks}
                 onAddDriveDoc={() => setIsAddDriveOpen(true)}
                 onRefresh={fetchDrive}
+                onToggleLinkToProject={handleToggleLinkToProject}
                 isLoading={isLoadingDrive}
               />
             </div>
@@ -667,9 +861,12 @@ export default function App() {
             <div className="max-w-4xl mx-auto">
               <TasksSection
                 tasks={tasks}
+                projects={projects}
+                projectTasks={projectTasks}
                 onAddTask={() => setIsAddTaskOpen(true)}
                 onToggleTaskStatus={handleToggleTaskStatus}
                 onRefresh={fetchTasks}
+                onToggleLinkToProject={handleToggleLinkToProject}
                 isLoading={isLoadingTasks}
               />
             </div>
@@ -680,15 +877,43 @@ export default function App() {
             <div className="max-w-4xl mx-auto">
               <ContactsSection
                 contacts={contacts}
+                projects={projects}
+                projectTasks={projectTasks}
                 onAddContact={() => setIsAddContactOpen(true)}
                 onEditContact={(contact) => setEditingContact(contact)}
                 onRefresh={fetchContacts}
+                onToggleLinkToProject={handleToggleLinkToProject}
                 isLoading={isLoadingContacts}
               />
             </div>
           )}
 
-          {/* 9. SETTINGS VIEW */}
+          {/* 9. PROJECTS & KANBAN VIEW */}
+          {sidebarTab === 'projects' && (
+            <ProjectsSection
+              projects={projects}
+              tasks={projectTasks}
+              notes={notes}
+              emails={emails}
+              events={calendarEvents}
+              driveFiles={driveFiles}
+              contacts={contacts}
+              onUpdateProject={handleUpdateProject}
+              onCreateProject={handleCreateProject}
+              onDeleteProject={handleDeleteProject}
+              onCreateTask={handleCreateProjectTask}
+              onUpdateTask={handleUpdateProjectTask}
+              onDeleteTask={handleDeleteProjectTask}
+              onOpenNoteModal={(note) => {
+                setEditingNote(note || null);
+                setSelectedLocationFromMap(null);
+                setIsNoteModalOpen(true);
+              }}
+              language={language}
+            />
+          )}
+
+          {/* 10. SETTINGS VIEW */}
           {sidebarTab === 'settings' && (
             <SettingsSection
               theme={theme}
@@ -746,6 +971,8 @@ export default function App() {
         emails={emails}
         events={calendarEvents}
         existingLocations={locations}
+        projects={projects}
+        projectTasks={projectTasks}
         allExistingTags={Array.from(new Set(notes.flatMap((n) => n.tags || [])))}
         onClose={() => {
           setIsNoteModalOpen(false);

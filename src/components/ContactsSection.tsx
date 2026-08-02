@@ -1,20 +1,26 @@
 import React, { useState } from 'react';
-import { Users, Plus, RefreshCw, Search, Edit2, Mail, Phone, Building, User } from 'lucide-react';
-import { ContactItem } from '../types';
+import { Users, Plus, RefreshCw, Search, Edit2, Mail, Phone, Building, User, FolderKanban } from 'lucide-react';
+import { ContactItem, Project, ProjectTask } from '../types';
 
 interface Props {
   contacts: ContactItem[];
+  projects?: Project[];
+  projectTasks?: ProjectTask[];
   onAddContact: () => void;
   onEditContact: (contact: ContactItem) => void;
   onRefresh: () => void;
+  onToggleLinkToProject?: (type: 'contact', itemId: string, projectId: string) => Promise<void>;
   isLoading: boolean;
 }
 
 export const ContactsSection: React.FC<Props> = ({
   contacts,
+  projects = [],
+  projectTasks = [],
   onAddContact,
   onEditContact,
   onRefresh,
+  onToggleLinkToProject,
   isLoading,
 }) => {
   const [searchTerm, setSearchTerm] = useState('');
@@ -138,6 +144,50 @@ export const ContactsSection: React.FC<Props> = ({
                         <Phone className="w-3 h-3 text-slate-400" />
                         <span>{contact.phone}</span>
                       </span>
+                    )}
+                  </div>
+
+                  {/* Project Links & Selector */}
+                  <div className="flex items-center justify-between gap-2 mt-2 pt-1.5 border-t border-slate-100">
+                    <div className="flex items-center gap-1.5 flex-wrap">
+                      {projects
+                        .filter((p) => p.linkedContactResourceNames?.includes(contact.resourceName))
+                        .map((p) => (
+                          <span
+                            key={p.id}
+                            className="px-2 py-0.5 bg-indigo-100 text-indigo-800 text-[10px] font-extrabold rounded-md flex items-center gap-1"
+                          >
+                            <FolderKanban className="w-3 h-3" /> {p.name}
+                          </span>
+                        ))}
+                    </div>
+
+                    {(projects.length > 0 || projectTasks.length > 0) && onToggleLinkToProject && (
+                      <select
+                        value=""
+                        onChange={(e) => {
+                          if (e.target.value) {
+                            onToggleLinkToProject('contact', contact.resourceName, e.target.value);
+                          }
+                        }}
+                        className="bg-slate-100 hover:bg-slate-200 text-slate-700 text-[10px] font-bold rounded-lg px-2 py-1 focus:outline-hidden cursor-pointer"
+                      >
+                        <option value="">+ Karta Bağla</option>
+                        {projectTasks && projectTasks.length > 0
+                          ? projectTasks.map((t) => (
+                              <option key={t.id} value={t.projectId || projects[0]?.id}>
+                                + {t.title}
+                              </option>
+                            ))
+                          : projects.map((p) => {
+                              const isLinked = p.linkedContactResourceNames?.includes(contact.resourceName);
+                              return (
+                                <option key={p.id} value={p.id}>
+                                  {isLinked ? '✓ ' : '+ '} {p.name}
+                                </option>
+                              );
+                            })}
+                      </select>
                     )}
                   </div>
                 </div>

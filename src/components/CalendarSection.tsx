@@ -1,20 +1,26 @@
 import React from 'react';
-import { Calendar, Plus, MapPin, Clock, ExternalLink, RefreshCw } from 'lucide-react';
-import { CalendarEvent } from '../types';
+import { Calendar, Plus, MapPin, Clock, ExternalLink, RefreshCw, FolderKanban } from 'lucide-react';
+import { CalendarEvent, Project, ProjectTask } from '../types';
 import { format } from 'date-fns';
 import { tr } from 'date-fns/locale';
 
 interface Props {
   events: CalendarEvent[];
+  projects?: Project[];
+  projectTasks?: ProjectTask[];
   onAddEvent: () => void;
   onRefresh: () => void;
+  onToggleLinkToProject?: (type: 'event', itemId: string, projectId: string) => Promise<void>;
   isLoading: boolean;
 }
 
 export const CalendarSection: React.FC<Props> = ({
   events,
+  projects = [],
+  projectTasks = [],
   onAddEvent,
   onRefresh,
+  onToggleLinkToProject,
   isLoading,
 }) => {
   return (
@@ -98,6 +104,50 @@ export const CalendarSection: React.FC<Props> = ({
                       {evt.description}
                     </p>
                   )}
+
+                  {/* Project Links & Selector */}
+                  <div className="flex items-center justify-between gap-2 mt-2 pt-1 border-t border-slate-100">
+                    <div className="flex items-center gap-1.5 flex-wrap">
+                      {projects
+                        .filter((p) => p.linkedEventIds?.includes(evt.id))
+                        .map((p) => (
+                          <span
+                            key={p.id}
+                            className="px-2 py-0.5 bg-blue-100 text-blue-800 text-[10px] font-extrabold rounded-md flex items-center gap-1"
+                          >
+                            <FolderKanban className="w-3 h-3" /> {p.name}
+                          </span>
+                        ))}
+                    </div>
+
+                    {(projects.length > 0 || projectTasks.length > 0) && onToggleLinkToProject && (
+                      <select
+                        value=""
+                        onChange={(e) => {
+                          if (e.target.value) {
+                            onToggleLinkToProject('event', evt.id, e.target.value);
+                          }
+                        }}
+                        className="bg-slate-100 hover:bg-slate-200 text-slate-700 text-[10px] font-bold rounded-lg px-2 py-1 focus:outline-hidden cursor-pointer"
+                      >
+                        <option value="">+ Karta Bağla</option>
+                        {projectTasks && projectTasks.length > 0
+                          ? projectTasks.map((t) => (
+                              <option key={t.id} value={t.projectId || projects[0]?.id}>
+                                + {t.title}
+                              </option>
+                            ))
+                          : projects.map((p) => {
+                              const isLinked = p.linkedEventIds?.includes(evt.id);
+                              return (
+                                <option key={p.id} value={p.id}>
+                                  {isLinked ? '✓ ' : '+ '} {p.name}
+                                </option>
+                              );
+                            })}
+                      </select>
+                    )}
+                  </div>
                 </div>
 
                 {evt.htmlLink && (

@@ -2,6 +2,7 @@ import React from 'react';
 import {
   LayoutDashboard,
   FileText,
+  FolderKanban,
   Clock,
   HardDrive,
   Mail,
@@ -15,7 +16,7 @@ import {
   Settings,
 } from 'lucide-react';
 
-export type NavTab = 'dashboard' | 'notes' | 'time' | 'drive' | 'gmail' | 'calendar' | 'tasks' | 'contacts' | 'settings';
+export type NavTab = 'dashboard' | 'projects' | 'notes' | 'time' | 'drive' | 'gmail' | 'calendar' | 'tasks' | 'contacts' | 'settings';
 
 interface Props {
   activeTab: NavTab;
@@ -23,6 +24,7 @@ interface Props {
   isCollapsed: boolean;
   onToggleCollapse: () => void;
   notesCount: number;
+  projectsCount?: number;
   language?: 'tr' | 'en';
 }
 
@@ -32,6 +34,7 @@ export const Sidebar: React.FC<Props> = ({
   isCollapsed,
   onToggleCollapse,
   notesCount,
+  projectsCount = 0,
   language = 'tr',
 }) => {
   const isTr = language === 'tr';
@@ -44,6 +47,15 @@ export const Sidebar: React.FC<Props> = ({
       icon: LayoutDashboard,
       color: 'text-indigo-600',
       bgColor: 'bg-indigo-50',
+    },
+    {
+      id: 'projects' as NavTab,
+      label: isTr ? 'Projeler' : 'Projects',
+      description: isTr ? 'Kanban & Drive Sync' : 'Kanban & Drive Sync',
+      icon: FolderKanban,
+      color: 'text-purple-600',
+      bgColor: 'bg-purple-50',
+      badge: projectsCount > 0 ? projectsCount : undefined,
     },
     {
       id: 'notes' as NavTab,
