@@ -107,8 +107,12 @@ export default function App() {
   const fetchAuthStatus = async () => {
     try {
       const res = await fetch('/api/auth/status');
-      const data = await res.json();
-      setAuthStatus(data);
+      if (!res.ok) return;
+      const contentType = res.headers.get('content-type');
+      if (contentType && contentType.includes('application/json')) {
+        const data = await res.json();
+        setAuthStatus(data);
+      }
     } catch (err) {
       console.error('Auth Status Fetch Error:', err);
     }
@@ -117,6 +121,13 @@ export default function App() {
   const handleLogin = async () => {
     try {
       const res = await fetch('/api/auth/url');
+      if (!res.ok) {
+        throw new Error(`HTTP error ${res.status}`);
+      }
+      const contentType = res.headers.get('content-type');
+      if (!contentType || !contentType.includes('application/json')) {
+        throw new Error('Server returned non-JSON response');
+      }
       const data = await res.json();
       if (data.url) {
         window.location.href = data.url;
