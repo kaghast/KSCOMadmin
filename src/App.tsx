@@ -27,12 +27,35 @@ import { AddContactModal } from './components/AddContactModal';
 import { NoteModal } from './components/NoteModal';
 import { MapPickerModal } from './components/MapPickerModal';
 import { TimeManagementApp } from './components/TimeManagementApp';
+import { SettingsSection } from './components/SettingsSection';
+import { LoginGate } from './components/LoginGate';
 import { Sparkles, ShieldCheck, Zap, RefreshCw, AlertCircle, HardDrive } from 'lucide-react';
 
 export default function App() {
   const [activeScreen, setActiveScreen] = useState<'workspace' | 'timeManagement'>('workspace');
   const [sidebarTab, setSidebarTab] = useState<NavTab>('notes'); // Default to Notes tab as requested
   const [isSidebarCollapsed, setIsSidebarCollapsed] = useState(false);
+
+  // Settings State: Theme & Language
+  const [theme, setTheme] = useState<'light' | 'dark'>(() => {
+    return (localStorage.getItem('adminspace_theme') as 'light' | 'dark') || 'light';
+  });
+  const [language, setLanguage] = useState<'tr' | 'en'>(() => {
+    return (localStorage.getItem('adminspace_language') as 'tr' | 'en') || 'tr';
+  });
+
+  useEffect(() => {
+    if (theme === 'dark') {
+      document.documentElement.classList.add('dark');
+    } else {
+      document.documentElement.classList.remove('dark');
+    }
+    localStorage.setItem('adminspace_theme', theme);
+  }, [theme]);
+
+  useEffect(() => {
+    localStorage.setItem('adminspace_language', language);
+  }, [language]);
 
   // Auth State
   const [authStatus, setAuthStatus] = useState<AuthStatus>({
@@ -371,8 +394,12 @@ export default function App() {
     fetchNotes();
   };
 
+  if (!authStatus.isAuthenticated) {
+    return <LoginGate onLogin={handleLogin} language={language} />;
+  }
+
   return (
-    <div className="min-h-screen bg-slate-100 text-slate-800 flex flex-col font-sans">
+    <div className={`min-h-screen ${theme === 'dark' ? 'dark bg-slate-900 text-slate-100' : 'bg-slate-100 text-slate-800'} flex flex-col font-sans transition-colors duration-200`}>
       {/* Navbar Header */}
       <Navbar
         activeScreen={activeScreen}
@@ -391,6 +418,7 @@ export default function App() {
           isCollapsed={isSidebarCollapsed}
           onToggleCollapse={() => setIsSidebarCollapsed(!isSidebarCollapsed)}
           notesCount={notes.length}
+          language={language}
         />
 
         {/* Right Main Content Panel */}
@@ -578,6 +606,16 @@ export default function App() {
                 isLoading={isLoadingContacts}
               />
             </div>
+          )}
+
+          {/* 9. SETTINGS VIEW */}
+          {sidebarTab === 'settings' && (
+            <SettingsSection
+              theme={theme}
+              onThemeChange={setTheme}
+              language={language}
+              onLanguageChange={setLanguage}
+            />
           )}
         </main>
       </div>

@@ -12,9 +12,10 @@ import {
   ChevronRight,
   Database,
   Cloud,
+  Settings,
 } from 'lucide-react';
 
-export type NavTab = 'dashboard' | 'notes' | 'time' | 'drive' | 'gmail' | 'calendar' | 'tasks' | 'contacts';
+export type NavTab = 'dashboard' | 'notes' | 'time' | 'drive' | 'gmail' | 'calendar' | 'tasks' | 'contacts' | 'settings';
 
 interface Props {
   activeTab: NavTab;
@@ -22,6 +23,7 @@ interface Props {
   isCollapsed: boolean;
   onToggleCollapse: () => void;
   notesCount: number;
+  language?: 'tr' | 'en';
 }
 
 export const Sidebar: React.FC<Props> = ({
@@ -30,20 +32,23 @@ export const Sidebar: React.FC<Props> = ({
   isCollapsed,
   onToggleCollapse,
   notesCount,
+  language = 'tr',
 }) => {
+  const isTr = language === 'tr';
+
   const navItems = [
     {
       id: 'dashboard' as NavTab,
-      label: 'Genel Bakış',
-      description: 'Workspace Paneli',
+      label: isTr ? 'Genel Bakış' : 'Dashboard',
+      description: isTr ? 'Workspace Paneli' : 'Workspace Overview',
       icon: LayoutDashboard,
       color: 'text-indigo-600',
       bgColor: 'bg-indigo-50',
     },
     {
       id: 'notes' as NavTab,
-      label: 'Not Yönetimi',
-      description: 'Markdown & Lokasyon',
+      label: isTr ? 'Not Yönetimi' : 'Notes Management',
+      description: isTr ? 'Markdown & Lokasyon' : 'Markdown & Map Location',
       icon: FileText,
       color: 'text-amber-600',
       bgColor: 'bg-amber-50',
@@ -51,11 +56,19 @@ export const Sidebar: React.FC<Props> = ({
     },
     {
       id: 'time' as NavTab,
-      label: 'Zaman Yönetimi',
-      description: 'Pomodoro & Zamanlayıcı',
+      label: isTr ? 'Zaman Yönetimi' : 'Time Management',
+      description: isTr ? 'Pomodoro & Zamanlayıcı' : 'Pomodoro & Timer',
       icon: Clock,
       color: 'text-emerald-600',
       bgColor: 'bg-emerald-50',
+    },
+    {
+      id: 'settings' as NavTab,
+      label: isTr ? 'Ayarlar' : 'Settings',
+      description: isTr ? 'Tema & Dil Seçimi' : 'Theme & Language',
+      icon: Settings,
+      color: 'text-indigo-400',
+      bgColor: 'bg-indigo-950/60',
     },
   ];
 
