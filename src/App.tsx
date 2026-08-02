@@ -105,12 +105,11 @@ export default function App() {
 
     const handleMessage = (event: MessageEvent) => {
       const origin = event.origin;
-      if (!origin.endsWith('.run.app') && !origin.includes('localhost')) {
+      if (!origin.endsWith('.run.app') && !origin.includes('localhost') && !origin.includes('kemalsahin.com')) {
         return;
       }
       if (event.data?.type === 'OAUTH_AUTH_SUCCESS') {
         fetchAuthStatus();
-        fetchAllData();
       }
     };
 
@@ -127,21 +126,18 @@ export default function App() {
         const data = await res.json();
         setAuthStatus(data);
       }
-    } catch (err) {
-      console.error('Auth Status Fetch Error:', err);
+    } catch {
+      // Silently ignore auth status fetch errors on load
     }
   };
 
   const handleLogin = async () => {
     try {
       const res = await fetch('/api/auth/url');
-      if (!res.ok) {
-        throw new Error(`HTTP error ${res.status}`);
-      }
+      if (!res.ok) return;
       const contentType = res.headers.get('content-type');
-      if (!contentType || !contentType.includes('application/json')) {
-        throw new Error('Server returned non-JSON response');
-      }
+      if (!contentType || !contentType.includes('application/json')) return;
+      
       const data = await res.json();
       if (data.url) {
         // Open OAuth provider in a popup window to bypass iframe 403 restrictions
@@ -165,12 +161,11 @@ export default function App() {
           if (!popup || popup.closed) {
             clearInterval(checkPopupClosed);
             fetchAuthStatus();
-            fetchAllData();
           }
         }, 1000);
       }
-    } catch (err) {
-      console.error('OAuth URL Fetch Error:', err);
+    } catch {
+      // Catch network errors silently
     }
   };
 
@@ -182,9 +177,8 @@ export default function App() {
         user: { email: 'kemalsahin@gmail.com', name: 'Kemal Şahin' },
         demoMode: true,
       });
-      fetchAllData();
-    } catch (err) {
-      console.error('Logout Error:', err);
+    } catch {
+      // Silently catch logout errors
     }
   };
 
@@ -193,10 +187,12 @@ export default function App() {
     setIsLoadingGmail(true);
     try {
       const res = await fetch(`/api/gmail/messages?type=${gmailTab}`);
-      const data = await res.json();
-      if (data.messages) setEmails(data.messages);
-    } catch (err) {
-      console.error('Fetch Gmail Error:', err);
+      if (res.ok && res.headers.get('content-type')?.includes('application/json')) {
+        const data = await res.json();
+        if (data.messages) setEmails(data.messages);
+      }
+    } catch {
+      // Silent error handling
     } finally {
       setIsLoadingGmail(false);
     }
@@ -206,10 +202,12 @@ export default function App() {
     setIsLoadingCalendar(true);
     try {
       const res = await fetch('/api/calendar/events');
-      const data = await res.json();
-      if (data.events) setCalendarEvents(data.events);
-    } catch (err) {
-      console.error('Fetch Calendar Error:', err);
+      if (res.ok && res.headers.get('content-type')?.includes('application/json')) {
+        const data = await res.json();
+        if (data.events) setCalendarEvents(data.events);
+      }
+    } catch {
+      // Silent error handling
     } finally {
       setIsLoadingCalendar(false);
     }
@@ -219,10 +217,12 @@ export default function App() {
     setIsLoadingDrive(true);
     try {
       const res = await fetch('/api/drive/starred');
-      const data = await res.json();
-      if (data.files) setDriveFiles(data.files);
-    } catch (err) {
-      console.error('Fetch Drive Error:', err);
+      if (res.ok && res.headers.get('content-type')?.includes('application/json')) {
+        const data = await res.json();
+        if (data.files) setDriveFiles(data.files);
+      }
+    } catch {
+      // Silent error handling
     } finally {
       setIsLoadingDrive(false);
     }
@@ -232,10 +232,12 @@ export default function App() {
     setIsLoadingTasks(true);
     try {
       const res = await fetch('/api/tasks');
-      const data = await res.json();
-      if (data.tasks) setTasks(data.tasks);
-    } catch (err) {
-      console.error('Fetch Tasks Error:', err);
+      if (res.ok && res.headers.get('content-type')?.includes('application/json')) {
+        const data = await res.json();
+        if (data.tasks) setTasks(data.tasks);
+      }
+    } catch {
+      // Silent error handling
     } finally {
       setIsLoadingTasks(false);
     }
@@ -245,10 +247,12 @@ export default function App() {
     setIsLoadingContacts(true);
     try {
       const res = await fetch('/api/contacts');
-      const data = await res.json();
-      if (data.contacts) setContacts(data.contacts);
-    } catch (err) {
-      console.error('Fetch Contacts Error:', err);
+      if (res.ok && res.headers.get('content-type')?.includes('application/json')) {
+        const data = await res.json();
+        if (data.contacts) setContacts(data.contacts);
+      }
+    } catch {
+      // Silent error handling
     } finally {
       setIsLoadingContacts(false);
     }
@@ -258,11 +262,13 @@ export default function App() {
     setIsLoadingNotes(true);
     try {
       const res = await fetch('/api/notes');
-      const data = await res.json();
-      if (data.notes) setNotes(data.notes);
-      if (data.locations) setLocations(data.locations);
-    } catch (err) {
-      console.error('Fetch Notes Error:', err);
+      if (res.ok && res.headers.get('content-type')?.includes('application/json')) {
+        const data = await res.json();
+        if (data.notes) setNotes(data.notes);
+        if (data.locations) setLocations(data.locations);
+      }
+    } catch {
+      // Silent error handling
     } finally {
       setIsLoadingNotes(false);
     }
@@ -278,7 +284,9 @@ export default function App() {
   };
 
   useEffect(() => {
-    fetchAllData();
+    if (authStatus.isAuthenticated) {
+      fetchAllData();
+    }
   }, [gmailTab, authStatus.isAuthenticated]);
 
   // Gmail Actions

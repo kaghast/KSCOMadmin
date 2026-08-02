@@ -23,23 +23,37 @@ app.use(cookieParser());
 
 // OAuth configuration
 const OAUTH_SCOPES = [
-  'https://www.googleapis.com/auth/gmail.modify',
-  'https://www.googleapis.com/auth/calendar.events',
-  'https://www.googleapis.com/auth/drive',
-  'https://www.googleapis.com/auth/tasks',
+  'https://www.googleapis.com/auth/gmail.readonly',
+  'https://www.googleapis.com/auth/gmail.send',
+  'https://www.googleapis.com/auth/calendar',
+  'https://www.googleapis.com/auth/drive.file',
   'https://www.googleapis.com/auth/contacts',
   'https://www.googleapis.com/auth/userinfo.email',
   'https://www.googleapis.com/auth/userinfo.profile',
 ];
 
-function getAppUrl() {
-  return process.env.APP_URL || 'http://localhost:3000';
+function getAppUrl(req?: express.Request) {
+  if (process.env.APP_URL) return process.env.APP_URL;
+  if (req) {
+    const host = req.get('host');
+    const proto = req.get('x-forwarded-proto') || req.protocol || 'https';
+    if (host) return `${proto}://${host}`;
+  }
+  return 'http://localhost:3000';
 }
 
-function getOAuth2Client() {
-  const redirectUri = `${getAppUrl()}/api/auth/callback`;
-  const clientId = process.env.GOOGLE_CLIENT_ID || 'DEMO_CLIENT_ID';
-  const clientSecret = process.env.GOOGLE_CLIENT_SECRET || 'DEMO_CLIENT_SECRET';
+function getOAuth2Client(req?: express.Request) {
+  const redirectUri = `${getAppUrl(req)}/api/auth/callback`;
+  const clientId =
+    process.env.GOOGLE_CLIENT_ID ||
+    process.env.CLIENT_ID ||
+    process.env.OAUTH_CLIENT_ID ||
+    'DEMO_CLIENT_ID';
+  const clientSecret =
+    process.env.GOOGLE_CLIENT_SECRET ||
+    process.env.CLIENT_SECRET ||
+    process.env.OAUTH_CLIENT_SECRET ||
+    'DEMO_CLIENT_SECRET';
   return new google.auth.OAuth2(clientId, clientSecret, redirectUri);
 }
 
@@ -50,7 +64,7 @@ function getAuthenticatedClient(req: express.Request) {
 
   try {
     const tokens = JSON.parse(tokenCookie);
-    const oauth2Client = getOAuth2Client();
+    const oauth2Client = getOAuth2Client(req);
     oauth2Client.setCredentials(tokens);
     return oauth2Client;
   } catch (err) {
@@ -310,7 +324,7 @@ let demoState = {
 // ================= AUTH ROUTES =================
 
 app.get('/api/auth/url', (req, res) => {
-  const oauth2Client = getOAuth2Client();
+  const oauth2Client = getOAuth2Client(req);
   const url = oauth2Client.generateAuthUrl({
     access_type: 'offline',
     scope: OAUTH_SCOPES,
@@ -326,7 +340,7 @@ app.get('/api/auth/callback', async (req, res) => {
   }
 
   try {
-    const oauth2Client = getOAuth2Client();
+    const oauth2Client = getOAuth2Client(req);
     const { tokens } = await oauth2Client.getToken(code);
 
     res.cookie('google_tokens', JSON.stringify(tokens), {
