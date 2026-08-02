@@ -134,38 +134,62 @@ export default function App() {
   const handleLogin = async () => {
     try {
       const res = await fetch('/api/auth/url');
-      if (!res.ok) return;
-      const contentType = res.headers.get('content-type');
-      if (!contentType || !contentType.includes('application/json')) return;
-      
-      const data = await res.json();
-      if (data.url) {
-        // Open OAuth provider in a popup window to bypass iframe 403 restrictions
-        const popup = window.open(
-          data.url,
-          'google_oauth_popup',
-          'width=600,height=700,status=no,toolbar=no,menubar=no'
+      if (!res.ok) {
+        const errorText = await res.text();
+        console.error('Auth URL endpoint error:', res.status, errorText);
+        alert(
+          language === 'tr'
+            ? 'Giriş adresi alınamadı. Lütfen sunucu ayarlarını (GOOGLE_CLIENT_ID / GOOGLE_CLIENT_SECRET) kontrol edin.'
+            : 'Failed to get login URL. Please check server environment settings.'
         );
-
-        if (!popup) {
-          alert(
-            language === 'tr'
-              ? 'Lütfen Google ile giriş yapabilmek için tarayıcınızın açılır pencere (popup) engelleyicisini kaldırın.'
-              : 'Please allow popups for this site to sign in with Google.'
-          );
-          return;
-        }
-
-        // Poll status when popup closes as a fallback
-        const checkPopupClosed = setInterval(() => {
-          if (!popup || popup.closed) {
-            clearInterval(checkPopupClosed);
-            fetchAuthStatus();
-          }
-        }, 1000);
+        return;
       }
-    } catch {
-      // Catch network errors silently
+
+      const data = await res.json();
+      if (!data.url) {
+        console.error('Auth URL missing in response:', data);
+        alert(
+          language === 'tr'
+            ? 'Giriş bağlantısı oluşturulamadı.'
+            : 'Could not generate login link.'
+        );
+        return;
+      }
+
+      // If running directly in top browser window (e.g. app.kemalsahin.com), redirect directly
+      const isInIframe = window.self !== window.top;
+      if (!isInIframe) {
+        window.location.href = data.url;
+        return;
+      }
+
+      // If running inside an iframe (e.g. AI Studio preview), attempt popup
+      const popup = window.open(
+        data.url,
+        'google_oauth_popup',
+        'width=600,height=700,status=no,toolbar=no,menubar=no'
+      );
+
+      if (!popup) {
+        // Fallback to direct navigation if popup is blocked
+        window.location.href = data.url;
+        return;
+      }
+
+      // Poll status when popup closes
+      const checkPopupClosed = setInterval(() => {
+        if (!popup || popup.closed) {
+          clearInterval(checkPopupClosed);
+          fetchAuthStatus();
+        }
+      }, 1000);
+    } catch (err) {
+      console.error('OAuth Login Error:', err);
+      alert(
+        language === 'tr'
+          ? 'Giriş yapılırken bir bağlantı hatası oluştu.'
+          : 'A network error occurred while logging in.'
+      );
     }
   };
 
