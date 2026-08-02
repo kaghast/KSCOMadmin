@@ -325,6 +325,9 @@ export default function App() {
     content: string;
     contactResourceName?: string;
     contactDisplayName?: string;
+    contacts?: any[];
+    linkedEmails?: any[];
+    linkedEvents?: any[];
     tags: string[];
     location?: NoteLocation | null;
     date: string;
@@ -423,6 +426,8 @@ export default function App() {
             <NotesSection
               notes={notes}
               contacts={contacts}
+              emails={emails}
+              events={calendarEvents}
               locations={locations}
               onAddNote={() => {
                 setEditingNote(null);
@@ -620,17 +625,15 @@ export default function App() {
         isOpen={isNoteModalOpen}
         note={editingNote}
         contacts={contacts}
+        emails={emails}
+        events={calendarEvents}
         existingLocations={locations}
+        allExistingTags={Array.from(new Set(notes.flatMap((n) => n.tags || [])))}
         onClose={() => {
           setIsNoteModalOpen(false);
           setEditingNote(null);
         }}
-        onOpenMapPicker={(currentLoc) => {
-          setMapPickerInitLocation(currentLoc);
-          setIsMapPickerOpen(true);
-        }}
         onSave={handleSaveNote}
-        selectedLocationFromMap={selectedLocationFromMap}
       />
 
       {/* Interactive Map Picker Modal */}

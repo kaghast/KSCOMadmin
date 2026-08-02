@@ -1013,7 +1013,7 @@ app.get('/api/notes', async (req, res) => {
 
 app.post('/api/notes', async (req, res) => {
   await getAdminSpaceDb();
-  const { title, content, contactResourceName, contactDisplayName, tags, location, date, pinned } = req.body;
+  const { title, content, contactResourceName, contactDisplayName, contacts, linkedEmails, linkedEvents, tags, location, date, pinned } = req.body;
 
   let savedLocation = location;
   if (location && location.lat && location.lng) {
@@ -1039,6 +1039,9 @@ app.post('/api/notes', async (req, res) => {
     content: content || '',
     contactResourceName: contactResourceName || '',
     contactDisplayName: contactDisplayName || '',
+    contacts: Array.isArray(contacts) ? contacts : [],
+    linkedEmails: Array.isArray(linkedEmails) ? linkedEmails : [],
+    linkedEvents: Array.isArray(linkedEvents) ? linkedEvents : [],
     tags: Array.isArray(tags) ? tags : [],
     location: savedLocation || null,
     date: date || new Date().toISOString().split('T')[0],
@@ -1060,7 +1063,7 @@ app.post('/api/notes', async (req, res) => {
 app.put('/api/notes/:id', async (req, res) => {
   await getAdminSpaceDb();
   const { id } = req.params;
-  const { title, content, contactResourceName, contactDisplayName, tags, location, date, pinned } = req.body;
+  const { title, content, contactResourceName, contactDisplayName, contacts, linkedEmails, linkedEvents, tags, location, date, pinned } = req.body;
 
   const notes = getAllNotesFromDb();
   const existingNote = notes.find((n) => n.id === id);
@@ -1090,6 +1093,9 @@ app.put('/api/notes/:id', async (req, res) => {
     content: content !== undefined ? content : existingNote.content,
     contactResourceName: contactResourceName !== undefined ? contactResourceName : existingNote.contactResourceName,
     contactDisplayName: contactDisplayName !== undefined ? contactDisplayName : existingNote.contactDisplayName,
+    contacts: contacts !== undefined ? (Array.isArray(contacts) ? contacts : []) : existingNote.contacts,
+    linkedEmails: linkedEmails !== undefined ? (Array.isArray(linkedEmails) ? linkedEmails : []) : existingNote.linkedEmails,
+    linkedEvents: linkedEvents !== undefined ? (Array.isArray(linkedEvents) ? linkedEvents : []) : existingNote.linkedEvents,
     tags: Array.isArray(tags) ? tags : existingNote.tags,
     location: savedLocation,
     date: date !== undefined ? date : existingNote.date,

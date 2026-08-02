@@ -104,12 +104,33 @@ export interface NoteLocation {
   lng: number;
 }
 
+export interface LinkedContact {
+  resourceName: string;
+  displayName: string;
+}
+
+export interface LinkedEmail {
+  id: string;
+  subject: string;
+  sender?: string;
+  date?: string;
+}
+
+export interface LinkedEvent {
+  id: string;
+  summary: string;
+  start?: string;
+}
+
 export interface NoteItem {
   id: string;
   title: string;
   content: string; // Markdown supported content
   contactResourceName?: string;
   contactDisplayName?: string;
+  contacts?: LinkedContact[];
+  linkedEmails?: LinkedEmail[];
+  linkedEvents?: LinkedEvent[];
   tags: string[];
   location?: NoteLocation;
   date: string; // YYYY-MM-DD

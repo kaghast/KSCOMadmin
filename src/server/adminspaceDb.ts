@@ -44,6 +44,9 @@ export async function getAdminSpaceDb(): Promise<Database> {
       content TEXT,
       contactResourceName TEXT,
       contactDisplayName TEXT,
+      contacts TEXT,
+      linkedEmails TEXT,
+      linkedEvents TEXT,
       tags TEXT,
       locationId TEXT,
       date TEXT,
@@ -52,6 +55,10 @@ export async function getAdminSpaceDb(): Promise<Database> {
       pinned INTEGER DEFAULT 0
     );
   `);
+
+  try { dbInstance.run("ALTER TABLE notes ADD COLUMN contacts TEXT"); } catch {}
+  try { dbInstance.run("ALTER TABLE notes ADD COLUMN linkedEmails TEXT"); } catch {}
+  try { dbInstance.run("ALTER TABLE notes ADD COLUMN linkedEvents TEXT"); } catch {}
 
   saveDbToDisk();
   return dbInstance;
@@ -125,6 +132,27 @@ export function getAllNotesFromDb() {
         tags = [];
       }
 
+      let contactsList: any[] = [];
+      try {
+        contactsList = row.contacts ? JSON.parse(String(row.contacts)) : [];
+      } catch {
+        contactsList = [];
+      }
+
+      let linkedEmails: any[] = [];
+      try {
+        linkedEmails = row.linkedEmails ? JSON.parse(String(row.linkedEmails)) : [];
+      } catch {
+        linkedEmails = [];
+      }
+
+      let linkedEvents: any[] = [];
+      try {
+        linkedEvents = row.linkedEvents ? JSON.parse(String(row.linkedEvents)) : [];
+      } catch {
+        linkedEvents = [];
+      }
+
       const locId = row.locationId ? String(row.locationId) : null;
       const locationObj = locId ? locMap.get(locId) || null : null;
 
@@ -134,6 +162,9 @@ export function getAllNotesFromDb() {
         content: String(row.content || ''),
         contactResourceName: row.contactResourceName ? String(row.contactResourceName) : '',
         contactDisplayName: row.contactDisplayName ? String(row.contactDisplayName) : '',
+        contacts: contactsList,
+        linkedEmails,
+        linkedEvents,
         tags,
         location: locationObj,
         date: String(row.date),
@@ -159,17 +190,23 @@ export function saveNoteToDb(note: any) {
   }
 
   const tagsJson = JSON.stringify(note.tags || []);
+  const contactsJson = JSON.stringify(note.contacts || []);
+  const linkedEmailsJson = JSON.stringify(note.linkedEmails || []);
+  const linkedEventsJson = JSON.stringify(note.linkedEvents || []);
 
   dbInstance.run(
     `INSERT OR REPLACE INTO notes 
-     (id, title, content, contactResourceName, contactDisplayName, tags, locationId, date, createdAt, updatedAt, pinned)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+     (id, title, content, contactResourceName, contactDisplayName, contacts, linkedEmails, linkedEvents, tags, locationId, date, createdAt, updatedAt, pinned)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     [
       note.id,
       note.title,
       note.content || '',
       note.contactResourceName || '',
       note.contactDisplayName || '',
+      contactsJson,
+      linkedEmailsJson,
+      linkedEventsJson,
       tagsJson,
       locationId,
       note.date,
