@@ -97,3 +97,24 @@ export interface ContactItem {
   photoUrl?: string;
 }
 
+export interface NoteLocation {
+  id: string;
+  name: string;
+  lat: number;
+  lng: number;
+}
+
+export interface NoteItem {
+  id: string;
+  title: string;
+  content: string; // Markdown supported content
+  contactResourceName?: string;
+  contactDisplayName?: string;
+  tags: string[];
+  location?: NoteLocation;
+  date: string; // YYYY-MM-DD
+  createdAt: string;
+  updatedAt: string;
+  pinned?: boolean;
+}
+

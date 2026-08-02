@@ -3,6 +3,15 @@ import cookieParser from 'cookie-parser';
 import path from 'path';
 import { google } from 'googleapis';
 import { createServer as createViteServer } from 'vite';
+import {
+  getAdminSpaceDb,
+  getAllNotesFromDb,
+  getAllLocationsFromDb,
+  saveNoteToDb,
+  saveLocationToDb,
+  deleteNoteFromDb,
+  syncWithGoogleDriveAdminSpace,
+} from './src/server/adminspaceDb.js';
 
 type TaskPriority = 'high' | 'medium' | 'low';
 
@@ -248,6 +257,52 @@ let demoState = {
       organization: 'Startup Co',
       jobTitle: 'Pazarlama Direktörü',
       photoUrl: '',
+    },
+  ],
+  locations: [
+    { id: 'loc-1', name: 'Istanbul Levent Ofis', lat: 41.0782, lng: 29.0121 },
+    { id: 'loc-2', name: 'Kadıköy Kahve Modu', lat: 40.9901, lng: 29.0252 },
+    { id: 'loc-3', name: 'Maslak Teknoloji Üssü', lat: 41.1128, lng: 29.0213 },
+  ],
+  notes: [
+    {
+      id: 'note-demo-1',
+      title: 'Q3 Ürün Yol Haritası & Proje Bütçesi',
+      content: '### Toplantı Notları\n- **Ahmet Yılmaz** ile Q3 roadmap gözden geçirildi.\n- Bütçe onayı önümüzdeki haftaya planlandı.\n\n- [x] Bütçe taslağı hazırlandı\n- [ ] Maliye onayı beklentisi',
+      contactResourceName: 'people/demo-c1',
+      contactDisplayName: 'Ahmet Yılmaz',
+      tags: ['Toplantı', 'Q3', 'Bütçe'],
+      location: { id: 'loc-1', name: 'Istanbul Levent Ofis', lat: 41.0782, lng: 29.0121 },
+      date: '2026-08-02',
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+      pinned: true,
+    },
+    {
+      id: 'note-demo-2',
+      title: 'Sistem Mimarisi ve Cloud Migration',
+      content: '**Zeynep Kaya** ile teknik altyapı kararları alındı.\n\n* Database indexing optimizasyonları yapıldı.\n* OAuth2 entegrasyon süreçleri tamamlandı.',
+      contactResourceName: 'people/demo-c2',
+      contactDisplayName: 'Zeynep Kaya',
+      tags: ['Mimari', 'Teknoloji'],
+      location: { id: 'loc-3', name: 'Maslak Teknoloji Üssü', lat: 41.1128, lng: 29.0213 },
+      date: '2026-08-02',
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+      pinned: false,
+    },
+    {
+      id: 'note-demo-3',
+      title: 'UI/UX Tasarım ve Mobil Arayüz Testleri',
+      content: 'Caner ile mobil ekran revizyonları tamamlandı. Dark mode & light mode renk paleti onaylandı.',
+      contactResourceName: 'people/demo-c3',
+      contactDisplayName: 'Caner Demir',
+      tags: ['Tasarım', 'UI/UX'],
+      location: { id: 'loc-2', name: 'Kadıköy Kahve Modu', lat: 40.9901, lng: 29.0252 },
+      date: '2026-08-04',
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+      pinned: false,
     },
   ],
 };
@@ -923,6 +978,193 @@ app.patch('/api/contacts/update', async (req, res) => {
   }
 
   res.json({ success: true, contact, demoMode: true });
+});
+
+// ================= NOTES & LOCATIONS ROUTES (SQLITE IN ./ADMINSPACE & DRIVE SYNC) =================
+
+app.get('/api/notes', async (req, res) => {
+  await getAdminSpaceDb();
+  let notes = getAllNotesFromDb();
+  let locations = getAllLocationsFromDb();
+
+  // If DB is newly created/empty, seed initial demo notes into SQLite
+  if (notes.length === 0) {
+    demoState.locations.forEach((loc) => saveLocationToDb(loc));
+    demoState.notes.forEach((note) => saveNoteToDb(note));
+    notes = getAllNotesFromDb();
+    locations = getAllLocationsFromDb();
+  }
+
+  // Attempt background sync to Google Drive 'adminspace' folder if user is authenticated
+  const authClient = getAuthenticatedClient(req);
+  if (authClient) {
+    syncWithGoogleDriveAdminSpace(authClient).catch((err) =>
+      console.error('Background Drive sync error:', err)
+    );
+  }
+
+  res.json({
+    notes,
+    locations,
+    storageType: 'sqlite',
+    storageFolder: 'adminspace',
+  });
+});
+
+app.post('/api/notes', async (req, res) => {
+  await getAdminSpaceDb();
+  const { title, content, contactResourceName, contactDisplayName, tags, location, date, pinned } = req.body;
+
+  let savedLocation = location;
+  if (location && location.lat && location.lng) {
+    const existingLocations = getAllLocationsFromDb();
+    const existingLoc = existingLocations.find((l) => l.id === location.id);
+    if (!existingLoc) {
+      const newLoc = {
+        id: location.id || `loc-${Date.now()}`,
+        name: location.name || 'Haritadan Seçilen Lokasyon',
+        lat: Number(location.lat),
+        lng: Number(location.lng),
+      };
+      saveLocationToDb(newLoc);
+      savedLocation = newLoc;
+    } else {
+      savedLocation = existingLoc;
+    }
+  }
+
+  const newNote = {
+    id: `note-${Date.now()}`,
+    title: title || 'İsimsiz Not',
+    content: content || '',
+    contactResourceName: contactResourceName || '',
+    contactDisplayName: contactDisplayName || '',
+    tags: Array.isArray(tags) ? tags : [],
+    location: savedLocation || null,
+    date: date || new Date().toISOString().split('T')[0],
+    createdAt: new Date().toISOString(),
+    updatedAt: new Date().toISOString(),
+    pinned: !!pinned,
+  };
+
+  saveNoteToDb(newNote);
+
+  const authClient = getAuthenticatedClient(req);
+  if (authClient) {
+    syncWithGoogleDriveAdminSpace(authClient).catch(() => {});
+  }
+
+  res.json({ success: true, note: newNote });
+});
+
+app.put('/api/notes/:id', async (req, res) => {
+  await getAdminSpaceDb();
+  const { id } = req.params;
+  const { title, content, contactResourceName, contactDisplayName, tags, location, date, pinned } = req.body;
+
+  const notes = getAllNotesFromDb();
+  const existingNote = notes.find((n) => n.id === id);
+  if (!existingNote) {
+    return res.status(404).json({ error: 'Note not found' });
+  }
+
+  let savedLocation = location !== undefined ? location : existingNote.location;
+  if (location && location.lat && location.lng) {
+    const existingLocations = getAllLocationsFromDb();
+    const existingLoc = existingLocations.find((l) => l.id === location.id);
+    if (!existingLoc) {
+      const newLoc = {
+        id: location.id || `loc-${Date.now()}`,
+        name: location.name || 'Haritadan Seçilen Lokasyon',
+        lat: Number(location.lat),
+        lng: Number(location.lng),
+      };
+      saveLocationToDb(newLoc);
+      savedLocation = newLoc;
+    }
+  }
+
+  const updatedNote = {
+    ...existingNote,
+    title: title !== undefined ? title : existingNote.title,
+    content: content !== undefined ? content : existingNote.content,
+    contactResourceName: contactResourceName !== undefined ? contactResourceName : existingNote.contactResourceName,
+    contactDisplayName: contactDisplayName !== undefined ? contactDisplayName : existingNote.contactDisplayName,
+    tags: Array.isArray(tags) ? tags : existingNote.tags,
+    location: savedLocation,
+    date: date !== undefined ? date : existingNote.date,
+    pinned: pinned !== undefined ? pinned : existingNote.pinned,
+    updatedAt: new Date().toISOString(),
+  };
+
+  saveNoteToDb(updatedNote);
+
+  const authClient = getAuthenticatedClient(req);
+  if (authClient) {
+    syncWithGoogleDriveAdminSpace(authClient).catch(() => {});
+  }
+
+  res.json({ success: true, note: updatedNote });
+});
+
+app.delete('/api/notes/:id', async (req, res) => {
+  await getAdminSpaceDb();
+  const { id } = req.params;
+  deleteNoteFromDb(id);
+
+  const authClient = getAuthenticatedClient(req);
+  if (authClient) {
+    syncWithGoogleDriveAdminSpace(authClient).catch(() => {});
+  }
+
+  res.json({ success: true });
+});
+
+app.patch('/api/locations/:id', async (req, res) => {
+  await getAdminSpaceDb();
+  const { id } = req.params;
+  const { name, lat, lng } = req.body;
+
+  const locations = getAllLocationsFromDb();
+  const loc = locations.find((l) => l.id === id);
+
+  if (loc) {
+    if (name) loc.name = name;
+    if (lat !== undefined) loc.lat = Number(lat);
+    if (lng !== undefined) loc.lng = Number(lng);
+
+    saveLocationToDb(loc);
+
+    // Update location name in notes in SQLite
+    const notes = getAllNotesFromDb();
+    notes.forEach((n) => {
+      if (n.location && n.location.id === id) {
+        n.location = { ...n.location, name: loc.name, lat: loc.lat, lng: loc.lng };
+        saveNoteToDb(n);
+      }
+    });
+  }
+
+  const authClient = getAuthenticatedClient(req);
+  if (authClient) {
+    syncWithGoogleDriveAdminSpace(authClient).catch(() => {});
+  }
+
+  res.json({ success: true, location: loc });
+});
+
+app.post('/api/adminspace/sync', async (req, res) => {
+  const authClient = getAuthenticatedClient(req);
+  if (!authClient) {
+    return res.status(401).json({ error: 'Google OAuth authentication required' });
+  }
+
+  const result = await syncWithGoogleDriveAdminSpace(authClient);
+  if (result) {
+    res.json({ success: true, ...result });
+  } else {
+    res.status(500).json({ error: 'Failed to sync adminspace folder to Google Drive' });
+  }
 });
 
 // ================= VITE / STATIC SERVING =================
