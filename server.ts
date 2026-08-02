@@ -332,14 +332,87 @@ app.get('/api/auth/callback', async (req, res) => {
     res.cookie('google_tokens', JSON.stringify(tokens), {
       httpOnly: true,
       secure: true,
-      sameSite: 'lax',
+      sameSite: 'none',
       maxAge: 30 * 24 * 60 * 60 * 1000, // 30 days
     });
 
-    res.redirect('/');
+    res.send(`
+      <!DOCTYPE html>
+      <html>
+        <head>
+          <meta charset="utf-8">
+          <title>Google Authentication Successful</title>
+          <style>
+            body {
+              font-family: system-ui, -apple-system, sans-serif;
+              display: flex;
+              align-items: center;
+              justify-content: center;
+              height: 100vh;
+              margin: 0;
+              background-color: #0f172a;
+              color: #f8fafc;
+            }
+            .card {
+              background-color: #1e293b;
+              padding: 2.5rem;
+              border-radius: 1.5rem;
+              border: 1px solid #334155;
+              text-align: center;
+              box-shadow: 0 20px 25px -5px rgba(0, 0, 0, 0.5);
+              max-width: 400px;
+            }
+            .icon {
+              width: 50px;
+              height: 50px;
+              background: #10b981;
+              color: white;
+              border-radius: 50%;
+              display: inline-flex;
+              align-items: center;
+              justify-content: center;
+              font-size: 28px;
+              margin-bottom: 1rem;
+            }
+            h2 { margin: 0 0 0.5rem 0; font-size: 1.25rem; font-weight: 800; }
+            p { margin: 0; font-size: 0.875rem; color: #94a3b8; line-height: 1.5; }
+          </style>
+        </head>
+        <body>
+          <div class="card">
+            <div class="icon">✓</div>
+            <h2>Google Hesabı Bağlandı!</h2>
+            <p>Google yetkilendirmesi başarıyla tamamlandı. Bu pencere birazdan kapanacak ve oturumunuz açılacaktır.</p>
+          </div>
+          <script>
+            if (window.opener) {
+              window.opener.postMessage({ type: 'OAUTH_AUTH_SUCCESS' }, '*');
+              setTimeout(() => {
+                window.close();
+              }, 1000);
+            } else {
+              window.location.href = '/';
+            }
+          </script>
+        </body>
+      </html>
+    `);
   } catch (error: any) {
     console.error('OAuth Callback Error:', error);
-    res.redirect('/?auth_error=failed');
+    res.status(500).send(`
+      <!DOCTYPE html>
+      <html>
+        <body style="font-family: sans-serif; padding: 2rem; background: #0f172a; color: white;">
+          <h2>Giriş Hatası</h2>
+          <p>${error.message || 'Yetkilendirme sırasında bir hata oluştu.'}</p>
+          <script>
+            if (window.opener) {
+              window.opener.postMessage({ type: 'OAUTH_AUTH_ERROR', error: error.message }, '*');
+            }
+          </script>
+        </body>
+      </html>
+    `);
   }
 });
 

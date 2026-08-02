@@ -99,9 +99,23 @@ export default function App() {
   const [mapPickerInitLocation, setMapPickerInitLocation] = useState<NoteLocation | null>(null);
   const [selectedLocationFromMap, setSelectedLocationFromMap] = useState<NoteLocation | null>(null);
 
-  // Check Auth Status on Mount
+  // Check Auth Status on Mount & Listen for Popup Callback
   useEffect(() => {
     fetchAuthStatus();
+
+    const handleMessage = (event: MessageEvent) => {
+      const origin = event.origin;
+      if (!origin.endsWith('.run.app') && !origin.includes('localhost')) {
+        return;
+      }
+      if (event.data?.type === 'OAUTH_AUTH_SUCCESS') {
+        fetchAuthStatus();
+        fetchAllData();
+      }
+    };
+
+    window.addEventListener('message', handleMessage);
+    return () => window.removeEventListener('message', handleMessage);
   }, []);
 
   const fetchAuthStatus = async () => {
@@ -130,7 +144,30 @@ export default function App() {
       }
       const data = await res.json();
       if (data.url) {
-        window.location.href = data.url;
+        // Open OAuth provider in a popup window to bypass iframe 403 restrictions
+        const popup = window.open(
+          data.url,
+          'google_oauth_popup',
+          'width=600,height=700,status=no,toolbar=no,menubar=no'
+        );
+
+        if (!popup) {
+          alert(
+            language === 'tr'
+              ? 'Lütfen Google ile giriş yapabilmek için tarayıcınızın açılır pencere (popup) engelleyicisini kaldırın.'
+              : 'Please allow popups for this site to sign in with Google.'
+          );
+          return;
+        }
+
+        // Poll status when popup closes as a fallback
+        const checkPopupClosed = setInterval(() => {
+          if (!popup || popup.closed) {
+            clearInterval(checkPopupClosed);
+            fetchAuthStatus();
+            fetchAllData();
+          }
+        }, 1000);
       }
     } catch (err) {
       console.error('OAuth URL Fetch Error:', err);
