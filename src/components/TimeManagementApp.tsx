@@ -1,21 +1,27 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import {
-  Play,
-  Pause,
-  RotateCcw,
-  SkipForward,
   Clock,
-  PieChart as PieChartIcon,
-  BarChart3,
-  Calendar,
-  CheckCircle,
+  Play,
+  StopCircle,
   Plus,
   Trash2,
-  Flame,
-  Zap,
-  Target,
-  Sparkles,
+  Edit3,
+  Calendar,
+  CheckSquare,
+  Mail,
+  HardDrive,
+  Tag as TagIcon,
+  FolderKanban,
+  Search,
+  Filter,
+  BarChart3,
+  PieChart as PieChartIcon,
+  X,
+  Check,
+  FileText,
   Layers,
+  Sparkles,
+  RefreshCw,
 } from 'lucide-react';
 import {
   PieChart,
@@ -27,740 +33,1384 @@ import {
   YAxis,
   Tooltip,
   ResponsiveContainer,
-  Legend,
 } from 'recharts';
-import { TimeCategory, TimeLog, EisenhowerTask, TimeBlock } from '../types';
+import {
+  Project,
+  ProjectTask,
+  NoteItem,
+  CalendarEvent,
+  TaskItem,
+  EmailItem,
+  DriveFile,
+  TimeLog,
+} from '../types';
 
-export const TimeManagementApp: React.FC = () => {
-  // ================= POMODORO TIMER STATE =================
-  const [timerMode, setTimerMode] = useState<'work' | 'shortBreak' | 'longBreak'>('work');
-  const [timeLeft, setTimeLeft] = useState(25 * 60); // seconds
-  const [isRunning, setIsRunning] = useState(false);
-  const [completedPomodoros, setCompletedPomodoros] = useState(3);
-  const [activeCategory, setActiveCategory] = useState<TimeCategory>('deep_work');
-  const [currentTaskTitle, setCurrentTaskTitle] = useState('Google Workspace Entegrasyon Kodlaması');
+interface TimeManagementAppProps {
+  projects?: Project[];
+  projectTasks?: ProjectTask[];
+  notes?: NoteItem[];
+  calendarEvents?: CalendarEvent[];
+  tasks?: TaskItem[];
+  emails?: EmailItem[];
+  driveFiles?: DriveFile[];
+  language?: string;
+}
 
-  const modeMinutes = {
-    work: 25,
-    shortBreak: 5,
-    longBreak: 15,
+type GoogleLinkType = 'tasks' | 'calendar' | 'gmail' | 'drive' | '';
+
+const CHART_COLORS = ['#6366f1', '#10b981', '#3b82f6', '#f59e0b', '#ec4899', '#8b5cf6', '#06b6d4', '#64748b'];
+
+export const TimeManagementApp: React.FC<TimeManagementAppProps> = ({
+  projects = [],
+  projectTasks = [],
+  notes = [],
+  calendarEvents = [],
+  tasks = [],
+  emails = [],
+  driveFiles = [],
+  language = 'tr',
+}) => {
+  const isTr = language === 'tr';
+
+  // 1. DYNAMIC TAGS FROM NOTES ONLY + DYNAMICALLY CREATED TAGS
+  const noteTags = useMemo(() => {
+    const extracted = new Set<string>();
+    notes.forEach((n) => {
+      if (n.tags && Array.isArray(n.tags)) {
+        n.tags.forEach((t) => {
+          if (t && t.trim()) extracted.add(t.trim());
+        });
+      }
+    });
+    return Array.from(extracted);
+  }, [notes]);
+
+  const [userCreatedTags, setUserCreatedTags] = useState<string[]>([]);
+
+  // Combined tags: Strictly Note tags + User dynamically added tags
+  const availableTags = useMemo(() => {
+    const all = new Set([...noteTags, ...userCreatedTags]);
+    return Array.from(all);
+  }, [noteTags, userCreatedTags]);
+
+  const handleAddNewTag = (newTag: string) => {
+    const trimmed = newTag.trim();
+    if (trimmed && !availableTags.includes(trimmed)) {
+      setUserCreatedTags((prev) => [...prev, trimmed]);
+    }
   };
 
+  // 2. TIMELOGS STATE
+  const [timeLogs, setTimeLogs] = useState<TimeLog[]>([]);
+  const [isLoading, setIsLoading] = useState(true);
+
+  // 3. LIVE TIMER TRACKER STATE
+  const [isTimerRunning, setIsTimerRunning] = useState(false);
+  const [timerStartTime, setTimerStartTime] = useState<Date | null>(null);
+  const [timerElapsedSeconds, setTimerElapsedSeconds] = useState(0);
+
+  // Live Timer Draft Fields
+  const [activeCardId, setActiveCardId] = useState<string>('');
+  const [activeCustomTitle, setActiveCustomTitle] = useState<string>('');
+  const [activeLinkType, setActiveLinkType] = useState<GoogleLinkType>('calendar');
+  const [activeLinkId, setActiveLinkId] = useState<string>('');
+  const [activeDescription, setActiveDescription] = useState<string>('');
+  const [activeTags, setActiveTags] = useState<string[]>([]);
+
+  // 4. MODAL STATE FOR MANUAL ADD & EDIT
+  const [isModalOpen, setIsModalOpen] = useState(false);
+  const [editingLog, setEditingLog] = useState<TimeLog | null>(null);
+
+  // Form Fields
+  const [formCardId, setFormCardId] = useState<string>('');
+  const [formCustomTitle, setFormCustomTitle] = useState<string>('');
+  const [formLinkType, setFormLinkType] = useState<GoogleLinkType>('calendar');
+  const [formLinkId, setFormLinkId] = useState<string>('');
+  const [formStartTime, setFormStartTime] = useState<string>('');
+  const [formEndTime, setFormEndTime] = useState<string>('');
+  const [formDescription, setFormDescription] = useState<string>('');
+  const [formTags, setFormTags] = useState<string[]>([]);
+  const [customTagInput, setCustomTagInput] = useState<string>('');
+
+  // 5. FILTERS
+  const [searchQuery, setSearchQuery] = useState('');
+  const [selectedTagFilter, setSelectedTagFilter] = useState('');
+  const [selectedProjectFilter, setSelectedProjectFilter] = useState('');
+  const [selectedLinkTypeFilter, setSelectedLinkTypeFilter] = useState<string>('');
+
+  // Fetch initial timelogs
+  useEffect(() => {
+    fetchTimelogs();
+  }, []);
+
+  const fetchTimelogs = async () => {
+    try {
+      setIsLoading(true);
+      const res = await fetch('/api/timelogs');
+      if (res.ok) {
+        const data = await res.json();
+        if (data.timelogs && Array.isArray(data.timelogs)) {
+          setTimeLogs(data.timelogs);
+          setIsLoading(false);
+          return;
+        }
+      }
+    } catch (err) {
+      console.warn('Backend timelogs endpoint failed, setting defaults', err);
+    }
+
+    // Default seed logs if empty
+    const now = new Date();
+    const todayStr = now.toISOString().slice(0, 10);
+    const firstTag = noteTags[0] || 'Genel';
+
+    const demoLogs: TimeLog[] = [
+      {
+        id: 'log-demo-1',
+        cardId: projectTasks[0]?.id || 'task-1',
+        cardTitle: projectTasks[0]?.title || 'Google Workspace Entegrasyon Testleri',
+        projectId: projects[0]?.id || 'proj-1',
+        projectName: projects[0]?.name || 'AdminSpace v2',
+        linkType: 'calendar',
+        linkId: calendarEvents[0]?.id || 'evt-1',
+        linkTitle: calendarEvents[0]?.summary || 'Sprint Planlama Toplantısı',
+        eventId: calendarEvents[0]?.id || 'evt-1',
+        eventSummary: calendarEvents[0]?.summary || 'Sprint Planlama Toplantısı',
+        startTime: `${todayStr}T09:00`,
+        endTime: `${todayStr}T10:30`,
+        durationMinutes: 90,
+        description: 'Google Calendar ve Timelog entegrasyon senkronizasyonu geliştirildi.',
+        tags: [firstTag],
+        createdAt: new Date().toISOString(),
+      },
+      {
+        id: 'log-demo-2',
+        cardId: projectTasks[1]?.id || 'task-2',
+        cardTitle: projectTasks[1]?.title || 'Kanban Arayüz İnceleme',
+        projectId: projects[0]?.id || 'proj-1',
+        projectName: projects[0]?.name || 'AdminSpace v2',
+        linkType: 'gmail',
+        linkId: emails[0]?.id || 'msg-1',
+        linkTitle: emails[0]?.subject || 'Proje Güncelleme Bildirimi',
+        startTime: `${todayStr}T11:00`,
+        endTime: `${todayStr}T12:00`,
+        durationMinutes: 60,
+        description: 'E-posta üzerinden gelen müşteri feedback metinleri incelendi.',
+        tags: [firstTag],
+        createdAt: new Date().toISOString(),
+      },
+    ];
+    setTimeLogs(demoLogs);
+    setIsLoading(false);
+  };
+
+  // Live Timer Interval
   useEffect(() => {
     let interval: any = null;
-    if (isRunning && timeLeft > 0) {
+    if (isTimerRunning && timerStartTime) {
       interval = setInterval(() => {
-        setTimeLeft((prev) => prev - 1);
+        const secs = Math.floor((new Date().getTime() - timerStartTime.getTime()) / 1000);
+        setTimerElapsedSeconds(secs);
       }, 1000);
-    } else if (timeLeft === 0 && isRunning) {
-      setIsRunning(false);
-      if (timerMode === 'work') {
-        setCompletedPomodoros((p) => p + 1);
-        // Log focus session automatically
-        const newLog: TimeLog = {
-          id: `log-${Date.now()}`,
-          title: currentTaskTitle || 'Pomodoro Çalışma Seansı',
-          category: activeCategory,
-          durationMinutes: 25,
-          date: new Date().toISOString().slice(0, 10),
-          startTime: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
-        };
-        setTimeLogs((prev) => [newLog, ...prev]);
-        setTimerMode('shortBreak');
-        setTimeLeft(5 * 60);
-      } else {
-        setTimerMode('work');
-        setTimeLeft(25 * 60);
-      }
+    } else {
+      clearInterval(interval);
     }
     return () => clearInterval(interval);
-  }, [isRunning, timeLeft, timerMode, activeCategory, currentTaskTitle]);
+  }, [isTimerRunning, timerStartTime]);
 
-  const handleStartPause = () => setIsRunning(!isRunning);
-
-  const handleReset = () => {
-    setIsRunning(false);
-    setTimeLeft(modeMinutes[timerMode] * 60);
+  // Start Live Timer
+  const handleStartTimer = () => {
+    const now = new Date();
+    setTimerStartTime(now);
+    setTimerElapsedSeconds(0);
+    setIsTimerRunning(true);
   };
 
-  const handleSwitchMode = (mode: 'work' | 'shortBreak' | 'longBreak') => {
-    setIsRunning(false);
-    setTimerMode(mode);
-    setTimeLeft(modeMinutes[mode] * 60);
-  };
+  // Stop Live Timer & Save Log
+  const handleStopTimer = async () => {
+    if (!timerStartTime) return;
+    const end = new Date();
+    const durationMins = Math.max(1, Math.round((end.getTime() - timerStartTime.getTime()) / 60000));
 
-  const formatTimer = (seconds: number) => {
-    const mins = Math.floor(seconds / 60);
-    const secs = seconds % 60;
-    return `${mins.toString().padStart(2, '0')}:${secs.toString().padStart(2, '0')}`;
-  };
+    // Resolve Card & Project
+    let cardTitle = activeCustomTitle.trim();
+    let cardId = activeCardId;
+    let projId = '';
+    let projName = '';
 
-  const totalModeSeconds = modeMinutes[timerMode] * 60;
-  const progressPercent = ((totalModeSeconds - timeLeft) / totalModeSeconds) * 100;
+    if (activeCardId) {
+      const foundTask = projectTasks.find((t) => t.id === activeCardId);
+      if (foundTask) {
+        cardTitle = foundTask.title;
+        projId = foundTask.projectId || '';
+        const foundProj = projects.find((p) => p.id === projId);
+        if (foundProj) projName = foundProj.name;
+      }
+    }
 
-  // ================= TIME LOGS & CHARTS STATE =================
-  const [timeLogs, setTimeLogs] = useState<TimeLog[]>([
-    {
-      id: 'log-1',
-      title: 'Gmail & Drive API İncelemesi',
-      category: 'deep_work',
-      durationMinutes: 50,
-      date: new Date().toISOString().slice(0, 10),
-      startTime: '09:00',
-    },
-    {
-      id: 'log-2',
-      title: 'Haftalık Sprint Planlama Toplantısı',
-      category: 'meeting',
-      durationMinutes: 45,
-      date: new Date().toISOString().slice(0, 10),
-      startTime: '11:00',
-    },
-    {
-      id: 'log-3',
-      title: 'E-posta & Görev Temizliği',
-      category: 'admin',
-      durationMinutes: 30,
-      date: new Date().toISOString().slice(0, 10),
-      startTime: '14:00',
-    },
-    {
-      id: 'log-4',
-      title: 'TypeScript & Node.js Dokümantasyonu',
-      category: 'learning',
-      durationMinutes: 60,
-      date: new Date().toISOString().slice(0, 10),
-      startTime: '15:30',
-    },
-  ]);
+    if (!cardTitle) {
+      cardTitle = 'Genel Çalışma Seansı';
+    }
 
-  const [newLogTitle, setNewLogTitle] = useState('');
-  const [newLogCategory, setNewLogCategory] = useState<TimeCategory>('deep_work');
-  const [newLogMinutes, setNewLogMinutes] = useState(30);
+    // Resolve Linked Item
+    const { linkTitle, eventId, eventSummary } = resolveLinkedItemDetails(
+      activeLinkType,
+      activeLinkId
+    );
 
-  const handleAddLog = (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!newLogTitle) return;
-    const log: TimeLog = {
-      id: `log-${Date.now()}`,
-      title: newLogTitle,
-      category: newLogCategory,
-      durationMinutes: Number(newLogMinutes),
-      date: new Date().toISOString().slice(0, 10),
-      startTime: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+    const formatLocalDateTime = (d: Date) => {
+      const pad = (n: number) => n.toString().padStart(2, '0');
+      return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
     };
-    setTimeLogs([log, ...timeLogs]);
-    setNewLogTitle('');
+
+    const newLog: TimeLog = {
+      id: `log-${Date.now()}`,
+      cardId: cardId || undefined,
+      cardTitle,
+      projectId: projId || undefined,
+      projectName: projName || undefined,
+      linkType: activeLinkType || undefined,
+      linkId: activeLinkId || undefined,
+      linkTitle: linkTitle || undefined,
+      eventId: eventId || undefined,
+      eventSummary: eventSummary || undefined,
+      startTime: formatLocalDateTime(timerStartTime),
+      endTime: formatLocalDateTime(end),
+      durationMinutes: durationMins,
+      description: activeDescription.trim(),
+      tags: activeTags.length > 0 ? activeTags : availableTags.slice(0, 1),
+      createdAt: new Date().toISOString(),
+    };
+
+    setTimeLogs((prev) => [newLog, ...prev]);
+    setIsTimerRunning(false);
+    setTimerStartTime(null);
+    setTimerElapsedSeconds(0);
+    setActiveDescription('');
+
+    try {
+      await fetch('/api/timelogs', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(newLog),
+      });
+    } catch (err) {
+      console.error('Error saving timelog:', err);
+    }
   };
 
-  const categoryLabels: Record<TimeCategory, string> = {
-    deep_work: 'Derin Çalışma',
-    meeting: 'Toplantı',
-    admin: 'İdari & E-posta',
-    learning: 'Öğrenme',
-    break: 'Mola',
+  // Helper to resolve linked item title & event fallback
+  const resolveLinkedItemDetails = (type: GoogleLinkType, id: string) => {
+    let linkTitle = '';
+    let eventId: string | undefined = undefined;
+    let eventSummary: string | undefined = undefined;
+
+    if (!id || !type) return { linkTitle, eventId, eventSummary };
+
+    if (type === 'tasks') {
+      const found = tasks.find((t) => t.id === id);
+      if (found) linkTitle = found.title;
+    } else if (type === 'calendar') {
+      const found = calendarEvents.find((e) => e.id === id);
+      if (found) {
+        linkTitle = found.summary;
+        eventId = found.id;
+        eventSummary = found.summary;
+      }
+    } else if (type === 'gmail') {
+      const found = emails.find((m) => m.id === id);
+      if (found) linkTitle = found.subject;
+    } else if (type === 'drive') {
+      const found = driveFiles.find((f) => f.id === id);
+      if (found) linkTitle = found.name;
+    }
+
+    return { linkTitle, eventId, eventSummary };
   };
 
-  const categoryColors: Record<TimeCategory, string> = {
-    deep_work: '#6366f1', // Indigo
-    meeting: '#3b82f6', // Blue
-    admin: '#f59e0b', // Amber
-    learning: '#10b981', // Emerald
-    break: '#94a3b8', // Slate
+  // Open Modal for New Log
+  const handleOpenAddModal = () => {
+    setEditingLog(null);
+    const now = new Date();
+    const pad = (n: number) => n.toString().padStart(2, '0');
+    const todayStr = `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())}`;
+
+    setFormCardId(projectTasks[0]?.id || '');
+    setFormCustomTitle('');
+    setFormLinkType('calendar');
+    setFormLinkId('');
+    setFormStartTime(`${todayStr}T09:00`);
+    setFormEndTime(`${todayStr}T10:00`);
+    setFormDescription('');
+    setFormTags(availableTags.slice(0, 1));
+    setIsModalOpen(true);
   };
 
-  // Recharts aggregated data
-  const pieDataMap: Record<string, number> = {};
-  timeLogs.forEach((l) => {
-    const label = categoryLabels[l.category];
-    pieDataMap[label] = (pieDataMap[label] || 0) + l.durationMinutes;
+  // Open Modal for Edit Log
+  const handleOpenEditModal = (log: TimeLog) => {
+    setEditingLog(log);
+    setFormCardId(log.cardId || '');
+    setFormCustomTitle(log.cardId ? '' : log.cardTitle);
+    setFormLinkType((log.linkType as GoogleLinkType) || (log.eventId ? 'calendar' : ''));
+    setFormLinkId(log.linkId || log.eventId || '');
+    setFormStartTime(log.startTime || '');
+    setFormEndTime(log.endTime || '');
+    setFormDescription(log.description || '');
+    setFormTags(log.tags || []);
+    setIsModalOpen(true);
+  };
+
+  // Save Modal Add / Edit
+  const handleSaveModal = async (e: React.FormEvent) => {
+    e.preventDefault();
+
+    let cardTitle = formCustomTitle.trim();
+    let cardId = formCardId;
+    let projId = '';
+    let projName = '';
+
+    if (formCardId) {
+      const foundTask = projectTasks.find((t) => t.id === formCardId);
+      if (foundTask) {
+        cardTitle = foundTask.title;
+        projId = foundTask.projectId || '';
+        const foundProj = projects.find((p) => p.id === projId);
+        if (foundProj) projName = foundProj.name;
+      }
+    }
+
+    if (!cardTitle) {
+      cardTitle = 'Başlıksız Çalışma Kaydı';
+    }
+
+    const { linkTitle, eventId, eventSummary } = resolveLinkedItemDetails(formLinkType, formLinkId);
+
+    let mins = 30;
+    if (formStartTime && formEndTime) {
+      const startMs = new Date(formStartTime).getTime();
+      const endMs = new Date(formEndTime).getTime();
+      if (!isNaN(startMs) && !isNaN(endMs) && endMs > startMs) {
+        mins = Math.round((endMs - startMs) / 60000);
+      }
+    }
+
+    const logToSave: TimeLog = {
+      id: editingLog ? editingLog.id : `log-${Date.now()}`,
+      cardId: cardId || undefined,
+      cardTitle,
+      projectId: projId || undefined,
+      projectName: projName || undefined,
+      linkType: formLinkType || undefined,
+      linkId: formLinkId || undefined,
+      linkTitle: linkTitle || undefined,
+      eventId: eventId || undefined,
+      eventSummary: eventSummary || undefined,
+      startTime: formStartTime,
+      endTime: formEndTime,
+      durationMinutes: mins,
+      description: formDescription.trim(),
+      tags: formTags.length > 0 ? formTags : availableTags.slice(0, 1),
+      createdAt: editingLog ? editingLog.createdAt : new Date().toISOString(),
+    };
+
+    if (editingLog) {
+      setTimeLogs((prev) => prev.map((l) => (l.id === editingLog.id ? logToSave : l)));
+    } else {
+      setTimeLogs((prev) => [logToSave, ...prev]);
+    }
+
+    setIsModalOpen(false);
+
+    try {
+      await fetch('/api/timelogs', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(logToSave),
+      });
+    } catch (err) {
+      console.error('Error saving timelog to backend:', err);
+    }
+  };
+
+  // Delete Timelog
+  const handleDeleteLog = async (id: string) => {
+    if (!confirm(isTr ? 'Bu timelog kaydını silmek istediğinize emin misiniz?' : 'Are you sure you want to delete this timelog?')) {
+      return;
+    }
+    setTimeLogs((prev) => prev.filter((l) => l.id !== id));
+    try {
+      await fetch(`/api/timelogs/${id}`, { method: 'DELETE' });
+    } catch (err) {
+      console.error('Error deleting timelog:', err);
+    }
+  };
+
+  // Toggle tag selection in form
+  const handleToggleFormTag = (tag: string) => {
+    if (formTags.includes(tag)) {
+      setFormTags(formTags.filter((t) => t !== tag));
+    } else {
+      setFormTags([...formTags, tag]);
+    }
+  };
+
+  // Add custom tag from input
+  const handleAddCustomTagFromInput = () => {
+    const trimmed = customTagInput.trim();
+    if (trimmed) {
+      handleAddNewTag(trimmed);
+      if (!formTags.includes(trimmed)) {
+        setFormTags([...formTags, trimmed]);
+      }
+      setCustomTagInput('');
+    }
+  };
+
+  // Get available items for selected Google Link Type
+  const getLinkedItemsOptions = (type: GoogleLinkType, selectedCardId?: string) => {
+    let proj: Project | undefined = undefined;
+    if (selectedCardId) {
+      const task = projectTasks.find((t) => t.id === selectedCardId);
+      if (task) {
+        proj = projects.find((p) => p.id === task.projectId);
+      }
+    }
+
+    switch (type) {
+      case 'tasks': {
+        return tasks.map((t) => ({ id: t.id, title: t.title }));
+      }
+      case 'calendar': {
+        let eventsList = calendarEvents;
+        if (proj && proj.linkedEventIds && proj.linkedEventIds.length > 0) {
+          const linked = calendarEvents.filter((e) => proj!.linkedEventIds!.includes(e.id));
+          if (linked.length > 0) eventsList = linked;
+        }
+        return eventsList.map((e) => ({ id: e.id, title: `${e.summary} (${formatDateTimeDisplay(e.start)})` }));
+      }
+      case 'gmail': {
+        let emailList = emails;
+        if (proj && proj.linkedEmailIds && proj.linkedEmailIds.length > 0) {
+          const linked = emails.filter((m) => proj!.linkedEmailIds!.includes(m.id));
+          if (linked.length > 0) emailList = linked;
+        }
+        return emailList.map((m) => ({ id: m.id, title: `${m.subject} - ${m.sender}` }));
+      }
+      case 'drive': {
+        let fileList = driveFiles;
+        if (proj && proj.linkedDriveFileIds && proj.linkedDriveFileIds.length > 0) {
+          const linked = driveFiles.filter((f) => proj!.linkedDriveFileIds!.includes(f.id));
+          if (linked.length > 0) fileList = linked;
+        }
+        return fileList.map((f) => ({ id: f.id, title: f.name }));
+      }
+      default:
+        return [];
+    }
+  };
+
+  // Filtered Timelogs
+  const filteredLogs = timeLogs.filter((log) => {
+    const matchesSearch =
+      !searchQuery ||
+      log.cardTitle.toLowerCase().includes(searchQuery.toLowerCase()) ||
+      (log.description && log.description.toLowerCase().includes(searchQuery.toLowerCase())) ||
+      (log.projectName && log.projectName.toLowerCase().includes(searchQuery.toLowerCase())) ||
+      (log.linkTitle && log.linkTitle.toLowerCase().includes(searchQuery.toLowerCase())) ||
+      (log.eventSummary && log.eventSummary.toLowerCase().includes(searchQuery.toLowerCase()));
+
+    const matchesTag = !selectedTagFilter || (log.tags && log.tags.includes(selectedTagFilter));
+    const matchesProject = !selectedProjectFilter || log.projectId === selectedProjectFilter;
+    const matchesLinkType = !selectedLinkTypeFilter || log.linkType === selectedLinkTypeFilter;
+
+    return matchesSearch && matchesTag && matchesProject && matchesLinkType;
   });
 
-  const pieChartData = Object.keys(pieDataMap).map((key) => ({
-    name: key,
-    value: pieDataMap[key],
+  // Analytics
+  const totalDurationMinutes = timeLogs.reduce((acc, log) => acc + (log.durationMinutes || 0), 0);
+  const totalHours = (totalDurationMinutes / 60).toFixed(1);
+
+  // Group duration by Tag for PieChart
+  const tagDurationMap: Record<string, number> = {};
+  timeLogs.forEach((log) => {
+    const logTags = log.tags && log.tags.length > 0 ? log.tags : ['Etiketsiz'];
+    logTags.forEach((t) => {
+      tagDurationMap[t] = (tagDurationMap[t] || 0) + log.durationMinutes;
+    });
+  });
+
+  const pieChartData = Object.keys(tagDurationMap).map((tag) => ({
+    name: tag,
+    value: tagDurationMap[tag],
   }));
 
-  const barChartData = [
-    { day: 'Pzt', dakikalar: 210 },
-    { day: 'Sal', dakikalar: 240 },
-    { day: 'Çar', dakikalar: 180 },
-    { day: 'Per', dakikalar: 300 },
-    { day: 'Cum', dakikalar: 225 },
-    { day: 'Cmt', dakikalar: 120 },
-    { day: 'Paz', dakikalar: 90 },
-  ];
+  // Group duration by Card/Project for BarChart
+  const cardDurationMap: Record<string, number> = {};
+  timeLogs.forEach((log) => {
+    const label = log.cardTitle.length > 20 ? log.cardTitle.substring(0, 20) + '...' : log.cardTitle;
+    cardDurationMap[label] = (cardDurationMap[label] || 0) + log.durationMinutes;
+  });
 
-  // ================= EISENHOWER MATRIX STATE =================
-  const [eisenhowerTasks, setEisenhowerTasks] = useState<EisenhowerTask[]>([
-    {
-      id: 'e1',
-      title: 'Kritik Müşteri Sunumu Hazırlığı',
-      quadrant: 'do_first',
-      completed: false,
-    },
-    {
-      id: 'e2',
-      title: 'Çeyreklik Stratejik Hedef Planlaması',
-      quadrant: 'schedule',
-      completed: false,
-    },
-    {
-      id: 'e3',
-      title: 'Haftalık Faturalama & E-posta Yanıtları',
-      quadrant: 'delegate',
-      completed: false,
-    },
-    {
-      id: 'e4',
-      title: 'Eski Dosyaları Arşivleme',
-      quadrant: 'eliminate',
-      completed: true,
-    },
-  ]);
+  const barChartData = Object.keys(cardDurationMap)
+    .map((card) => ({
+      name: card,
+      dakika: cardDurationMap[card],
+    }))
+    .slice(0, 6);
 
-  const [newMatrixTaskTitle, setNewMatrixTaskTitle] = useState('');
-  const [newMatrixQuadrant, setNewMatrixQuadrant] = useState<EisenhowerTask['quadrant']>('do_first');
-
-  const handleAddMatrixTask = (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!newMatrixTaskTitle) return;
-    const task: EisenhowerTask = {
-      id: `e-${Date.now()}`,
-      title: newMatrixTaskTitle,
-      quadrant: newMatrixQuadrant,
-      completed: false,
-    };
-    setEisenhowerTasks([...eisenhowerTasks, task]);
-    setNewMatrixTaskTitle('');
+  // Formatting Digits
+  const formatTimerDigits = (secs: number) => {
+    const h = Math.floor(secs / 3600);
+    const m = Math.floor((secs % 3600) / 60);
+    const s = secs % 60;
+    const pad = (n: number) => n.toString().padStart(2, '0');
+    return `${pad(h)}:${pad(m)}:${pad(s)}`;
   };
 
-  const handleToggleMatrixTask = (id: string) => {
-    setEisenhowerTasks(
-      eisenhowerTasks.map((t) => (t.id === id ? { ...t, completed: !t.completed } : t))
-    );
+  const formatDateTimeDisplay = (isoStr?: string) => {
+    if (!isoStr) return '';
+    try {
+      const d = new Date(isoStr);
+      if (isNaN(d.getTime())) return isoStr;
+      return d.toLocaleString('tr-TR', {
+        day: '2-digit',
+        month: 'short',
+        hour: '2-digit',
+        minute: '2-digit',
+      });
+    } catch {
+      return isoStr;
+    }
   };
 
-  const handleDeleteMatrixTask = (id: string) => {
-    setEisenhowerTasks(eisenhowerTasks.filter((t) => t.id !== id));
-  };
+  // Helper badge icon renderer for linked service
+  const renderLinkBadge = (type?: string, title?: string) => {
+    if (!title && !type) return null;
+    const itemTitle = title || 'Bağlı Öğe';
 
-  // ================= TIME BLOCKING HOURLY SCHEDULER =================
-  const [timeBlocks, setTimeBlocks] = useState<TimeBlock[]>([
-    { id: 'tb-8', hour: 8, title: 'Sabah E-posta & Gün Planı', category: 'admin', completed: true },
-    { id: 'tb-9', hour: 9, title: 'Derin Çalışma: Kodlama Seansı 1', category: 'deep_work', completed: true },
-    { id: 'tb-10', hour: 10, title: 'Derin Çalışma: Kodlama Seansı 2', category: 'deep_work', completed: true },
-    { id: 'tb-11', hour: 11, title: 'Google Calendar Ekip Toplantısı', category: 'meeting', completed: false },
-    { id: 'tb-12', hour: 12, title: 'Öğle Yemeği & Mola', category: 'break', completed: true },
-    { id: 'tb-13', hour: 13, title: 'Drive Doküman Taslağı İnceleme', category: 'learning', completed: false },
-    { id: 'tb-14', hour: 14, title: 'Google Tasks Öncelikli İşler', category: 'deep_work', completed: false },
-    { id: 'tb-15', hour: 15, title: 'İdari İşler & E-posta Takibi', category: 'admin', completed: false },
-  ]);
-
-  const handleToggleBlock = (id: string) => {
-    setTimeBlocks(
-      timeBlocks.map((b) => (b.id === id ? { ...b, completed: !b.completed } : b))
-    );
+    switch (type) {
+      case 'tasks':
+        return (
+          <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full bg-emerald-50 border border-emerald-200 text-emerald-800 text-[11px] font-semibold">
+            <CheckSquare className="w-3.5 h-3.5 text-emerald-600 shrink-0" />
+            <span className="truncate max-w-[200px]">{itemTitle}</span>
+          </span>
+        );
+      case 'calendar':
+        return (
+          <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full bg-blue-50 border border-blue-200 text-blue-800 text-[11px] font-semibold">
+            <Calendar className="w-3.5 h-3.5 text-blue-600 shrink-0" />
+            <span className="truncate max-w-[200px]">{itemTitle}</span>
+          </span>
+        );
+      case 'gmail':
+        return (
+          <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full bg-rose-50 border border-rose-200 text-rose-800 text-[11px] font-semibold">
+            <Mail className="w-3.5 h-3.5 text-rose-600 shrink-0" />
+            <span className="truncate max-w-[200px]">{itemTitle}</span>
+          </span>
+        );
+      case 'drive':
+        return (
+          <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full bg-amber-50 border border-amber-200 text-amber-800 text-[11px] font-semibold">
+            <HardDrive className="w-3.5 h-3.5 text-amber-600 shrink-0" />
+            <span className="truncate max-w-[200px]">{itemTitle}</span>
+          </span>
+        );
+      default:
+        return (
+          <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full bg-slate-100 border border-slate-200 text-slate-700 text-[11px] font-semibold">
+            <Calendar className="w-3.5 h-3.5 text-slate-500 shrink-0" />
+            <span className="truncate max-w-[200px]">{itemTitle}</span>
+          </span>
+        );
+    }
   };
 
   return (
-    <div className="space-y-8 max-w-7xl mx-auto pb-12">
-      {/* Time Management Hero Banner */}
-      <div className="bg-gradient-to-br from-indigo-900 via-slate-900 to-purple-950 text-white rounded-3xl p-6 sm:p-8 shadow-xl relative overflow-hidden">
-        <div className="absolute right-0 top-0 translate-x-12 -translate-y-12 w-96 h-96 bg-purple-500/10 rounded-full blur-3xl pointer-events-none" />
+    <div className="space-y-6 pb-12">
+      {/* Top Banner Header */}
+      <div className="bg-gradient-to-r from-emerald-950 via-slate-900 to-indigo-950 text-white rounded-3xl p-6 sm:p-8 shadow-xl relative overflow-hidden">
+        <div className="absolute top-0 right-0 -mt-8 -mr-8 w-64 h-64 bg-emerald-500/10 rounded-full blur-3xl pointer-events-none" />
         <div className="relative z-10 flex flex-col md:flex-row md:items-center justify-between gap-6">
-          <div className="space-y-2">
-            <div className="inline-flex items-center gap-2 px-3 py-1 bg-white/10 backdrop-blur-md rounded-full text-xs font-semibold text-purple-200 border border-white/10">
-              <Zap className="w-3.5 h-3.5 text-amber-400" /> ODAK VE VERİMLİLİK SİSTEMİ
+          <div>
+            <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-emerald-500/20 border border-emerald-400/30 text-emerald-300 text-xs font-medium mb-3">
+              <Clock className="w-3.5 h-3.5" />
+              {isTr ? 'Kanban & Google Workspace Timelog' : 'Kanban & Google Workspace Timelog'}
             </div>
             <h1 className="text-2xl sm:text-3xl font-extrabold tracking-tight">
-              Zaman Yönetimi & Odak Merkezi
+              {isTr ? 'Zaman Yönetimi & Kayıtlar' : 'Time Management & Logs'}
             </h1>
-            <p className="text-sm text-indigo-200/80 max-w-xl">
-              Pomodoro seansları, saatlik zaman bloklama ve Eisenhower matrisi ile gününüzü en üst düzey verimlilikle yönetin.
+            <p className="text-slate-300 text-sm mt-1 max-w-xl">
+              {isTr
+                ? 'Kanban kartlarınıza Google Tasks, Calendar, Gmail ve Drive öğelerini bağlayın, çalışma sürelerinizi not etiketleriyle analiz edin.'
+                : 'Track work time on Kanban cards linked to Google Tasks, Calendar, Gmail & Drive.'}
             </p>
           </div>
 
-          <div className="flex items-center gap-4 bg-white/5 backdrop-blur-md border border-white/10 p-4 rounded-2xl">
-            <div className="text-center px-3 border-r border-white/10">
-              <div className="text-2xl font-black text-amber-400 flex items-center justify-center gap-1">
-                <Flame className="w-5 h-5 fill-amber-400 text-amber-400" /> {completedPomodoros}
-              </div>
-              <div className="text-[10px] uppercase font-semibold text-indigo-200">Pomodoro</div>
+          <div className="flex flex-wrap items-center gap-3">
+            <button
+              onClick={handleOpenAddModal}
+              className="inline-flex items-center gap-2 px-5 py-3 rounded-2xl bg-emerald-500 hover:bg-emerald-600 text-slate-950 font-bold text-sm shadow-lg shadow-emerald-500/20 transition-all transform active:scale-95 cursor-pointer"
+            >
+              <Plus className="w-5 h-5" />
+              {isTr ? 'Zaman Kaydı Ekle' : 'Add Timelog'}
+            </button>
+          </div>
+        </div>
+
+        {/* Quick Stats Bar */}
+        <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 mt-6 pt-6 border-t border-slate-800/80">
+          <div className="bg-slate-800/60 backdrop-blur-md rounded-2xl p-3.5 border border-slate-700/50">
+            <div className="text-[11px] font-medium text-slate-400 uppercase tracking-wider">
+              {isTr ? 'Toplam Süre' : 'Total Duration'}
             </div>
-            <div className="text-center px-3">
-              <div className="text-2xl font-black text-emerald-400">
-                {(timeLogs.reduce((acc, curr) => acc + curr.durationMinutes, 0) / 60).toFixed(1)}s
-              </div>
-              <div className="text-[10px] uppercase font-semibold text-indigo-200">Bugünkü Çalışma</div>
+            <div className="text-xl font-bold text-emerald-400 mt-1">{totalHours} {isTr ? 'Saat' : 'Hours'}</div>
+          </div>
+          <div className="bg-slate-800/60 backdrop-blur-md rounded-2xl p-3.5 border border-slate-700/50">
+            <div className="text-[11px] font-medium text-slate-400 uppercase tracking-wider">
+              {isTr ? 'Toplam Kayıt' : 'Total Timelogs'}
             </div>
+            <div className="text-xl font-bold text-white mt-1">{timeLogs.length}</div>
+          </div>
+          <div className="bg-slate-800/60 backdrop-blur-md rounded-2xl p-3.5 border border-slate-700/50">
+            <div className="text-[11px] font-medium text-slate-400 uppercase tracking-wider">
+              {isTr ? 'Aktif Kart / Proje' : 'Active Cards'}
+            </div>
+            <div className="text-xl font-bold text-indigo-300 mt-1">
+              {new Set(timeLogs.map((l) => l.cardTitle)).size}
+            </div>
+          </div>
+          <div className="bg-slate-800/60 backdrop-blur-md rounded-2xl p-3.5 border border-slate-700/50">
+            <div className="text-[11px] font-medium text-slate-400 uppercase tracking-wider">
+              {isTr ? 'Etiket Sayısı' : 'Active Tags'}
+            </div>
+            <div className="text-xl font-bold text-amber-300 mt-1">{availableTags.length}</div>
           </div>
         </div>
       </div>
 
-      {/* Grid: Pomodoro & Hourly Schedule */}
-      <div className="grid grid-cols-1 lg:grid-cols-12 gap-8">
-        {/* Pomodoro Timer (7 cols) */}
-        <div className="lg:col-span-7 bg-white rounded-3xl border border-slate-200/80 shadow-xs p-6 sm:p-8 flex flex-col justify-between">
+      {/* LIVE TIMER TRACKER */}
+      <div className="bg-white border border-slate-200/80 rounded-3xl p-6 shadow-xs hover:shadow-md transition-all">
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 mb-4 pb-3 border-b border-slate-100">
+          <div className="flex items-center gap-2">
+            <div className={`p-2 rounded-xl ${isTimerRunning ? 'bg-emerald-100 text-emerald-600 animate-pulse' : 'bg-slate-100 text-slate-600'}`}>
+              <Clock className="w-5 h-5" />
+            </div>
+            <div>
+              <h2 className="font-bold text-slate-900 text-base">
+                {isTr ? 'Canlı Zaman Sayacı' : 'Live Timer Tracker'}
+              </h2>
+              <p className="text-xs text-slate-500">
+                {isTr ? 'Kanban kartı ve bağlı servisi seçip çalışmanızı canlı kaydedin.' : 'Track live work sessions on cards.'}
+              </p>
+            </div>
+          </div>
+
+          {/* Clock Display & Action Buttons */}
+          <div className="flex items-center gap-3">
+            <div className={`text-2xl font-mono font-bold tracking-tight px-4 py-2 rounded-2xl ${
+              isTimerRunning ? 'bg-emerald-950 text-emerald-400 ring-2 ring-emerald-500/50' : 'bg-slate-100 text-slate-700'
+            }`}>
+              {formatTimerDigits(timerElapsedSeconds)}
+            </div>
+
+            {!isTimerRunning ? (
+              <button
+                onClick={handleStartTimer}
+                className="inline-flex items-center gap-2 px-5 py-2.5 rounded-2xl bg-emerald-600 hover:bg-emerald-700 text-white font-semibold text-sm shadow-md transition-all active:scale-95 cursor-pointer"
+              >
+                <Play className="w-4 h-4 fill-current" />
+                {isTr ? 'Başlat' : 'Start'}
+              </button>
+            ) : (
+              <button
+                onClick={handleStopTimer}
+                className="inline-flex items-center gap-2 px-5 py-2.5 rounded-2xl bg-rose-600 hover:bg-rose-700 text-white font-semibold text-sm shadow-md transition-all active:scale-95 cursor-pointer"
+              >
+                <StopCircle className="w-4 h-4" />
+                {isTr ? 'Durdur & Kaydet' : 'Stop & Save'}
+              </button>
+            )}
+          </div>
+        </div>
+
+        {/* Live Timer Fields */}
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+          {/* 1. Kanban Card Selection */}
           <div>
-            <div className="flex items-center justify-between gap-2 mb-6">
-              <div className="flex items-center gap-2">
-                <Clock className="w-6 h-6 text-indigo-600" />
-                <h2 className="font-bold text-slate-900 text-lg">Pomodoro Odağı</h2>
-              </div>
-              <span className="text-xs font-semibold px-2.5 py-1 bg-indigo-50 text-indigo-700 rounded-full border border-indigo-100">
-                {timerMode === 'work' ? '🎯 Odaklanma Zamanı' : '☕ Mola Zamanı'}
-              </span>
-            </div>
-
-            {/* Mode Selector */}
-            <div className="flex items-center justify-center p-1.5 bg-slate-100 rounded-2xl max-w-md mx-auto mb-8 text-xs font-semibold">
-              <button
-                onClick={() => handleSwitchMode('work')}
-                className={`flex-1 py-2.5 rounded-xl transition-all cursor-pointer ${
-                  timerMode === 'work'
-                    ? 'bg-indigo-600 text-white shadow-md'
-                    : 'text-slate-600 hover:text-slate-900'
-                }`}
-              >
-                25dk Odak
-              </button>
-              <button
-                onClick={() => handleSwitchMode('shortBreak')}
-                className={`flex-1 py-2.5 rounded-xl transition-all cursor-pointer ${
-                  timerMode === 'shortBreak'
-                    ? 'bg-emerald-600 text-white shadow-md'
-                    : 'text-slate-600 hover:text-slate-900'
-                }`}
-              >
-                5dk Kısa Mola
-              </button>
-              <button
-                onClick={() => handleSwitchMode('longBreak')}
-                className={`flex-1 py-2.5 rounded-xl transition-all cursor-pointer ${
-                  timerMode === 'longBreak'
-                    ? 'bg-blue-600 text-white shadow-md'
-                    : 'text-slate-600 hover:text-slate-900'
-                }`}
-              >
-                15dk Uzun Mola
-              </button>
-            </div>
-
-            {/* Circular Timer Visual */}
-            <div className="relative w-64 h-64 mx-auto my-4 flex items-center justify-center">
-              <svg className="w-full h-full transform -rotate-90" viewBox="0 0 100 100">
-                <circle
-                  cx="50"
-                  cy="50"
-                  r="42"
-                  stroke="currentColor"
-                  strokeWidth="6"
-                  className="text-slate-100"
-                  fill="transparent"
-                />
-                <circle
-                  cx="50"
-                  cy="50"
-                  r="42"
-                  stroke="currentColor"
-                  strokeWidth="6"
-                  strokeDasharray="263.89"
-                  strokeDashoffset={263.89 - (263.89 * progressPercent) / 100}
-                  strokeLinecap="round"
-                  className={`transition-all duration-1000 ${
-                    timerMode === 'work'
-                      ? 'text-indigo-600'
-                      : timerMode === 'shortBreak'
-                      ? 'text-emerald-500'
-                      : 'text-blue-500'
-                  }`}
-                  fill="transparent"
-                />
-              </svg>
-
-              <div className="absolute flex flex-col items-center justify-center text-center">
-                <span className="text-5xl font-black tracking-tight text-slate-900 font-mono">
-                  {formatTimer(timeLeft)}
-                </span>
-                <span className="text-xs text-slate-500 mt-2 font-medium px-3 py-1 bg-slate-100 rounded-full">
-                  {currentTaskTitle || 'Çalışma Seansı'}
-                </span>
-              </div>
-            </div>
-
-            {/* Task Title Input & Category */}
-            <div className="mt-6 space-y-3 max-w-md mx-auto">
+            <label className="block text-xs font-semibold text-slate-700 mb-1 flex items-center gap-1.5">
+              <FolderKanban className="w-3.5 h-3.5 text-indigo-600" />
+              {isTr ? 'İlişkili Kanban Kartı' : 'Related Kanban Card'}
+            </label>
+            <select
+              value={activeCardId}
+              onChange={(e) => {
+                setActiveCardId(e.target.value);
+                if (e.target.value) setActiveCustomTitle('');
+              }}
+              disabled={isTimerRunning}
+              className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl text-xs text-slate-800 focus:outline-none focus:ring-2 focus:ring-emerald-500 disabled:opacity-75"
+            >
+              <option value="">{isTr ? '-- Kanban Kartı Seçin --' : '-- Select Kanban Card --'}</option>
+              {projectTasks.map((task) => {
+                const proj = projects.find((p) => p.id === task.projectId);
+                return (
+                  <option key={task.id} value={task.id}>
+                    {proj ? `[${proj.name}] ` : ''}{task.title}
+                  </option>
+                );
+              })}
+            </select>
+            {!activeCardId && (
               <input
                 type="text"
-                placeholder="Şu an ne üzerinde çalışıyorsunuz?..."
-                value={currentTaskTitle}
-                onChange={(e) => setCurrentTaskTitle(e.target.value)}
-                className="w-full px-4 py-2.5 border border-slate-200 rounded-xl text-xs text-center font-medium focus:outline-none focus:ring-2 focus:ring-indigo-500/20"
+                placeholder={isTr ? 'veya Özel Kart/Görev Başlığı...' : 'or Custom Task Title...'}
+                value={activeCustomTitle}
+                onChange={(e) => setActiveCustomTitle(e.target.value)}
+                disabled={isTimerRunning}
+                className="w-full mt-2 px-3 py-1.5 bg-white border border-slate-200 rounded-xl text-xs text-slate-800 placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-emerald-500"
               />
-
-              <div className="flex items-center justify-center gap-2 text-xs">
-                <span className="text-slate-500 font-medium">Kategori:</span>
-                <select
-                  value={activeCategory}
-                  onChange={(e) => setActiveCategory(e.target.value as TimeCategory)}
-                  className="px-3 py-1.5 border border-slate-200 rounded-lg text-xs font-semibold text-slate-700 bg-white"
-                >
-                  <option value="deep_work">Derin Çalışma</option>
-                  <option value="meeting">Toplantı</option>
-                  <option value="admin">İdari İşler</option>
-                  <option value="learning">Öğrenme</option>
-                </select>
-              </div>
-            </div>
+            )}
           </div>
 
-          {/* Controls */}
-          <div className="flex items-center justify-center gap-4 mt-8 pt-6 border-t border-slate-100">
-            <button
-              onClick={handleReset}
-              title="Sıfırla"
-              className="p-3 text-slate-500 hover:text-slate-900 bg-slate-100 hover:bg-slate-200 rounded-2xl transition-all cursor-pointer"
-            >
-              <RotateCcw className="w-5 h-5" />
-            </button>
-
-            <button
-              onClick={handleStartPause}
-              className={`px-8 py-3.5 rounded-2xl font-bold text-white shadow-lg flex items-center gap-2 transition-all cursor-pointer ${
-                isRunning
-                  ? 'bg-amber-500 hover:bg-amber-600 shadow-amber-500/20'
-                  : 'bg-indigo-600 hover:bg-indigo-700 shadow-indigo-600/20'
-              }`}
-            >
-              {isRunning ? (
-                <>
-                  <Pause className="w-5 h-5 fill-white" /> Duraklat
-                </>
-              ) : (
-                <>
-                  <Play className="w-5 h-5 fill-white" /> Başlat
-                </>
-              )}
-            </button>
-
-            <button
-              onClick={() => {
-                setIsRunning(false);
-                setTimeLeft(0);
-              }}
-              title="Atla"
-              className="p-3 text-slate-500 hover:text-slate-900 bg-slate-100 hover:bg-slate-200 rounded-2xl transition-all cursor-pointer"
-            >
-              <SkipForward className="w-5 h-5" />
-            </button>
-          </div>
-        </div>
-
-        {/* Saatlik Zaman Bloklama (5 cols) */}
-        <div className="lg:col-span-5 bg-white rounded-3xl border border-slate-200/80 shadow-xs p-6 flex flex-col">
-          <div className="flex items-center justify-between gap-2 mb-4">
-            <div className="flex items-center gap-2">
-              <Calendar className="w-5 h-5 text-indigo-600" />
-              <h2 className="font-bold text-slate-900 text-base">Saatlik Zaman Bloklama</h2>
-            </div>
-            <span className="text-[11px] text-slate-400 font-medium">Günlük Akış</span>
-          </div>
-
-          <p className="text-xs text-slate-500 mb-4">
-            Gününüzü saatlik zaman bloklarına ayırarak odak dağınıklığını önleyin.
-          </p>
-
-          <div className="space-y-2.5 overflow-y-auto max-h-[440px] pr-1 flex-1">
-            {timeBlocks.map((block) => (
-              <div
-                key={block.id}
-                onClick={() => handleToggleBlock(block.id)}
-                className={`p-3 rounded-2xl border transition-all cursor-pointer flex items-center justify-between gap-3 ${
-                  block.completed
-                    ? 'bg-slate-50 border-slate-200/60 opacity-60'
-                    : 'bg-indigo-50/30 border-indigo-100 hover:border-indigo-300'
-                }`}
-              >
-                <div className="flex items-center gap-3">
-                  <span className="text-xs font-mono font-bold text-indigo-900 bg-indigo-100/80 px-2 py-1 rounded-lg">
-                    {block.hour.toString().padStart(2, '0')}:00
-                  </span>
-                  <div>
-                    <h4
-                      className={`text-xs font-semibold ${
-                        block.completed ? 'line-through text-slate-400' : 'text-slate-800'
-                      }`}
-                    >
-                      {block.title}
-                    </h4>
-                    <span className="text-[10px] text-slate-400 font-medium">
-                      {categoryLabels[block.category]}
-                    </span>
-                  </div>
-                </div>
-
-                <div
-                  className={`w-5 h-5 rounded-lg border flex items-center justify-center transition-all ${
-                    block.completed
-                      ? 'bg-emerald-500 border-emerald-500 text-white'
-                      : 'border-slate-300 bg-white'
-                  }`}
-                >
-                  {block.completed && <CheckCircle className="w-3.5 h-3.5" />}
-                </div>
-              </div>
-            ))}
-          </div>
-        </div>
-      </div>
-
-      {/* Eisenhower Matrix Section */}
-      <div className="bg-white rounded-3xl border border-slate-200/80 shadow-xs p-6 sm:p-8 space-y-6">
-        <div className="flex flex-wrap items-center justify-between gap-4">
+          {/* 2. Linked Google Workspace Service Options (Tasks, Calendar, Gmail, Drive) */}
           <div>
-            <div className="flex items-center gap-2">
-              <Layers className="w-6 h-6 text-indigo-600" />
-              <h2 className="font-bold text-slate-900 text-lg">Eisenhower Önceliklendirme Matrisi</h2>
+            <label className="block text-xs font-semibold text-slate-700 mb-1 flex items-center gap-1.5">
+              <Layers className="w-3.5 h-3.5 text-emerald-600" />
+              {isTr ? 'Bağlı Google Servisi' : 'Linked Google Service'}
+            </label>
+            <div className="grid grid-cols-4 gap-1 mb-2">
+              <button
+                type="button"
+                disabled={isTimerRunning}
+                onClick={() => { setActiveLinkType('tasks'); setActiveLinkId(''); }}
+                className={`flex items-center justify-center gap-1 py-1.5 px-2 rounded-lg text-xs font-medium border transition-all cursor-pointer ${
+                  activeLinkType === 'tasks'
+                    ? 'bg-emerald-600 text-white border-emerald-600 font-bold'
+                    : 'bg-slate-50 text-slate-600 border-slate-200 hover:bg-slate-100'
+                }`}
+                title="Google Tasks"
+              >
+                <CheckSquare className="w-3.5 h-3.5" />
+                <span className="hidden sm:inline">Tasks</span>
+              </button>
+
+              <button
+                type="button"
+                disabled={isTimerRunning}
+                onClick={() => { setActiveLinkType('calendar'); setActiveLinkId(''); }}
+                className={`flex items-center justify-center gap-1 py-1.5 px-2 rounded-lg text-xs font-medium border transition-all cursor-pointer ${
+                  activeLinkType === 'calendar'
+                    ? 'bg-blue-600 text-white border-blue-600 font-bold'
+                    : 'bg-slate-50 text-slate-600 border-slate-200 hover:bg-slate-100'
+                }`}
+                title="Google Calendar"
+              >
+                <Calendar className="w-3.5 h-3.5" />
+                <span className="hidden sm:inline">Takvim</span>
+              </button>
+
+              <button
+                type="button"
+                disabled={isTimerRunning}
+                onClick={() => { setActiveLinkType('gmail'); setActiveLinkId(''); }}
+                className={`flex items-center justify-center gap-1 py-1.5 px-2 rounded-lg text-xs font-medium border transition-all cursor-pointer ${
+                  activeLinkType === 'gmail'
+                    ? 'bg-rose-600 text-white border-rose-600 font-bold'
+                    : 'bg-slate-50 text-slate-600 border-slate-200 hover:bg-slate-100'
+                }`}
+                title="Gmail"
+              >
+                <Mail className="w-3.5 h-3.5" />
+                <span className="hidden sm:inline">Gmail</span>
+              </button>
+
+              <button
+                type="button"
+                disabled={isTimerRunning}
+                onClick={() => { setActiveLinkType('drive'); setActiveLinkId(''); }}
+                className={`flex items-center justify-center gap-1 py-1.5 px-2 rounded-lg text-xs font-medium border transition-all cursor-pointer ${
+                  activeLinkType === 'drive'
+                    ? 'bg-amber-600 text-white border-amber-600 font-bold'
+                    : 'bg-slate-50 text-slate-600 border-slate-200 hover:bg-slate-100'
+                }`}
+                title="Google Drive"
+              >
+                <HardDrive className="w-3.5 h-3.5" />
+                <span className="hidden sm:inline">Drive</span>
+              </button>
             </div>
-            <p className="text-xs text-slate-500 mt-1">
-              Görevleri aciliyet ve önem seviyelerine göre 4 çeyreğe ayırarak zamanı etkili yönetin.
-            </p>
+
+            {/* Sub-item selector for selected Google Service */}
+            {activeLinkType && (
+              <select
+                value={activeLinkId}
+                onChange={(e) => setActiveLinkId(e.target.value)}
+                disabled={isTimerRunning}
+                className="w-full px-3 py-1.5 bg-slate-50 border border-slate-200 rounded-xl text-xs text-slate-800 focus:outline-none focus:ring-2 focus:ring-emerald-500 disabled:opacity-75"
+              >
+                <option value="">
+                  {isTr
+                    ? `-- ${activeLinkType.toUpperCase()} Öğesi Seçin --`
+                    : `-- Select ${activeLinkType.toUpperCase()} Item --`}
+                </option>
+                {getLinkedItemsOptions(activeLinkType, activeCardId).map((item) => (
+                  <option key={item.id} value={item.id}>
+                    {item.title}
+                  </option>
+                ))}
+              </select>
+            )}
           </div>
 
-          <form onSubmit={handleAddMatrixTask} className="flex items-center gap-2 w-full md:w-auto">
-            <input
-              type="text"
-              placeholder="Yeni matris görevi..."
-              value={newMatrixTaskTitle}
-              onChange={(e) => setNewMatrixTaskTitle(e.target.value)}
-              className="px-3 py-1.5 border border-slate-300 rounded-xl text-xs focus:outline-none focus:ring-2 focus:ring-indigo-500/20 w-full md:w-64"
-            />
-            <select
-              value={newMatrixQuadrant}
-              onChange={(e) => setNewMatrixQuadrant(e.target.value as any)}
-              className="px-2.5 py-1.5 border border-slate-300 rounded-xl text-xs font-semibold bg-white"
-            >
-              <option value="do_first">🔴 Acil & Önemli (Hemen Yap)</option>
-              <option value="schedule">🔵 Acil Değil & Önemli (Planla)</option>
-              <option value="delegate">🟡 Acil & Önemli Değil (Devret)</option>
-              <option value="eliminate">⚪ Acil Değil & Değil (Ele)</option>
-            </select>
-            <button
-              type="submit"
-              className="px-3 py-1.5 bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-semibold rounded-xl flex items-center gap-1 shrink-0 transition-colors cursor-pointer"
-            >
-              <Plus className="w-4 h-4" /> Ekle
-            </button>
-          </form>
+          {/* 3. Tags (Strictly matching Notes tags + User tags) */}
+          <div>
+            <label className="block text-xs font-semibold text-slate-700 mb-1 flex items-center gap-1.5">
+              <TagIcon className="w-3.5 h-3.5 text-amber-600" />
+              {isTr ? 'Etiketler (Notlardaki Etiketler)' : 'Tags (Matching Notes)'}
+            </label>
+            <div className="flex flex-wrap gap-1.5 max-h-20 overflow-y-auto p-1 bg-slate-50 rounded-xl border border-slate-200">
+              {availableTags.length === 0 ? (
+                <span className="text-[11px] text-slate-400 italic p-1">
+                  {isTr ? 'Henüz etiket bulunmuyor.' : 'No tags found.'}
+                </span>
+              ) : (
+                availableTags.map((tag) => {
+                  const isSelected = activeTags.includes(tag);
+                  return (
+                    <button
+                      key={tag}
+                      type="button"
+                      disabled={isTimerRunning}
+                      onClick={() => {
+                        if (isSelected) {
+                          setActiveTags(activeTags.filter((t) => t !== tag));
+                        } else {
+                          setActiveTags([...activeTags, tag]);
+                        }
+                      }}
+                      className={`px-2.5 py-1 rounded-lg text-[11px] font-medium transition-all cursor-pointer ${
+                        isSelected
+                          ? 'bg-emerald-600 text-white font-semibold shadow-2xs'
+                          : 'bg-white text-slate-700 border border-slate-200 hover:bg-slate-100'
+                      }`}
+                    >
+                      #{tag}
+                    </button>
+                  );
+                })
+              )}
+            </div>
+          </div>
         </div>
 
-        {/* 4 Quadrants Grid */}
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-          {/* Q1: Do First */}
-          <div className="p-4 rounded-2xl bg-red-50/50 border border-red-200/80 space-y-3">
-            <div className="flex items-center justify-between">
-              <h3 className="text-xs font-bold text-red-800 flex items-center gap-1.5">
-                🔴 1. Acil & Önemli (Hemen Yap)
-              </h3>
-              <span className="text-[10px] font-bold px-2 py-0.5 bg-red-100 text-red-700 rounded-full">
-                Yüksek Öncelik
-              </span>
-            </div>
-            <div className="space-y-2">
-              {eisenhowerTasks
-                .filter((t) => t.quadrant === 'do_first')
-                .map((t) => (
-                  <div
-                    key={t.id}
-                    className="p-2.5 bg-white rounded-xl border border-red-100 shadow-2xs flex items-center justify-between gap-2"
-                  >
-                    <span
-                      onClick={() => handleToggleMatrixTask(t.id)}
-                      className={`text-xs font-semibold cursor-pointer ${
-                        t.completed ? 'line-through text-slate-400' : 'text-slate-800'
-                      }`}
-                    >
-                      {t.title}
-                    </span>
-                    <button
-                      onClick={() => handleDeleteMatrixTask(t.id)}
-                      className="text-slate-300 hover:text-red-500 transition-colors p-1"
-                    >
-                      <Trash2 className="w-3.5 h-3.5" />
-                    </button>
-                  </div>
-                ))}
-            </div>
-          </div>
-
-          {/* Q2: Schedule */}
-          <div className="p-4 rounded-2xl bg-blue-50/50 border border-blue-200/80 space-y-3">
-            <div className="flex items-center justify-between">
-              <h3 className="text-xs font-bold text-blue-800 flex items-center gap-1.5">
-                🔵 2. Acil Değil & Önemli (Planla)
-              </h3>
-              <span className="text-[10px] font-bold px-2 py-0.5 bg-blue-100 text-blue-700 rounded-full">
-                Stratejik
-              </span>
-            </div>
-            <div className="space-y-2">
-              {eisenhowerTasks
-                .filter((t) => t.quadrant === 'schedule')
-                .map((t) => (
-                  <div
-                    key={t.id}
-                    className="p-2.5 bg-white rounded-xl border border-blue-100 shadow-2xs flex items-center justify-between gap-2"
-                  >
-                    <span
-                      onClick={() => handleToggleMatrixTask(t.id)}
-                      className={`text-xs font-semibold cursor-pointer ${
-                        t.completed ? 'line-through text-slate-400' : 'text-slate-800'
-                      }`}
-                    >
-                      {t.title}
-                    </span>
-                    <button
-                      onClick={() => handleDeleteMatrixTask(t.id)}
-                      className="text-slate-300 hover:text-red-500 transition-colors p-1"
-                    >
-                      <Trash2 className="w-3.5 h-3.5" />
-                    </button>
-                  </div>
-                ))}
-            </div>
-          </div>
-
-          {/* Q3: Delegate */}
-          <div className="p-4 rounded-2xl bg-amber-50/50 border border-amber-200/80 space-y-3">
-            <div className="flex items-center justify-between">
-              <h3 className="text-xs font-bold text-amber-800 flex items-center gap-1.5">
-                🟡 3. Acil & Önemli Değil (Devret)
-              </h3>
-              <span className="text-[10px] font-bold px-2 py-0.5 bg-amber-100 text-amber-800 rounded-full">
-                Otomasyon / Ekip
-              </span>
-            </div>
-            <div className="space-y-2">
-              {eisenhowerTasks
-                .filter((t) => t.quadrant === 'delegate')
-                .map((t) => (
-                  <div
-                    key={t.id}
-                    className="p-2.5 bg-white rounded-xl border border-amber-100 shadow-2xs flex items-center justify-between gap-2"
-                  >
-                    <span
-                      onClick={() => handleToggleMatrixTask(t.id)}
-                      className={`text-xs font-semibold cursor-pointer ${
-                        t.completed ? 'line-through text-slate-400' : 'text-slate-800'
-                      }`}
-                    >
-                      {t.title}
-                    </span>
-                    <button
-                      onClick={() => handleDeleteMatrixTask(t.id)}
-                      className="text-slate-300 hover:text-red-500 transition-colors p-1"
-                    >
-                      <Trash2 className="w-3.5 h-3.5" />
-                    </button>
-                  </div>
-                ))}
-            </div>
-          </div>
-
-          {/* Q4: Eliminate */}
-          <div className="p-4 rounded-2xl bg-slate-100/60 border border-slate-200/80 space-y-3">
-            <div className="flex items-center justify-between">
-              <h3 className="text-xs font-bold text-slate-700 flex items-center gap-1.5">
-                ⚪ 4. Acil Değil & Önemli Değil (Ele)
-              </h3>
-              <span className="text-[10px] font-bold px-2 py-0.5 bg-slate-200 text-slate-700 rounded-full">
-                Düşük Değer
-              </span>
-            </div>
-            <div className="space-y-2">
-              {eisenhowerTasks
-                .filter((t) => t.quadrant === 'eliminate')
-                .map((t) => (
-                  <div
-                    key={t.id}
-                    className="p-2.5 bg-white rounded-xl border border-slate-200 shadow-2xs flex items-center justify-between gap-2"
-                  >
-                    <span
-                      onClick={() => handleToggleMatrixTask(t.id)}
-                      className={`text-xs font-semibold cursor-pointer ${
-                        t.completed ? 'line-through text-slate-400' : 'text-slate-800'
-                      }`}
-                    >
-                      {t.title}
-                    </span>
-                    <button
-                      onClick={() => handleDeleteMatrixTask(t.id)}
-                      className="text-slate-300 hover:text-red-500 transition-colors p-1"
-                    >
-                      <Trash2 className="w-3.5 h-3.5" />
-                    </button>
-                  </div>
-                ))}
-            </div>
-          </div>
+        {/* Work Description Note */}
+        <div className="mt-3">
+          <input
+            type="text"
+            placeholder={isTr ? 'Çalışma detayı veya not ekleyin...' : 'Add work description or note...'}
+            value={activeDescription}
+            onChange={(e) => setActiveDescription(e.target.value)}
+            className="w-full px-3.5 py-2 bg-slate-50 border border-slate-200 rounded-xl text-xs text-slate-800 placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-emerald-500"
+          />
         </div>
       </div>
 
-      {/* Analytics & Time Log Charts */}
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
+      {/* CHARTS & ANALYTICS */}
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
         {/* Pie Chart */}
-        <div className="bg-white rounded-3xl border border-slate-200/80 shadow-xs p-6 space-y-4">
-          <div className="flex items-center gap-2">
-            <PieChartIcon className="w-5 h-5 text-indigo-600" />
-            <h3 className="font-bold text-slate-900 text-base">Bugünkü Çalışma Dağılımı</h3>
+        <div className="bg-white border border-slate-200/80 rounded-3xl p-5 shadow-xs">
+          <div className="flex items-center gap-2 mb-4 pb-2 border-b border-slate-100">
+            <PieChartIcon className="w-4 h-4 text-indigo-600" />
+            <h3 className="font-bold text-slate-800 text-sm">
+              {isTr ? 'Not Etiketleri Bazında Zaman Dağılımı' : 'Time Distribution by Note Tags'}
+            </h3>
           </div>
-
-          <div className="h-64">
-            <ResponsiveContainer width="100%" height="100%">
-              <PieChart>
-                <Pie
-                  data={pieChartData}
-                  cx="50%"
-                  cy="50%"
-                  innerRadius={55}
-                  outerRadius={85}
-                  paddingAngle={4}
-                  dataKey="value"
-                >
-                  {pieChartData.map((entry, index) => (
-                    <Cell
-                      key={`cell-${index}`}
-                      fill={categoryColors[entry.name as keyof typeof categoryColors] || '#6366f1'}
-                    />
-                  ))}
-                </Pie>
-                <Tooltip formatter={(value: any) => [`${value} dakika`, 'Süre']} />
-                <Legend wrapperStyle={{ fontSize: '11px' }} />
-              </PieChart>
-            </ResponsiveContainer>
-          </div>
+          {pieChartData.length > 0 ? (
+            <div className="h-56">
+              <ResponsiveContainer width="100%" height="100%">
+                <PieChart>
+                  <Pie
+                    data={pieChartData}
+                    cx="50%"
+                    cy="50%"
+                    innerRadius={45}
+                    outerRadius={75}
+                    paddingAngle={4}
+                    dataKey="value"
+                    label={({ name, percent }) => `${name} (%${(percent * 100).toFixed(0)})`}
+                  >
+                    {pieChartData.map((_, index) => (
+                      <Cell key={`cell-${index}`} fill={CHART_COLORS[index % CHART_COLORS.length]} />
+                    ))}
+                  </Pie>
+                  <Tooltip formatter={(value: number) => [`${value} dk`, 'Süre']} />
+                </PieChart>
+              </ResponsiveContainer>
+            </div>
+          ) : (
+            <div className="h-48 flex items-center justify-center text-slate-400 text-xs">
+              {isTr ? 'Henüz zaman kaydı bulunmuyor.' : 'No timelogs available.'}
+            </div>
+          )}
         </div>
 
         {/* Bar Chart */}
-        <div className="bg-white rounded-3xl border border-slate-200/80 shadow-xs p-6 space-y-4">
-          <div className="flex items-center gap-2">
-            <BarChart3 className="w-5 h-5 text-indigo-600" />
-            <h3 className="font-bold text-slate-900 text-base">Haftalık Odaklanma Trendi (Dk)</h3>
+        <div className="bg-white border border-slate-200/80 rounded-3xl p-5 shadow-xs">
+          <div className="flex items-center gap-2 mb-4 pb-2 border-b border-slate-100">
+            <BarChart3 className="w-4 h-4 text-emerald-600" />
+            <h3 className="font-bold text-slate-800 text-sm">
+              {isTr ? 'En Çok Zaman Ayrılan Kartlar (Dakika)' : 'Top Cards by Duration (Minutes)'}
+            </h3>
           </div>
-
-          <div className="h-64">
-            <ResponsiveContainer width="100%" height="100%">
-              <BarChart data={barChartData}>
-                <XAxis dataKey="day" stroke="#94a3b8" fontSize={12} />
-                <YAxis stroke="#94a3b8" fontSize={12} />
-                <Tooltip formatter={(value: any) => [`${value} dk`, 'Çalışma']} />
-                <Bar dataKey="dakikalar" fill="#6366f1" radius={[8, 8, 0, 0]} />
-              </BarChart>
-            </ResponsiveContainer>
-          </div>
+          {barChartData.length > 0 ? (
+            <div className="h-56">
+              <ResponsiveContainer width="100%" height="100%">
+                <BarChart data={barChartData} margin={{ top: 10, right: 10, left: -20, bottom: 20 }}>
+                  <XAxis dataKey="name" tick={{ fontSize: 10 }} interval={0} angle={-15} textAnchor="end" />
+                  <YAxis tick={{ fontSize: 10 }} />
+                  <Tooltip formatter={(value: number) => [`${value} dk`, 'Süre']} />
+                  <Bar dataKey="dakika" fill="#10b981" radius={[6, 6, 0, 0]} />
+                </BarChart>
+              </ResponsiveContainer>
+            </div>
+          ) : (
+            <div className="h-48 flex items-center justify-center text-slate-400 text-xs">
+              {isTr ? 'Henüz zaman kaydı bulunmuyor.' : 'No timelogs available.'}
+            </div>
+          )}
         </div>
       </div>
+
+      {/* TIMELOG LIST & FULL MANAGEMENT SECTION (ADD, EDIT, DELETE) */}
+      <div className="bg-white border border-slate-200/80 rounded-3xl p-6 shadow-xs space-y-4">
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 pb-3 border-b border-slate-100">
+          <div>
+            <h3 className="font-bold text-slate-900 text-base">
+              {isTr ? 'Tüm Timelog Kayıtları & Yönetimi' : 'Timelog Records & Management'}
+            </h3>
+            <p className="text-xs text-slate-500">
+              {isTr ? 'Kayıtlarınızı filtreleyin, düzenleyin veya silin.' : 'Filter, edit or delete your logged sessions.'}
+            </p>
+          </div>
+
+          <button
+            onClick={handleOpenAddModal}
+            className="inline-flex items-center gap-1.5 px-4 py-2 rounded-xl bg-emerald-50 border border-emerald-200 text-emerald-800 hover:bg-emerald-100 font-bold text-xs transition-colors cursor-pointer"
+          >
+            <Plus className="w-4 h-4" />
+            {isTr ? 'Manuel Kayıt Ekle' : 'Add Manual Log'}
+          </button>
+        </div>
+
+        {/* Filters Bar */}
+        <div className="flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-3">
+          <div className="relative flex-1">
+            <Search className="w-4 h-4 text-slate-400 absolute left-3.5 top-1/2 -translate-y-1/2" />
+            <input
+              type="text"
+              placeholder={isTr ? 'Kart, proje, e-posta veya detay ara...' : 'Search card, project, or details...'}
+              value={searchQuery}
+              onChange={(e) => setSearchQuery(e.target.value)}
+              className="w-full pl-10 pr-4 py-2 bg-slate-50 border border-slate-200 rounded-2xl text-xs text-slate-800 placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-emerald-500"
+            />
+          </div>
+
+          <div className="flex flex-wrap items-center gap-2">
+            {/* Link Type Filter */}
+            <select
+              value={selectedLinkTypeFilter}
+              onChange={(e) => setSelectedLinkTypeFilter(e.target.value)}
+              className="px-3 py-2 bg-slate-50 border border-slate-200 rounded-2xl text-xs text-slate-700 focus:outline-none focus:ring-2 focus:ring-emerald-500"
+            >
+              <option value="">{isTr ? 'Tüm Bağlı Servisler' : 'All Linked Services'}</option>
+              <option value="tasks">📌 Google Tasks</option>
+              <option value="calendar">📅 Google Calendar</option>
+              <option value="gmail">✉️ Gmail</option>
+              <option value="drive">📁 Google Drive</option>
+            </select>
+
+            {/* Tag Filter */}
+            <select
+              value={selectedTagFilter}
+              onChange={(e) => setSelectedTagFilter(e.target.value)}
+              className="px-3 py-2 bg-slate-50 border border-slate-200 rounded-2xl text-xs text-slate-700 focus:outline-none focus:ring-2 focus:ring-emerald-500"
+            >
+              <option value="">{isTr ? 'Tüm Etiketler' : 'All Tags'}</option>
+              {availableTags.map((tag) => (
+                <option key={tag} value={tag}>
+                  #{tag}
+                </option>
+              ))}
+            </select>
+
+            {/* Project Filter */}
+            {projects.length > 0 && (
+              <select
+                value={selectedProjectFilter}
+                onChange={(e) => setSelectedProjectFilter(e.target.value)}
+                className="px-3 py-2 bg-slate-50 border border-slate-200 rounded-2xl text-xs text-slate-700 focus:outline-none focus:ring-2 focus:ring-emerald-500"
+              >
+                <option value="">{isTr ? 'Tüm Projeler' : 'All Projects'}</option>
+                {projects.map((p) => (
+                  <option key={p.id} value={p.id}>
+                    {p.name}
+                  </option>
+                ))}
+              </select>
+            )}
+          </div>
+        </div>
+
+        {/* Timelog Records Cards List */}
+        {isLoading ? (
+          <div className="py-12 text-center text-slate-400 text-xs">
+            {isTr ? 'Timelog kayıtları yükleniyor...' : 'Loading timelogs...'}
+          </div>
+        ) : filteredLogs.length === 0 ? (
+          <div className="py-12 text-center text-slate-400 text-xs space-y-2">
+            <Clock className="w-8 h-8 mx-auto text-slate-300" />
+            <p>{isTr ? 'Filtre kriterlerine uygun timelog kaydı bulunamadı.' : 'No timelogs match your filters.'}</p>
+          </div>
+        ) : (
+          <div className="space-y-3">
+            {filteredLogs.map((log) => {
+              return (
+                <div
+                  key={log.id}
+                  className="p-4 rounded-2xl border border-slate-200/80 bg-slate-50/50 hover:bg-white hover:border-emerald-200 transition-all shadow-2xs group flex flex-col sm:flex-row sm:items-center justify-between gap-4"
+                >
+                  <div className="space-y-2 flex-1">
+                    {/* Header: Card Title + Project + Linked Badge */}
+                    <div className="flex flex-wrap items-center gap-2">
+                      <span className="font-bold text-slate-900 text-sm">{log.cardTitle}</span>
+
+                      {log.projectName && (
+                        <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full bg-purple-50 border border-purple-200 text-purple-700 text-[11px] font-medium">
+                          <FolderKanban className="w-3 h-3" />
+                          {log.projectName}
+                        </span>
+                      )}
+
+                      {/* Linked Service Badge */}
+                      {renderLinkBadge(log.linkType, log.linkTitle || log.eventSummary)}
+                    </div>
+
+                    {/* Description Note */}
+                    {log.description && (
+                      <p className="text-xs text-slate-600 leading-relaxed bg-white/80 p-2.5 rounded-xl border border-slate-100">
+                        {log.description}
+                      </p>
+                    )}
+
+                    {/* Note Tags */}
+                    <div className="flex flex-wrap items-center gap-1.5 pt-1">
+                      {log.tags && log.tags.length > 0 ? (
+                        log.tags.map((tag) => (
+                          <span
+                            key={tag}
+                            className="px-2 py-0.5 rounded-md text-[10px] font-semibold bg-emerald-50 text-emerald-700 border border-emerald-200"
+                          >
+                            #{tag}
+                          </span>
+                        ))
+                      ) : (
+                        <span className="text-[10px] text-slate-400 italic">Etiketsiz</span>
+                      )}
+                    </div>
+                  </div>
+
+                  {/* Duration + Actions */}
+                  <div className="flex items-center justify-between sm:justify-end gap-3 shrink-0 pt-2 sm:pt-0 border-t sm:border-t-0 border-slate-100">
+                    <div className="text-right">
+                      <div className="inline-flex items-center gap-1.5 px-3 py-1 rounded-xl bg-emerald-50 text-emerald-800 font-bold text-xs border border-emerald-200">
+                        <Clock className="w-3.5 h-3.5 text-emerald-600" />
+                        {log.durationMinutes} {isTr ? 'dk' : 'min'}
+                      </div>
+                      <div className="text-[10px] text-slate-400 mt-0.5">
+                        {formatDateTimeDisplay(log.startTime)} - {formatDateTimeDisplay(log.endTime)}
+                      </div>
+                    </div>
+
+                    {/* Edit & Delete Action Buttons */}
+                    <div className="flex items-center gap-1">
+                      <button
+                        onClick={() => handleOpenEditModal(log)}
+                        className="p-2 rounded-xl bg-white border border-slate-200 hover:bg-indigo-50 hover:border-indigo-300 text-slate-600 hover:text-indigo-600 transition-all cursor-pointer shadow-2xs"
+                        title={isTr ? 'Güncelle / Düzenle' : 'Edit Timelog'}
+                      >
+                        <Edit3 className="w-4 h-4" />
+                      </button>
+                      <button
+                        onClick={() => handleDeleteLog(log.id)}
+                        className="p-2 rounded-xl bg-white border border-slate-200 hover:bg-rose-50 hover:border-rose-300 text-slate-500 hover:text-rose-600 transition-all cursor-pointer shadow-2xs"
+                        title={isTr ? 'Sil' : 'Delete Timelog'}
+                      >
+                        <Trash2 className="w-4 h-4" />
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        )}
+      </div>
+
+      {/* MODAL: EDIT / ADD TIMELOG */}
+      {isModalOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/60 backdrop-blur-xs animate-in fade-in duration-200">
+          <div className="bg-white rounded-3xl max-w-lg w-full p-6 shadow-2xl border border-slate-100 space-y-5 max-h-[90vh] overflow-y-auto">
+            <div className="flex items-center justify-between border-b border-slate-100 pb-3">
+              <div className="flex items-center gap-2">
+                <Clock className="w-5 h-5 text-emerald-600" />
+                <h2 className="font-bold text-slate-900 text-base">
+                  {editingLog ? (isTr ? 'Timelog Kaydını Güncelle' : 'Update Timelog') : (isTr ? 'Yeni Timelog Kaydı' : 'New Timelog')}
+                </h2>
+              </div>
+              <button
+                onClick={() => setIsModalOpen(false)}
+                className="p-1 rounded-xl text-slate-400 hover:text-slate-600 hover:bg-slate-100 transition-colors cursor-pointer"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            <form onSubmit={handleSaveModal} className="space-y-4">
+              {/* Kanban Card Selector */}
+              <div>
+                <label className="block text-xs font-semibold text-slate-700 mb-1">
+                  {isTr ? 'İlişkili Kanban Kartı' : 'Related Kanban Card'}
+                </label>
+                <select
+                  value={formCardId}
+                  onChange={(e) => {
+                    setFormCardId(e.target.value);
+                    if (e.target.value) setFormCustomTitle('');
+                  }}
+                  className="w-full px-3.5 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-xs text-slate-800 focus:outline-none focus:ring-2 focus:ring-emerald-500"
+                >
+                  <option value="">{isTr ? '-- Kanban Kartı Seçin --' : '-- Select Kanban Card --'}</option>
+                  {projectTasks.map((task) => {
+                    const proj = projects.find((p) => p.id === task.projectId);
+                    return (
+                      <option key={task.id} value={task.id}>
+                        {proj ? `[${proj.name}] ` : ''}{task.title}
+                      </option>
+                    );
+                  })}
+                </select>
+                {!formCardId && (
+                  <input
+                    type="text"
+                    placeholder={isTr ? 'veya Özel Kart / Görev Başlığı...' : 'or Custom Card Title...'}
+                    value={formCustomTitle}
+                    onChange={(e) => setFormCustomTitle(e.target.value)}
+                    className="w-full mt-2 px-3.5 py-2 bg-white border border-slate-200 rounded-xl text-xs text-slate-800 focus:outline-none focus:ring-2 focus:ring-emerald-500"
+                  />
+                )}
+              </div>
+
+              {/* 4 Google Service Options for Link */}
+              <div>
+                <label className="block text-xs font-semibold text-slate-700 mb-1 flex items-center gap-1.5">
+                  <Layers className="w-3.5 h-3.5 text-emerald-600" />
+                  {isTr ? 'Bağlı Kısım (4 Seçenek)' : 'Linked Service (4 Options)'}
+                </label>
+                <div className="grid grid-cols-4 gap-1.5 mb-2">
+                  <button
+                    type="button"
+                    onClick={() => { setFormLinkType('tasks'); setFormLinkId(''); }}
+                    className={`flex items-center justify-center gap-1 py-2 px-2 rounded-xl text-xs font-semibold border transition-all cursor-pointer ${
+                      formLinkType === 'tasks'
+                        ? 'bg-emerald-600 text-white border-emerald-600 shadow-2xs'
+                        : 'bg-slate-50 text-slate-700 border-slate-200 hover:bg-slate-100'
+                    }`}
+                  >
+                    <CheckSquare className="w-3.5 h-3.5 shrink-0" />
+                    <span>Tasks</span>
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => { setFormLinkType('calendar'); setFormLinkId(''); }}
+                    className={`flex items-center justify-center gap-1 py-2 px-2 rounded-xl text-xs font-semibold border transition-all cursor-pointer ${
+                      formLinkType === 'calendar'
+                        ? 'bg-blue-600 text-white border-blue-600 shadow-2xs'
+                        : 'bg-slate-50 text-slate-700 border-slate-200 hover:bg-slate-100'
+                    }`}
+                  >
+                    <Calendar className="w-3.5 h-3.5 shrink-0" />
+                    <span>Takvim</span>
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => { setFormLinkType('gmail'); setFormLinkId(''); }}
+                    className={`flex items-center justify-center gap-1 py-2 px-2 rounded-xl text-xs font-semibold border transition-all cursor-pointer ${
+                      formLinkType === 'gmail'
+                        ? 'bg-rose-600 text-white border-rose-600 shadow-2xs'
+                        : 'bg-slate-50 text-slate-700 border-slate-200 hover:bg-slate-100'
+                    }`}
+                  >
+                    <Mail className="w-3.5 h-3.5 shrink-0" />
+                    <span>Gmail</span>
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => { setFormLinkType('drive'); setFormLinkId(''); }}
+                    className={`flex items-center justify-center gap-1 py-2 px-2 rounded-xl text-xs font-semibold border transition-all cursor-pointer ${
+                      formLinkType === 'drive'
+                        ? 'bg-amber-600 text-white border-amber-600 shadow-2xs'
+                        : 'bg-slate-50 text-slate-700 border-slate-200 hover:bg-slate-100'
+                    }`}
+                  >
+                    <HardDrive className="w-3.5 h-3.5 shrink-0" />
+                    <span>Drive</span>
+                  </button>
+                </div>
+
+                {/* Dropdown list of items corresponding to selected Google Service */}
+                {formLinkType && (
+                  <select
+                    value={formLinkId}
+                    onChange={(e) => setFormLinkId(e.target.value)}
+                    className="w-full px-3.5 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-xs text-slate-800 focus:outline-none focus:ring-2 focus:ring-emerald-500"
+                  >
+                    <option value="">
+                      {isTr
+                        ? `-- Karta / Projeye Bağlı ${formLinkType.toUpperCase()} Öğesini Seçin --`
+                        : `-- Select Linked ${formLinkType.toUpperCase()} Item --`}
+                    </option>
+                    {getLinkedItemsOptions(formLinkType, formCardId).map((item) => (
+                      <option key={item.id} value={item.id}>
+                        {item.title}
+                      </option>
+                    ))}
+                  </select>
+                )}
+              </div>
+
+              {/* Start & End Times */}
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="block text-xs font-semibold text-slate-700 mb-1">
+                    {isTr ? 'Başlangıç Zamanı' : 'Start Time'}
+                  </label>
+                  <input
+                    type="datetime-local"
+                    required
+                    value={formStartTime}
+                    onChange={(e) => setFormStartTime(e.target.value)}
+                    className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl text-xs text-slate-800 focus:outline-none focus:ring-2 focus:ring-emerald-500"
+                  />
+                </div>
+                <div>
+                  <label className="block text-xs font-semibold text-slate-700 mb-1">
+                    {isTr ? 'Bitiş Zamanı' : 'End Time'}
+                  </label>
+                  <input
+                    type="datetime-local"
+                    required
+                    value={formEndTime}
+                    onChange={(e) => setFormEndTime(e.target.value)}
+                    className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl text-xs text-slate-800 focus:outline-none focus:ring-2 focus:ring-emerald-500"
+                  />
+                </div>
+              </div>
+
+              {/* Tags Section (Strictly Note Tags + Add New Tag) */}
+              <div>
+                <label className="block text-xs font-semibold text-slate-700 mb-1">
+                  {isTr ? 'Etiketler (Not Etiketleri ile Eş)' : 'Tags (Matching Notes)'}
+                </label>
+
+                {availableTags.length > 0 ? (
+                  <div className="flex flex-wrap gap-1.5 mb-2 max-h-28 overflow-y-auto p-1.5 bg-slate-50 rounded-xl border border-slate-200">
+                    {availableTags.map((tag) => {
+                      const isSelected = formTags.includes(tag);
+                      return (
+                        <button
+                          key={tag}
+                          type="button"
+                          onClick={() => handleToggleFormTag(tag)}
+                          className={`px-3 py-1 rounded-xl text-xs font-medium transition-all cursor-pointer ${
+                            isSelected
+                              ? 'bg-emerald-600 text-white font-semibold shadow-2xs'
+                              : 'bg-white text-slate-700 border border-slate-200 hover:bg-slate-100'
+                          }`}
+                        >
+                          #{tag}
+                        </button>
+                      );
+                    })}
+                  </div>
+                ) : (
+                  <div className="text-xs text-slate-400 italic mb-2">
+                    {isTr ? 'Notlarda kayıtlı etiket bulunamadı. Aşağıdan yeni bir etiket ekleyebilirsiniz.' : 'No note tags found. Add a new tag below.'}
+                  </div>
+                )}
+
+                {/* Add New Tag Input */}
+                <div className="flex gap-2">
+                  <input
+                    type="text"
+                    placeholder={isTr ? 'Yeni etiket adı yazın...' : 'Type new tag name...'}
+                    value={customTagInput}
+                    onChange={(e) => setCustomTagInput(e.target.value)}
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter') {
+                        e.preventDefault();
+                        handleAddCustomTagFromInput();
+                      }
+                    }}
+                    className="flex-1 px-3 py-1.5 bg-slate-50 border border-slate-200 rounded-xl text-xs text-slate-800 focus:outline-none focus:ring-2 focus:ring-emerald-500"
+                  />
+                  <button
+                    type="button"
+                    onClick={handleAddCustomTagFromInput}
+                    className="px-3.5 py-1.5 bg-slate-800 hover:bg-slate-900 text-white text-xs font-medium rounded-xl transition-colors cursor-pointer"
+                  >
+                    {isTr ? 'Yeni Etiket Ekle' : 'Add Tag'}
+                  </button>
+                </div>
+              </div>
+
+              {/* Description */}
+              <div>
+                <label className="block text-xs font-semibold text-slate-700 mb-1">
+                  {isTr ? 'Açıklama / Detaylar' : 'Description / Details'}
+                </label>
+                <textarea
+                  rows={3}
+                  placeholder={isTr ? 'Çalışma sırasında yapılan işlerin özeti...' : 'Summary of work done...'}
+                  value={formDescription}
+                  onChange={(e) => setFormDescription(e.target.value)}
+                  className="w-full px-3.5 py-2 bg-slate-50 border border-slate-200 rounded-xl text-xs text-slate-800 focus:outline-none focus:ring-2 focus:ring-emerald-500"
+                />
+              </div>
+
+              <div className="flex justify-end gap-2 pt-2 border-t border-slate-100">
+                <button
+                  type="button"
+                  onClick={() => setIsModalOpen(false)}
+                  className="px-4 py-2 text-xs font-semibold text-slate-600 hover:bg-slate-100 rounded-xl transition-colors cursor-pointer"
+                >
+                  {isTr ? 'İptal' : 'Cancel'}
+                </button>
+                <button
+                  type="submit"
+                  className="px-5 py-2 text-xs font-bold text-slate-950 bg-emerald-500 hover:bg-emerald-600 rounded-xl shadow-md transition-all cursor-pointer"
+                >
+                  {isTr ? (editingLog ? 'Güncelle' : 'Kaydet') : (editingLog ? 'Update' : 'Save')}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
     </div>
   );
 };

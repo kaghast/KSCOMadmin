@@ -168,10 +168,11 @@ export default function App() {
       if (!contentType.includes('application/json')) {
         const rawText = await res.text();
         console.error('Expected JSON response but received:', contentType, rawText);
+        const snippet = rawText.trim().slice(0, 120);
         alert(
           language === 'tr'
-            ? 'Sunucudan geçersiz yanıt alındı (JSON yerine HTML/Metin). Lütfen Coolify / Nginx yönlendirmesini kontrol edin.'
-            : 'Invalid response from server (expected JSON).'
+            ? `Sunucudan geçersiz yanıt alındı (JSON yerine HTML/Metin: "${snippet}..."). Coolify'da uygulama tipinin "Node.js" seçili olduğundan ve Express sunucusunun çalıştığından emin olun.`
+            : `Invalid response from server (Expected JSON, got: "${snippet}..."). Ensure Coolify application type is set to Node.js.`
         );
         return;
       }
@@ -857,7 +858,18 @@ export default function App() {
           )}
 
           {/* 3. TIME MANAGEMENT VIEW */}
-          {sidebarTab === 'time' && <TimeManagementApp />}
+          {sidebarTab === 'time' && (
+            <TimeManagementApp
+              projects={projects}
+              projectTasks={projectTasks}
+              notes={notes}
+              calendarEvents={calendarEvents}
+              tasks={tasks}
+              emails={emails}
+              driveFiles={driveFiles}
+              language={language}
+            />
+          )}
 
           {/* 4. GMAIL INDIVIDUAL FOCUS VIEW */}
           {sidebarTab === 'gmail' && (

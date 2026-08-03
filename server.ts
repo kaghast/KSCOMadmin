@@ -19,6 +19,9 @@ import {
   saveProjectTaskToDb,
   deleteProjectTaskFromDb,
   exportProjectToMarkdownAndDrive,
+  getAllTimelogsFromDb,
+  saveTimelogToDb,
+  deleteTimelogFromDb,
 } from './src/server/adminspaceDb.js';
 
 type TaskPriority = 'high' | 'medium' | 'low';
@@ -1431,6 +1434,31 @@ app.post('/api/projects/:id/export-markdown', async (req, res) => {
     console.error('Export project markdown error:', err);
     res.status(500).json({ error: err.message || 'Export failed' });
   }
+});
+
+// ================= TIMELOGS ROUTES =================
+
+app.get('/api/timelogs', async (req, res) => {
+  await getAdminSpaceDb();
+  const logs = getAllTimelogsFromDb();
+  res.json({ timelogs: logs });
+});
+
+app.post('/api/timelogs', async (req, res) => {
+  await getAdminSpaceDb();
+  const log = req.body;
+  if (!log.id) {
+    log.id = `log-${Date.now()}-${Math.random().toString(36).substring(2, 7)}`;
+  }
+  saveTimelogToDb(log);
+  res.json({ success: true, timelog: log });
+});
+
+app.delete('/api/timelogs/:id', async (req, res) => {
+  await getAdminSpaceDb();
+  const { id } = req.params;
+  deleteTimelogFromDb(id);
+  res.json({ success: true });
 });
 
 app.delete('/api/notes/:id', async (req, res) => {

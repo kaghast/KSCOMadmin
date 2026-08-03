@@ -89,6 +89,28 @@ export async function getAdminSpaceDb(): Promise<Database> {
     );
   `);
 
+  dbInstance.run(`
+    CREATE TABLE IF NOT EXISTS timelogs (
+      id TEXT PRIMARY KEY,
+      cardId TEXT,
+      cardTitle TEXT NOT NULL,
+      projectId TEXT,
+      projectName TEXT,
+      eventId TEXT,
+      eventSummary TEXT,
+      startTime TEXT NOT NULL,
+      endTime TEXT NOT NULL,
+      durationMinutes INTEGER NOT NULL,
+      description TEXT,
+      tags TEXT,
+      createdAt TEXT
+    );
+  `);
+
+  try { dbInstance.run("ALTER TABLE timelogs ADD COLUMN linkType TEXT"); } catch {}
+  try { dbInstance.run("ALTER TABLE timelogs ADD COLUMN linkId TEXT"); } catch {}
+  try { dbInstance.run("ALTER TABLE timelogs ADD COLUMN linkTitle TEXT"); } catch {}
+
   try { dbInstance.run("ALTER TABLE notes ADD COLUMN contacts TEXT"); } catch {}
   try { dbInstance.run("ALTER TABLE notes ADD COLUMN linkedEmails TEXT"); } catch {}
   try { dbInstance.run("ALTER TABLE notes ADD COLUMN linkedEvents TEXT"); } catch {}
@@ -771,4 +793,80 @@ export async function exportProjectToMarkdownAndDrive(
     driveFileUrl,
   };
 }
+
+// ================= TIMELOGS DB OPERATIONS =================
+
+export function getAllTimelogsFromDb(): any[] {
+  if (!dbInstance) return [];
+  try {
+    const stmt = dbInstance.prepare('SELECT * FROM timelogs ORDER BY startTime DESC');
+    const logs: any[] = [];
+    while (stmt.step()) {
+      const row = stmt.getAsObject();
+      let tags: string[] = [];
+      try {
+        tags = JSON.parse(String(row.tags || '[]'));
+      } catch {}
+      logs.push({
+        id: String(row.id),
+        cardId: row.cardId ? String(row.cardId) : undefined,
+        cardTitle: String(row.cardTitle || ''),
+        projectId: row.projectId ? String(row.projectId) : undefined,
+        projectName: row.projectName ? String(row.projectName) : undefined,
+        linkType: row.linkType ? String(row.linkType) : undefined,
+        linkId: row.linkId ? String(row.linkId) : undefined,
+        linkTitle: row.linkTitle ? String(row.linkTitle) : undefined,
+        eventId: row.eventId ? String(row.eventId) : undefined,
+        eventSummary: row.eventSummary ? String(row.eventSummary) : undefined,
+        startTime: String(row.startTime || ''),
+        endTime: String(row.endTime || ''),
+        durationMinutes: Number(row.durationMinutes || 0),
+        description: row.description ? String(row.description) : '',
+        tags,
+        createdAt: String(row.createdAt || new Date().toISOString()),
+      });
+    }
+    stmt.free();
+    return logs;
+  } catch (err) {
+    console.error('Error getting timelogs from SQLite:', err);
+    return [];
+  }
+}
+
+export function saveTimelogToDb(log: any) {
+  if (!dbInstance) return;
+  const tagsJson = JSON.stringify(log.tags || []);
+  dbInstance.run(
+    `INSERT OR REPLACE INTO timelogs
+     (id, cardId, cardTitle, projectId, projectName, linkType, linkId, linkTitle, eventId, eventSummary, startTime, endTime, durationMinutes, description, tags, createdAt)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    [
+      log.id,
+      log.cardId || null,
+      log.cardTitle,
+      log.projectId || null,
+      log.projectName || null,
+      log.linkType || null,
+      log.linkId || null,
+      log.linkTitle || null,
+      log.eventId || null,
+      log.eventSummary || null,
+      log.startTime,
+      log.endTime,
+      log.durationMinutes || 0,
+      log.description || '',
+      tagsJson,
+      log.createdAt || new Date().toISOString(),
+    ]
+  );
+  saveDbToDisk();
+}
+
+export function deleteTimelogFromDb(id: string) {
+  if (!dbInstance) return;
+  dbInstance.run('DELETE FROM timelogs WHERE id = ?', [id]);
+  saveDbToDisk();
+}
+
 

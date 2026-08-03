@@ -69,7 +69,7 @@ export const Sidebar: React.FC<Props> = ({
     {
       id: 'time' as NavTab,
       label: isTr ? 'Zaman Yönetimi' : 'Time Management',
-      description: isTr ? 'Pomodoro & Zamanlayıcı' : 'Pomodoro & Timer',
+      description: isTr ? 'Kanban & Takvim Timelog' : 'Kanban & Calendar Timelog',
       icon: Clock,
       color: 'text-emerald-600',
       bgColor: 'bg-emerald-50',

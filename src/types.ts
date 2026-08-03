@@ -54,11 +54,21 @@ export type TimeCategory = 'deep_work' | 'meeting' | 'admin' | 'learning' | 'bre
 
 export interface TimeLog {
   id: string;
-  title: string;
-  category: TimeCategory;
+  cardId?: string;
+  cardTitle: string;
+  projectId?: string;
+  projectName?: string;
+  linkType?: 'tasks' | 'calendar' | 'gmail' | 'drive' | string;
+  linkId?: string;
+  linkTitle?: string;
+  eventId?: string;
+  eventSummary?: string;
+  startTime: string; // ISO string or YYYY-MM-DDTHH:mm
+  endTime: string;   // ISO string or YYYY-MM-DDTHH:mm
   durationMinutes: number;
-  date: string; // YYYY-MM-DD
-  startTime: string; // HH:mm
+  description?: string;
+  tags: string[];    // Tags (same tag set as notes)
+  createdAt: string;
 }
 
 export interface TimeBlock {
