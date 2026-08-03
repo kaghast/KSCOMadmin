@@ -559,6 +559,26 @@ export default function App() {
     fetchTasks();
   };
 
+  const handleUpdateTask = async (
+    id: string,
+    updates: { title?: string; notes?: string; due?: string; priority?: TaskPriority; status?: 'needsAction' | 'completed' }
+  ) => {
+    setTasks((prev) =>
+      prev.map((t) => (t.id === id ? { ...t, ...updates } : t))
+    );
+    try {
+      await fetch(`/api/tasks/${id}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(updates),
+      });
+      fetchTasks();
+    } catch (err) {
+      console.error('Task update error:', err);
+      fetchTasks();
+    }
+  };
+
   // Contacts Actions
   const handleAddContact = async (data: {
     givenName: string;
@@ -790,6 +810,7 @@ export default function App() {
                   projectTasks={projectTasks}
                   onAddTask={() => setIsAddTaskOpen(true)}
                   onToggleTaskStatus={handleToggleTaskStatus}
+                  onUpdateTask={handleUpdateTask}
                   onRefresh={fetchTasks}
                   onToggleLinkToProject={handleToggleLinkToProject}
                   isLoading={isLoadingTasks}
@@ -869,6 +890,7 @@ export default function App() {
                 projectTasks={projectTasks}
                 onAddTask={() => setIsAddTaskOpen(true)}
                 onToggleTaskStatus={handleToggleTaskStatus}
+                onUpdateTask={handleUpdateTask}
                 onRefresh={fetchTasks}
                 onToggleLinkToProject={handleToggleLinkToProject}
                 isLoading={isLoadingTasks}

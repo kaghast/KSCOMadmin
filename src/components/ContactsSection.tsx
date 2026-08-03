@@ -98,7 +98,7 @@ export const ContactsSection: React.FC<Props> = ({
             >
               <div className="flex items-center gap-3 min-w-0 flex-1">
                 {/* Avatar */}
-                {contact.photoUrl ? (
+                {contact.photoUrl && contact.photoUrl.trim() !== '' ? (
                   <img
                     src={contact.photoUrl}
                     alt={contact.displayName}

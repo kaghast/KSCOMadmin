@@ -1,6 +1,6 @@
 {
   "name": "Google Workspace & Time Management Dashboard",
   "description": "A unified single-screen dashboard for Gmail, Google Calendar, Google Drive, Google Tasks, and Time Management with item creation capabilities.",
-  "requestFramePermissions": [],
+  "requestFramePermissions": ["geolocation"],
   "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
 }

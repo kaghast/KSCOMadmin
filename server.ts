@@ -559,8 +559,8 @@ app.get('/api/drive/files', async (req, res) => {
       const response = await drive.files.list({
         q: qStr,
         fields: 'files(id, name, mimeType, webViewLink, iconLink, thumbnailLink, modifiedTime, size, starred, parents)',
-        pageSize: 50,
-        orderBy: 'folder,name',
+        pageSize: 100,
+        orderBy: 'modifiedTime desc',
       });
 
       const files = (response.data.files || []).map((f) => ({
@@ -577,9 +577,27 @@ app.get('/api/drive/files', async (req, res) => {
         parents: f.parents || [],
       }));
 
-      return res.json({ files, currentFolderId: folderId || 'root', demoMode: false });
+      // Sort folders first, then by modified time / name
+      files.sort((a, b) => {
+        if (a.isFolder && !b.isFolder) return -1;
+        if (!a.isFolder && b.isFolder) return 1;
+        return 0;
+      });
+
+      return res.json({ files, currentFolderId: folderId || 'all', demoMode: false });
     } catch (err: any) {
       console.error('Drive Files API Error:', err?.message || err);
+      const isScopeError =
+        err?.message?.toLowerCase().includes('scope') ||
+        err?.message?.toLowerCase().includes('permission') ||
+        err?.code === 403 ||
+        err?.code === 401;
+      return res.json({
+        files: [],
+        error: err?.message || 'Google Drive hatası',
+        requiresReauth: isScopeError,
+        demoMode: false,
+      });
     }
   }
 
@@ -588,7 +606,7 @@ app.get('/api/drive/files', async (req, res) => {
     const s = search.trim().toLowerCase();
     files = files.filter((f) => f.name.toLowerCase().includes(s));
   }
-  res.json({ files, currentFolderId: folderId || 'root', demoMode: true });
+  res.json({ files, currentFolderId: folderId || 'all', demoMode: true });
 });
 
 app.post('/api/drive/create-folder', async (req, res) => {
@@ -642,6 +660,39 @@ app.post('/api/drive/create-folder', async (req, res) => {
   demoState.driveFiles.unshift(newFolder as any);
 
   res.json({ success: true, folder: newFolder, demoMode: true });
+});
+
+app.patch('/api/drive/files/:id/rename', async (req, res) => {
+  const { id } = req.params;
+  const { name } = req.body;
+  const authClient = getAuthenticatedClient(req);
+
+  if (!name || !name.trim()) {
+    return res.status(400).json({ error: 'Geçerli bir dosya adı giriniz.' });
+  }
+
+  if (authClient) {
+    try {
+      const drive = google.drive({ version: 'v3', auth: authClient });
+      const response = await drive.files.update({
+        fileId: id,
+        requestBody: {
+          name: name.trim(),
+        },
+        fields: 'id, name, modifiedTime',
+      });
+      return res.json({ success: true, file: response.data, demoMode: false });
+    } catch (err: any) {
+      console.error('Drive Rename Error:', err?.message || err);
+      return res.status(500).json({ error: 'Yeniden adlandırılamadı: ' + (err?.message || err) });
+    }
+  }
+
+  const file = demoState.driveFiles.find((f) => f.id === id);
+  if (file) {
+    file.name = name.trim();
+  }
+  res.json({ success: true, demoMode: true });
 });
 
 app.patch('/api/drive/files/:id/star', async (req, res) => {
@@ -845,7 +896,7 @@ app.post('/api/tasks', async (req, res) => {
 
 app.patch('/api/tasks/:id', async (req, res) => {
   const { id } = req.params;
-  const { status, title, notes, due } = req.body;
+  const { status, title, notes, due, priority } = req.body;
   const authClient = getAuthenticatedClient(req);
 
   if (authClient) {
@@ -883,6 +934,8 @@ app.patch('/api/tasks/:id', async (req, res) => {
     if (status !== undefined) task.status = status;
     if (title !== undefined) task.title = title;
     if (notes !== undefined) task.notes = notes;
+    if (due !== undefined) task.due = due;
+    if (priority !== undefined) task.priority = priority;
   }
 
   res.json({ success: true, demoMode: true });

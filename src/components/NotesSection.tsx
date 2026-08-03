@@ -235,7 +235,24 @@ export const NotesSection: React.FC<Props> = ({
 
                     {/* Markdown Content Box */}
                     <div className="text-xs text-slate-700 leading-relaxed bg-white/80 p-3 rounded-xl border border-slate-100 prose max-w-none">
-                      <ReactMarkdown>{note.content}</ReactMarkdown>
+                      <ReactMarkdown
+                        urlTransform={(url) => url}
+                        components={{
+                          img: ({ src, alt, ...props }) => {
+                            if (!src) return null;
+                            return (
+                              <img
+                                src={src}
+                                alt={alt || 'Çizim Notu'}
+                                className="max-h-72 rounded-xl border border-slate-200 my-2 object-contain bg-white shadow-2xs"
+                                {...props}
+                              />
+                            );
+                          },
+                        }}
+                      >
+                        {note.content}
+                      </ReactMarkdown>
                     </div>
 
                     {/* Linked Relational Items (Emails & Events) */}

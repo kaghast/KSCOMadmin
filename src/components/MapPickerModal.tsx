@@ -1,5 +1,5 @@
 import React, { useEffect, useRef, useState } from 'react';
-import { X, MapPin, Edit3, Check, Navigation, Search } from 'lucide-react';
+import { X, MapPin, Edit3, Check, Navigation, Search, Compass, Loader2 } from 'lucide-react';
 import L from 'leaflet';
 import { NoteLocation } from '../types';
 
@@ -10,6 +10,13 @@ interface Props {
   onClose: () => void;
   onSelectLocation: (loc: NoteLocation) => void;
   onRenameLocation: (id: string, newName: string) => Promise<void>;
+}
+
+interface PlaceResult {
+  place_id: number;
+  display_name: string;
+  lat: string;
+  lon: string;
 }
 
 export const MapPickerModal: React.FC<Props> = ({
@@ -35,6 +42,13 @@ export const MapPickerModal: React.FC<Props> = ({
   const [editingLocId, setEditingLocId] = useState<string | null>(null);
   const [editingLocName, setEditingLocName] = useState<string>('');
 
+  // Search & Autocomplete State
+  const [placeQuery, setPlaceQuery] = useState('');
+  const [placeResults, setPlaceResults] = useState<PlaceResult[]>([]);
+  const [isSearching, setIsSearching] = useState(false);
+  const [showSearchDropdown, setShowSearchDropdown] = useState(false);
+  const [isLocating, setIsLocating] = useState(false);
+
   useEffect(() => {
     if (selectedLocation) {
       setCurrentLat(selectedLocation.lat);
@@ -49,16 +63,108 @@ export const MapPickerModal: React.FC<Props> = ({
     }
   }, [selectedLocation, isOpen]);
 
+  // Handle Search Places Autocomplete
+  const handleSearchPlaces = async (query: string) => {
+    setPlaceQuery(query);
+    if (!query.trim() || query.trim().length < 2) {
+      setPlaceResults([]);
+      setShowSearchDropdown(false);
+      return;
+    }
+
+    setIsSearching(true);
+    setShowSearchDropdown(true);
+
+    try {
+      const res = await fetch(
+        `https://nominatim.openstreetmap.org/search?format=json&q=${encodeURIComponent(
+          query
+        )}&limit=5&accept-language=tr,en`
+      );
+      if (res.ok) {
+        const data = await res.json();
+        setPlaceResults(data || []);
+      }
+    } catch (err) {
+      console.error('Place search error:', err);
+    } finally {
+      setIsSearching(false);
+    }
+  };
+
+  const handleSelectPlace = (place: PlaceResult) => {
+    const lat = parseFloat(place.lat);
+    const lng = parseFloat(place.lon);
+    const shortName = place.display_name.split(',')[0] || place.display_name;
+
+    setCurrentLat(lat);
+    setCurrentLng(lng);
+    setLocationName(shortName);
+    setSelectedLocationId(null);
+    setShowSearchDropdown(false);
+    setPlaceQuery('');
+
+    if (mapInstanceRef.current) {
+      mapInstanceRef.current.setView([lat, lng], 14);
+    }
+  };
+
+  // Get Current GPS Position
+  const handleGetCurrentPosition = () => {
+    if (!navigator.geolocation) {
+      alert('Tarayıcınız konum özelliğini desteklemiyor.');
+      return;
+    }
+
+    setIsLocating(true);
+
+    navigator.geolocation.getCurrentPosition(
+      async (pos) => {
+        const lat = pos.coords.latitude;
+        const lng = pos.coords.longitude;
+        let locName = `Mevcut Konumum (${lat.toFixed(3)}, ${lng.toFixed(3)})`;
+
+        try {
+          const res = await fetch(
+            `https://nominatim.openstreetmap.org/reverse?format=json&lat=${lat}&lon=${lng}&accept-language=tr,en`
+          );
+          if (res.ok) {
+            const data = await res.json();
+            if (data && data.display_name) {
+              locName = data.display_name.split(',')[0] || data.display_name;
+            }
+          }
+        } catch (err) {
+          console.error('Reverse geocode error:', err);
+        }
+
+        setCurrentLat(lat);
+        setCurrentLng(lng);
+        setLocationName(locName);
+        setSelectedLocationId(null);
+        setIsLocating(false);
+
+        if (mapInstanceRef.current) {
+          mapInstanceRef.current.setView([lat, lng], 15);
+        }
+      },
+      (err) => {
+        console.error('Geolocation error:', err);
+        alert('Konumunuz alınamadı. Lütfen tarayıcı konum izinlerinizi kontrol edin.');
+        setIsLocating(false);
+      },
+      { enableHighAccuracy: true, timeout: 10000 }
+    );
+  };
+
   // Initialize or re-render map when modal opens
   useEffect(() => {
     if (!isOpen || !mapContainerRef.current) return;
 
-    // Small timeout to allow container animation / sizing
     const timer = setTimeout(() => {
       if (!mapContainerRef.current) return;
 
       if (!mapInstanceRef.current) {
-        // Default center Istanbul if none selected
         const initLat = selectedLocation?.lat || 41.0082;
         const initLng = selectedLocation?.lng || 28.9784;
 
@@ -71,7 +177,6 @@ export const MapPickerModal: React.FC<Props> = ({
           attribution: '&copy; OpenStreetMap contributors',
         }).addTo(map);
 
-        // Custom Icon SVG
         const customIcon = L.divIcon({
           className: 'custom-map-pin',
           html: `<div style="background-color: #4f46e5; width: 28px; height: 28px; border-radius: 50%; border: 3px solid white; box-shadow: 0 4px 6px -1px rgba(0,0,0,0.3); display: flex; align-items: center; justify-content: center;">
@@ -81,7 +186,6 @@ export const MapPickerModal: React.FC<Props> = ({
           iconAnchor: [14, 14],
         });
 
-        // Click event on map to pick custom coordinate
         map.on('click', (e: L.LeafletMouseEvent) => {
           const { lat, lng } = e.latlng;
           setCurrentLat(lat);
@@ -95,8 +199,7 @@ export const MapPickerModal: React.FC<Props> = ({
             }).addTo(map);
 
             selectedMarkerRef.current.on('dragend', (evt) => {
-              const marker = evt.target;
-              const pos = marker.getLatLng();
+              const pos = evt.target.getLatLng();
               setCurrentLat(pos.lat);
               setCurrentLng(pos.lng);
             });
@@ -179,7 +282,8 @@ export const MapPickerModal: React.FC<Props> = ({
   if (!isOpen) return null;
 
   const handleConfirm = () => {
-    const finalName = locationName.trim() || `Lokasyon (${currentLat.toFixed(4)}, ${currentLng.toFixed(4)})`;
+    const finalName =
+      locationName.trim() || `Lokasyon (${currentLat.toFixed(4)}, ${currentLng.toFixed(4)})`;
     const finalLoc: NoteLocation = {
       id: selectedLocationId || `loc-${Date.now()}`,
       name: finalName,
@@ -220,7 +324,7 @@ export const MapPickerModal: React.FC<Props> = ({
 
   return (
     <div className="fixed inset-0 z-50 bg-slate-900/50 backdrop-blur-xs flex items-center justify-center p-4">
-      <div className="bg-white rounded-3xl max-w-4xl w-full h-[600px] shadow-2xl border border-slate-200 overflow-hidden flex flex-col animate-in fade-in zoom-in-95 duration-150">
+      <div className="bg-white rounded-3xl max-w-4xl w-full h-[620px] shadow-2xl border border-slate-200 overflow-hidden flex flex-col animate-in fade-in zoom-in-95 duration-150">
         {/* Header */}
         <div className="p-4 border-b border-slate-100 flex items-center justify-between bg-slate-50">
           <div className="flex items-center gap-3">
@@ -230,7 +334,7 @@ export const MapPickerModal: React.FC<Props> = ({
             <div>
               <h3 className="font-bold text-slate-900 text-base">Haritadan Konum Seç</h3>
               <p className="text-xs text-slate-500">
-                Haritaya tıklayarak yeni konum işaretleyin veya kayıtlı lokasyonlardan birini seçin.
+                Arama ile mekan/adres bulun, mevcut konumunuzu alın veya haritadan tıklayın.
               </p>
             </div>
           </div>
@@ -242,17 +346,79 @@ export const MapPickerModal: React.FC<Props> = ({
           </button>
         </div>
 
+        {/* Search & Geolocation Control Bar */}
+        <div className="px-4 py-2.5 bg-slate-100 border-b border-slate-200 flex flex-col sm:flex-row items-center gap-2 relative z-20">
+          {/* Autocomplete Search Bar */}
+          <div className="relative flex-1 w-full">
+            <div className="relative">
+              <Search className="w-4 h-4 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2" />
+              <input
+                type="text"
+                value={placeQuery}
+                onChange={(e) => handleSearchPlaces(e.target.value)}
+                placeholder="Mekan veya Adres Ara (Örn: Kadıköy Meydanı, Taksim, Beşiktaş...)"
+                className="w-full pl-9 pr-8 py-2 text-xs bg-white border border-slate-200 rounded-xl focus:outline-hidden focus:ring-2 focus:ring-indigo-500/20 text-slate-800 font-medium shadow-2xs"
+              />
+              {isSearching && (
+                <Loader2 className="w-4 h-4 text-indigo-600 animate-spin absolute right-2.5 top-1/2 -translate-y-1/2" />
+              )}
+            </div>
+
+            {/* Place Autocomplete Results Dropdown */}
+            {showSearchDropdown && placeResults.length > 0 && (
+              <div className="absolute top-full left-0 right-0 mt-1 bg-white border border-slate-200 rounded-2xl shadow-2xl max-h-56 overflow-y-auto z-30 divide-y divide-slate-100">
+                {placeResults.map((p) => (
+                  <div
+                    key={p.place_id}
+                    onClick={() => handleSelectPlace(p)}
+                    className="p-3 text-xs hover:bg-indigo-50/70 cursor-pointer transition-colors flex items-start gap-2.5"
+                  >
+                    <MapPin className="w-4 h-4 text-indigo-600 shrink-0 mt-0.5" />
+                    <div>
+                      <div className="font-bold text-slate-900">
+                        {p.display_name.split(',')[0]}
+                      </div>
+                      <div className="text-[10px] text-slate-500 line-clamp-1">
+                        {p.display_name}
+                      </div>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+
+          {/* Get Current Position Button */}
+          <button
+            type="button"
+            onClick={handleGetCurrentPosition}
+            disabled={isLocating}
+            className="w-full sm:w-auto px-3.5 py-2 bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-bold rounded-xl shadow-xs flex items-center justify-center gap-1.5 transition-all cursor-pointer shrink-0 disabled:opacity-50"
+            title="Mevcut GPS Konumumu Getir"
+          >
+            {isLocating ? (
+              <>
+                <Loader2 className="w-4 h-4 animate-spin" /> Konum Alınıyor...
+              </>
+            ) : (
+              <>
+                <Compass className="w-4 h-4" /> Anlık Konumumu Al
+              </>
+            )}
+          </button>
+        </div>
+
         {/* Content Body */}
         <div className="flex-1 flex flex-col md:flex-row overflow-hidden">
           {/* Saved Locations Side Panel */}
           <div className="w-full md:w-72 border-r border-slate-200 bg-slate-50/70 p-3 flex flex-col overflow-y-auto">
             <h4 className="text-xs font-bold text-slate-700 uppercase tracking-wider mb-2 flex items-center gap-1.5">
-              <Navigation className="w-3.5 h-3.5 text-indigo-600" /> Önceki Lokasyonlar
+              <Navigation className="w-3.5 h-3.5 text-indigo-600" /> Kayıtlı Lokasyonlar
             </h4>
 
             {existingLocations.length === 0 ? (
               <p className="text-xs text-slate-400 py-6 text-center italic">
-                Henüz kayıtlı lokasyon yok. Haritaya tıklayarak yeni bir tane oluşturabilirsiniz.
+                Henüz kayıtlı lokasyon yok. Haritaya tıklayarak veya arama yaparak yenisini seçebilirsiniz.
               </p>
             ) : (
               <div className="space-y-1.5 flex-1">

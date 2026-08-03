@@ -30,7 +30,6 @@ export const Navbar: React.FC<Props> = ({
               <h1 className="font-extrabold text-base tracking-tight text-white flex items-center gap-1.5">
                 Google Workspace <span className="text-indigo-400 font-medium text-xs">&</span> Zaman Hub
               </h1>
-              <p className="text-[10px] text-slate-400">Verimlilik & Entegrasyon Yönetimi</p>
             </div>
           </div>
 
@@ -46,7 +45,7 @@ export const Navbar: React.FC<Props> = ({
             ) : (
               <div className="flex items-center gap-3">
                 <div className="flex items-center gap-2 bg-slate-800 px-3 py-1.5 rounded-xl border border-slate-700">
-                  {authStatus.user?.picture ? (
+                  {authStatus.user?.picture && authStatus.user.picture.trim() !== '' ? (
                     <img
                       src={authStatus.user.picture}
                       alt="Avatar"

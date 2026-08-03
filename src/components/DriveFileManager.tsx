@@ -19,6 +19,8 @@ import {
   ChevronRight,
   FolderKanban,
   Filter,
+  Pencil,
+  Check,
 } from 'lucide-react';
 import { DriveFile, Project, ProjectTask } from '../types';
 import { formatDistanceToNow } from 'date-fns';
@@ -46,17 +48,54 @@ export const DriveFileManager: React.FC<Props> = ({
   const [searchQuery, setSearchQuery] = useState('');
   const [activeFilter, setActiveFilter] = useState<'all' | 'folders' | 'docs' | 'sheets' | 'slides' | 'starred'>('all');
   const [viewMode, setViewMode] = useState<'grid' | 'list'>('grid');
-  const [currentFolderId, setCurrentFolderId] = useState<string>('root');
+  const [currentFolderId, setCurrentFolderId] = useState<string>('all');
   const [folderPath, setFolderPath] = useState<{ id: string; name: string }[]>([
-    { id: 'root', name: 'Drive Dosyalarım' },
+    { id: 'all', name: 'Drive Dosyalarım' },
   ]);
+  const [errorMsg, setErrorMsg] = useState<string | null>(null);
+  const [requiresReauth, setRequiresReauth] = useState(false);
 
   const [isCreatingFolder, setIsCreatingFolder] = useState(false);
   const [newFolderName, setNewFolderName] = useState('');
 
+  const [editingFileId, setEditingFileId] = useState<string | null>(null);
+  const [editingFileName, setEditingFileName] = useState<string>('');
+
+  const handleStartRename = (file: DriveFile) => {
+    setEditingFileId(file.id);
+    setEditingFileName(file.name);
+  };
+
+  const handleSaveRename = async (fileId: string) => {
+    if (!editingFileName.trim()) {
+      setEditingFileId(null);
+      return;
+    }
+    const newName = editingFileName.trim();
+    setFiles((prev) =>
+      prev.map((f) => (f.id === fileId ? { ...f, name: newName } : f))
+    );
+    setEditingFileId(null);
+
+    try {
+      const res = await fetch(`/api/drive/files/${fileId}/rename`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name: newName }),
+      });
+      if (!res.ok) {
+        fetchDriveFiles(currentFolderId, searchQuery);
+      }
+    } catch (err) {
+      console.error('Error renaming file:', err);
+      fetchDriveFiles(currentFolderId, searchQuery);
+    }
+  };
+
   // Fetch Drive Files from API
   const fetchDriveFiles = async (folderId = currentFolderId, search = searchQuery) => {
     setIsLoading(true);
+    setErrorMsg(null);
     try {
       const queryParams = new URLSearchParams();
       if (folderId && folderId !== 'all') queryParams.append('folderId', folderId);
@@ -65,12 +104,21 @@ export const DriveFileManager: React.FC<Props> = ({
       const res = await fetch(`/api/drive/files?${queryParams.toString()}`);
       if (res.ok) {
         const data = await res.json();
+        if (data.requiresReauth) {
+          setRequiresReauth(true);
+        } else {
+          setRequiresReauth(false);
+        }
+        if (data.error) {
+          setErrorMsg(data.error);
+        }
         if (data.files) {
           setFiles(data.files);
         }
       }
-    } catch (err) {
+    } catch (err: any) {
       console.error('Error fetching drive files:', err);
+      setErrorMsg('Drive dosyaları çekilemedi');
     } finally {
       setIsLoading(false);
     }
@@ -127,7 +175,7 @@ export const DriveFileManager: React.FC<Props> = ({
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           name: newFolderName.trim(),
-          parentId: currentFolderId,
+          parentId: currentFolderId === 'all' ? 'root' : currentFolderId,
         }),
       });
 
@@ -162,13 +210,13 @@ export const DriveFileManager: React.FC<Props> = ({
     if (file.isFolder || file.mimeType.includes('folder')) {
       return <Folder className="w-6 h-6 text-amber-500 fill-amber-100" />;
     }
-    if (file.mimeType.includes('document')) {
+    if (file.mimeType.includes('document') || file.mimeType.includes('word') || file.mimeType.includes('pdf') || file.mimeType.includes('text')) {
       return <FileText className="w-6 h-6 text-blue-600" />;
     }
-    if (file.mimeType.includes('spreadsheet')) {
+    if (file.mimeType.includes('spreadsheet') || file.mimeType.includes('excel') || file.mimeType.includes('csv') || file.mimeType.includes('sheet')) {
       return <FileSpreadsheet className="w-6 h-6 text-emerald-600" />;
     }
-    if (file.mimeType.includes('presentation')) {
+    if (file.mimeType.includes('presentation') || file.mimeType.includes('powerpoint')) {
       return <Presentation className="w-6 h-6 text-purple-600" />;
     }
     return <File className="w-6 h-6 text-slate-500" />;
@@ -177,9 +225,35 @@ export const DriveFileManager: React.FC<Props> = ({
   // Client Filter by Category
   const filteredFiles = files.filter((f) => {
     if (activeFilter === 'folders') return f.isFolder || f.mimeType.includes('folder');
-    if (activeFilter === 'docs') return f.mimeType.includes('document');
-    if (activeFilter === 'sheets') return f.mimeType.includes('spreadsheet');
-    if (activeFilter === 'slides') return f.mimeType.includes('presentation');
+    if (activeFilter === 'docs')
+      return (
+        f.mimeType.includes('document') ||
+        f.mimeType.includes('word') ||
+        f.mimeType.includes('pdf') ||
+        f.mimeType.includes('text') ||
+        f.name.endsWith('.doc') ||
+        f.name.endsWith('.docx') ||
+        f.name.endsWith('.pdf') ||
+        f.name.endsWith('.gdoc')
+      );
+    if (activeFilter === 'sheets')
+      return (
+        f.mimeType.includes('spreadsheet') ||
+        f.mimeType.includes('excel') ||
+        f.mimeType.includes('sheet') ||
+        f.mimeType.includes('csv') ||
+        f.name.endsWith('.xls') ||
+        f.name.endsWith('.xlsx') ||
+        f.name.endsWith('.gsheet')
+      );
+    if (activeFilter === 'slides')
+      return (
+        f.mimeType.includes('presentation') ||
+        f.mimeType.includes('powerpoint') ||
+        f.name.endsWith('.ppt') ||
+        f.name.endsWith('.pptx') ||
+        f.name.endsWith('.gslides')
+      );
     if (activeFilter === 'starred') return f.starred;
     return true;
   });
@@ -407,21 +481,51 @@ export const DriveFileManager: React.FC<Props> = ({
                   </button>
                 </div>
 
-                <h4
-                  onClick={() => {
-                    if (file.isFolder || file.mimeType.includes('folder')) {
-                      handleOpenFolder(file.id, file.name);
-                    }
-                  }}
-                  className={`font-semibold text-xs text-slate-900 line-clamp-2 transition-colors ${
-                    file.isFolder || file.mimeType.includes('folder')
-                      ? 'cursor-pointer hover:text-amber-600'
-                      : 'group-hover:text-amber-600'
-                  }`}
-                  title={file.name}
-                >
-                  {file.name}
-                </h4>
+                {editingFileId === file.id ? (
+                  <div className="flex items-center gap-1 my-1">
+                    <input
+                      type="text"
+                      value={editingFileName}
+                      onChange={(e) => setEditingFileName(e.target.value)}
+                      onKeyDown={(e) => {
+                        if (e.key === 'Enter') handleSaveRename(file.id);
+                        if (e.key === 'Escape') setEditingFileId(null);
+                      }}
+                      autoFocus
+                      className="flex-1 px-2 py-1 text-xs font-semibold bg-white border border-amber-400 rounded-lg focus:outline-hidden"
+                    />
+                    <button
+                      onClick={() => handleSaveRename(file.id)}
+                      className="p-1 bg-amber-500 text-white rounded-lg hover:bg-amber-600 transition-colors cursor-pointer shrink-0"
+                      title="Kaydet"
+                    >
+                      <Check className="w-3.5 h-3.5" />
+                    </button>
+                    <button
+                      onClick={() => setEditingFileId(null)}
+                      className="p-1 bg-slate-200 text-slate-700 rounded-lg hover:bg-slate-300 transition-colors cursor-pointer shrink-0"
+                      title="İptal"
+                    >
+                      <X className="w-3.5 h-3.5" />
+                    </button>
+                  </div>
+                ) : (
+                  <h4
+                    onClick={() => {
+                      if (file.isFolder || file.mimeType.includes('folder')) {
+                        handleOpenFolder(file.id, file.name);
+                      }
+                    }}
+                    className={`font-semibold text-xs text-slate-900 line-clamp-2 transition-colors ${
+                      file.isFolder || file.mimeType.includes('folder')
+                        ? 'cursor-pointer hover:text-amber-600'
+                        : 'group-hover:text-amber-600'
+                    }`}
+                    title={file.name}
+                  >
+                    {file.name}
+                  </h4>
+                )}
 
                 <div className="text-[10px] text-slate-400 mt-1">
                   {formatDistanceToNow(new Date(file.modifiedTime), { addSuffix: true, locale: tr })}
@@ -469,6 +573,13 @@ export const DriveFileManager: React.FC<Props> = ({
                   )}
 
                   <div className="flex items-center gap-1 ml-auto">
+                    <button
+                      onClick={() => handleStartRename(file)}
+                      className="p-1 text-slate-400 hover:text-amber-600 hover:bg-amber-50 rounded-lg transition-colors cursor-pointer"
+                      title="Yeniden Adlandır / Düzenle"
+                    >
+                      <Pencil className="w-3.5 h-3.5" />
+                    </button>
                     <button
                       onClick={() => handleDeleteFile(file.id)}
                       className="p-1 text-slate-400 hover:text-rose-600 hover:bg-rose-50 rounded-lg transition-colors cursor-pointer"
@@ -524,20 +635,50 @@ export const DriveFileManager: React.FC<Props> = ({
                       </div>
 
                       <div className="min-w-0 flex-1">
-                        <span
-                          onClick={() => {
-                            if (file.isFolder || file.mimeType.includes('folder')) {
-                              handleOpenFolder(file.id, file.name);
-                            }
-                          }}
-                          className={`font-semibold text-slate-900 truncate block ${
-                            file.isFolder || file.mimeType.includes('folder')
-                              ? 'cursor-pointer hover:text-amber-600'
-                              : 'group-hover:text-amber-600'
-                          }`}
-                        >
-                          {file.name}
-                        </span>
+                        {editingFileId === file.id ? (
+                          <div className="flex items-center gap-1">
+                            <input
+                              type="text"
+                              value={editingFileName}
+                              onChange={(e) => setEditingFileName(e.target.value)}
+                              onKeyDown={(e) => {
+                                if (e.key === 'Enter') handleSaveRename(file.id);
+                                if (e.key === 'Escape') setEditingFileId(null);
+                              }}
+                              autoFocus
+                              className="w-full px-2 py-1 text-xs font-semibold bg-white border border-amber-400 rounded-lg focus:outline-hidden"
+                            />
+                            <button
+                              onClick={() => handleSaveRename(file.id)}
+                              className="p-1 bg-amber-500 text-white rounded-lg hover:bg-amber-600 transition-colors cursor-pointer shrink-0"
+                              title="Kaydet"
+                            >
+                              <Check className="w-3.5 h-3.5" />
+                            </button>
+                            <button
+                              onClick={() => setEditingFileId(null)}
+                              className="p-1 bg-slate-200 text-slate-700 rounded-lg hover:bg-slate-300 transition-colors cursor-pointer shrink-0"
+                              title="İptal"
+                            >
+                              <X className="w-3.5 h-3.5" />
+                            </button>
+                          </div>
+                        ) : (
+                          <span
+                            onClick={() => {
+                              if (file.isFolder || file.mimeType.includes('folder')) {
+                                handleOpenFolder(file.id, file.name);
+                              }
+                            }}
+                            className={`font-semibold text-slate-900 truncate block ${
+                              file.isFolder || file.mimeType.includes('folder')
+                                ? 'cursor-pointer hover:text-amber-600'
+                                : 'group-hover:text-amber-600'
+                            }`}
+                          >
+                            {file.name}
+                          </span>
+                        )}
                       </div>
                     </div>
                   </td>
@@ -552,6 +693,13 @@ export const DriveFileManager: React.FC<Props> = ({
 
                   <td className="py-3 px-4 text-right">
                     <div className="flex items-center justify-end gap-2">
+                      <button
+                        onClick={() => handleStartRename(file)}
+                        className="p-1.5 text-slate-400 hover:text-amber-600 hover:bg-amber-50 rounded-lg transition-colors cursor-pointer"
+                        title="Yeniden Adlandır / Düzenle"
+                      >
+                        <Pencil className="w-3.5 h-3.5" />
+                      </button>
                       <button
                         onClick={() => handleDeleteFile(file.id)}
                         className="p-1.5 text-slate-400 hover:text-rose-600 hover:bg-rose-50 rounded-lg transition-colors cursor-pointer"
