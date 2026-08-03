@@ -111,13 +111,19 @@ let demoState = {
 // ================= AUTH ROUTES =================
 
 app.get('/api/auth/url', (req, res) => {
-  const oauth2Client = getOAuth2Client(req);
-  const url = oauth2Client.generateAuthUrl({
-    access_type: 'offline',
-    scope: OAUTH_SCOPES,
-    prompt: 'consent',
-  });
-  res.json({ url });
+  try {
+    const oauth2Client = getOAuth2Client(req);
+    const url = oauth2Client.generateAuthUrl({
+      access_type: 'offline',
+      scope: OAUTH_SCOPES,
+      prompt: 'consent',
+    });
+    res.setHeader('Content-Type', 'application/json');
+    res.json({ url });
+  } catch (err: any) {
+    console.error('Error in /api/auth/url:', err);
+    res.status(500).json({ error: err?.message || 'Giriş adresi oluşturulamadı.' });
+  }
 });
 
 app.get('/api/auth/callback', async (req, res) => {
@@ -1485,6 +1491,13 @@ app.post('/api/adminspace/sync', async (req, res) => {
   } else {
     res.status(500).json({ error: 'Failed to sync adminspace folder to Google Drive' });
   }
+});
+
+// Global Express Error Handler
+app.use((err: any, req: express.Request, res: express.Response, next: express.NextFunction) => {
+  console.error('Unhandled Express Error:', err);
+  if (res.headersSent) return next(err);
+  res.status(500).json({ error: err?.message || 'Sunucuda bir iç hata oluştu.' });
 });
 
 // ================= VITE / STATIC SERVING =================

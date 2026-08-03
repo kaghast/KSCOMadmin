@@ -141,13 +141,37 @@ export default function App() {
   const handleLogin = async () => {
     try {
       const res = await fetch('/api/auth/url');
+      const contentType = res.headers.get('content-type') || '';
+
       if (!res.ok) {
-        const errorText = await res.text();
-        console.error('Auth URL endpoint error:', res.status, errorText);
+        let errorDetails = `HTTP Status ${res.status}`;
+        try {
+          if (contentType.includes('application/json')) {
+            const errJson = await res.json();
+            errorDetails = errJson.error || errJson.message || errorDetails;
+          } else {
+            const rawText = await res.text();
+            errorDetails = rawText.slice(0, 200) || errorDetails;
+          }
+        } catch {
+          // ignore parse failure on error status
+        }
+        console.error('Auth URL endpoint error:', res.status, errorDetails);
         alert(
           language === 'tr'
-            ? 'Giriş adresi alınamadı. Lütfen sunucu ayarlarını (GOOGLE_CLIENT_ID / GOOGLE_CLIENT_SECRET) kontrol edin.'
-            : 'Failed to get login URL. Please check server environment settings.'
+            ? `Giriş adresi alınamadı (${errorDetails}). Lütfen Coolify ortam değişkenlerini (GOOGLE_CLIENT_ID / GOOGLE_CLIENT_SECRET) kontrol edin.`
+            : `Failed to get login URL (${errorDetails}). Please check GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET.`
+        );
+        return;
+      }
+
+      if (!contentType.includes('application/json')) {
+        const rawText = await res.text();
+        console.error('Expected JSON response but received:', contentType, rawText);
+        alert(
+          language === 'tr'
+            ? 'Sunucudan geçersiz yanıt alındı (JSON yerine HTML/Metin). Lütfen Coolify / Nginx yönlendirmesini kontrol edin.'
+            : 'Invalid response from server (expected JSON).'
         );
         return;
       }
@@ -190,12 +214,13 @@ export default function App() {
           fetchAuthStatus();
         }
       }, 1000);
-    } catch (err) {
-      console.error('OAuth Login Error:', err);
+    } catch (err: any) {
+      console.error('OAuth Login Exception:', err);
+      const errMessage = err?.message || String(err);
       alert(
         language === 'tr'
-          ? 'Giriş yapılırken bir bağlantı hatası oluştu.'
-          : 'A network error occurred while logging in.'
+          ? `Giriş yapılırken bir hata oluştu: ${errMessage}`
+          : `An error occurred while logging in: ${errMessage}`
       );
     }
   };
