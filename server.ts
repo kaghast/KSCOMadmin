@@ -1,3 +1,4 @@
+import 'dotenv/config';
 import express from 'express';
 import cookieParser from 'cookie-parser';
 import path from 'path';
@@ -45,8 +46,15 @@ const OAUTH_SCOPES = [
 function getAppUrl(req?: express.Request) {
   if (process.env.APP_URL) return process.env.APP_URL.replace(/\/$/, '');
   if (req) {
-    const host = req.get('x-forwarded-host') || req.get('host');
-    const proto = req.get('x-forwarded-proto') || req.protocol || 'https';
+    const host = req.get('x-forwarded-host') || req.get('host') || '';
+    let proto = req.get('x-forwarded-proto') || req.protocol || 'https';
+    if (proto.includes(',')) {
+      proto = proto.split(',')[0].trim();
+    }
+    // If running on a custom domain (non-localhost), force https
+    if (host && !host.includes('localhost') && !host.includes('127.0.0.1')) {
+      proto = 'https';
+    }
     if (host) return `${proto}://${host}`;
   }
   return 'http://localhost:3000';
