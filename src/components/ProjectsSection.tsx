@@ -25,11 +25,13 @@ import {
   Search,
   MoreVertical,
   Layers,
+  Filter,
 } from 'lucide-react';
 import {
   Project,
   ProjectColumn,
   ProjectTask,
+  TaskPriority,
   NoteItem,
   EmailItem,
   CalendarEvent,
@@ -76,12 +78,15 @@ export const ProjectsSection: React.FC<Props> = ({
     projects[0]?.id || ''
   );
 
+  // Priority Filter on Kanban Board
+  const [selectedPriorityFilter, setSelectedPriorityFilter] = useState<'all' | 'high' | 'medium' | 'low' | 'none'>('all');
+
   // Modals & Form State
   const [isNewTaskModalOpen, setIsNewTaskModalOpen] = useState(false);
   const [targetColumnId, setTargetColumnId] = useState<string>('');
   const [taskTitle, setTaskTitle] = useState('');
   const [taskDesc, setTaskDesc] = useState('');
-  const [taskPriority, setTaskPriority] = useState<'high' | 'medium' | 'low'>('medium');
+  const [taskPriority, setTaskPriority] = useState<TaskPriority>('medium');
   const [taskDueDate, setTaskDueDate] = useState('');
   const [taskAssignee, setTaskAssignee] = useState('');
 
@@ -94,9 +99,15 @@ export const ProjectsSection: React.FC<Props> = ({
   const [editingTask, setEditingTask] = useState<ProjectTask | null>(null);
   const [detailTask, setDetailTask] = useState<ProjectTask | null>(null);
 
-  // Detail Modal Inline Description Editing State
+  // Detail View Title & Description Editing State
+  const [isEditingTitle, setIsEditingTitle] = useState(false);
+  const [editTitleText, setEditTitleText] = useState('');
   const [isEditingDescription, setIsEditingDescription] = useState(false);
   const [editDescriptionText, setEditDescriptionText] = useState('');
+
+  // Note Filtering & Sorting State in Card Detail View
+  const [noteTagFilter, setNoteTagFilter] = useState<string>('all');
+  const [noteSortOrder, setNoteSortOrder] = useState<'newest' | 'oldest' | 'title'>('newest');
 
   // Live Timer for Deadline Countdown
   const [currentTime, setCurrentTime] = useState(new Date());
@@ -109,6 +120,8 @@ export const ProjectsSection: React.FC<Props> = ({
     if (detailTask) {
       setEditDescriptionText(detailTask.description || '');
       setIsEditingDescription(false);
+      setEditTitleText(detailTask.title || '');
+      setIsEditingTitle(false);
     }
   }, [detailTask?.id]);
 
@@ -391,15 +404,51 @@ export const ProjectsSection: React.FC<Props> = ({
   return (
     <div className="flex-1 flex flex-col min-h-0 bg-slate-50 overflow-hidden">
       {/* 1. TOP HEADER & PROJECT SELECTOR */}
-      <div className="bg-white border-b border-slate-200 px-6 py-4 flex items-center justify-between gap-4 shrink-0 shadow-2xs">
+      <div className="bg-white border-b border-slate-200 px-6 py-3.5 flex flex-wrap items-center justify-between gap-4 shrink-0 shadow-2xs">
         {/* Left: Section Title */}
         <div className="flex items-center gap-2.5">
           <div className="p-2.5 bg-purple-100 text-purple-700 rounded-2xl shadow-xs">
             <FolderKanban className="w-6 h-6" />
           </div>
-          <h1 className="text-xl font-black text-slate-900 tracking-tight">
-            Projeler & Kanban Yönetimi
-          </h1>
+          <div>
+            <h1 className="text-xl font-black text-slate-900 tracking-tight">
+              Projeler & Kanban Yönetimi
+            </h1>
+            <p className="text-[11px] text-slate-500 font-medium">
+              Görev kartlarınızı sürükleyip bırakın veya detaylarını tam sayfada düzenleyin
+            </p>
+          </div>
+        </div>
+
+        {/* Priority Filter Bar */}
+        <div className="flex items-center gap-1.5 bg-slate-100 p-1.5 rounded-2xl border border-slate-200/80 shadow-inner">
+          <span className="text-[11px] font-black text-slate-500 pl-2 pr-1 flex items-center gap-1">
+            <Filter className="w-3.5 h-3.5 text-purple-600" /> Öncelik:
+          </span>
+          {(
+            [
+              { id: 'all', label: 'Tümü' },
+              { id: 'high', label: 'Yüksek' },
+              { id: 'medium', label: 'Orta' },
+              { id: 'low', label: 'Düşük' },
+              { id: 'none', label: 'Önceliksiz' },
+            ] as const
+          ).map((p) => {
+            const isActive = selectedPriorityFilter === p.id;
+            return (
+              <button
+                key={p.id}
+                onClick={() => setSelectedPriorityFilter(p.id)}
+                className={`px-3 py-1 text-xs font-extrabold rounded-xl transition-all cursor-pointer ${
+                  isActive
+                    ? 'bg-purple-600 text-white shadow-xs'
+                    : 'text-slate-600 hover:bg-slate-200 hover:text-slate-900'
+                }`}
+              >
+                {p.label}
+              </button>
+            );
+          })}
         </div>
 
         {/* Right Action: Yeni Kart Ekle Button */}
@@ -456,9 +505,12 @@ export const ProjectsSection: React.FC<Props> = ({
           <div className="flex-1 p-6 overflow-x-auto overflow-y-auto bg-slate-100/70">
               <div className="flex items-start gap-5 min-w-max pb-6">
                 {(activeProject.columns || []).map((col) => {
-                  const colTasks = projectTasks.filter(
-                    (t) => t.columnId === col.id
-                  );
+                  const colTasks = projectTasks.filter((t) => {
+                    if (t.columnId !== col.id) return false;
+                    if (selectedPriorityFilter === 'all') return true;
+                    const taskP = t.priority || 'none';
+                    return taskP === selectedPriorityFilter;
+                  });
 
                   const isOver = dragOverColId === col.id;
 
@@ -603,6 +655,11 @@ export const ProjectsSection: React.FC<Props> = ({
                                     Düşük
                                   </span>
                                 )}
+                                {(task.priority === 'none' || !task.priority) && (
+                                  <span className="px-2 py-0.5 bg-slate-100 text-slate-500 rounded-md font-semibold">
+                                    Önceliksiz
+                                  </span>
+                                )}
 
                                 {task.dueDate && (
                                   <span className="flex items-center gap-1 text-slate-500 font-semibold">
@@ -707,37 +764,42 @@ export const ProjectsSection: React.FC<Props> = ({
                 />
               </div>
 
-              <div className="grid grid-cols-2 gap-3">
+              <div className={`grid ${taskPriority === 'none' ? 'grid-cols-1' : 'grid-cols-2'} gap-3`}>
                 <div>
                   <label className="block text-xs font-bold text-slate-700 mb-1">
                     Öncelik
                   </label>
                   <select
                     value={taskPriority}
-                    onChange={(e) =>
-                      setTaskPriority(
-                        e.target.value as 'high' | 'medium' | 'low'
-                      )
-                    }
-                    className="w-full px-3 py-2 text-xs bg-slate-50 border border-slate-200 rounded-xl font-bold text-slate-800"
+                    onChange={(e) => {
+                      const newP = e.target.value as TaskPriority;
+                      setTaskPriority(newP);
+                      if (newP === 'none') {
+                        setTaskDueDate('');
+                      }
+                    }}
+                    className="w-full px-3 py-2 text-xs bg-slate-50 border border-slate-200 rounded-xl font-bold text-slate-800 focus:outline-hidden"
                   >
+                    <option value="none">Önceliksiz</option>
                     <option value="low">Düşük</option>
                     <option value="medium">Orta</option>
                     <option value="high">Yüksek</option>
                   </select>
                 </div>
 
-                <div>
-                  <label className="block text-xs font-bold text-slate-700 mb-1">
-                    Son Tarih
-                  </label>
-                  <input
-                    type="date"
-                    value={taskDueDate}
-                    onChange={(e) => setTaskDueDate(e.target.value)}
-                    className="w-full px-3 py-2 text-xs bg-slate-50 border border-slate-200 rounded-xl font-bold text-slate-800"
-                  />
-                </div>
+                {taskPriority !== 'none' && (
+                  <div>
+                    <label className="block text-xs font-bold text-slate-700 mb-1">
+                      Son Tarih
+                    </label>
+                    <input
+                      type="date"
+                      value={taskDueDate}
+                      onChange={(e) => setTaskDueDate(e.target.value)}
+                      className="w-full px-3 py-2 text-xs bg-slate-50 border border-slate-200 rounded-xl font-bold text-slate-800 focus:outline-hidden"
+                    />
+                  </div>
+                )}
               </div>
 
               <div className="flex justify-end gap-2 pt-2">
@@ -808,43 +870,48 @@ export const ProjectsSection: React.FC<Props> = ({
                 />
               </div>
 
-              <div className="grid grid-cols-2 gap-3">
+              <div className={`grid ${editingTask.priority === 'none' ? 'grid-cols-1' : 'grid-cols-2'} gap-3`}>
                 <div>
                   <label className="block text-xs font-bold text-slate-700 mb-1">
                     Öncelik
                   </label>
                   <select
-                    value={editingTask.priority || 'medium'}
-                    onChange={(e) =>
+                    value={editingTask.priority || 'none'}
+                    onChange={(e) => {
+                      const newP = e.target.value as TaskPriority;
                       setEditingTask({
                         ...editingTask,
-                        priority: e.target.value as 'high' | 'medium' | 'low',
-                      })
-                    }
-                    className="w-full px-3 py-2 text-xs bg-slate-50 border border-slate-200 rounded-xl font-bold text-slate-800"
+                        priority: newP,
+                        dueDate: newP === 'none' ? '' : editingTask.dueDate,
+                      });
+                    }}
+                    className="w-full px-3 py-2 text-xs bg-slate-50 border border-slate-200 rounded-xl font-bold text-slate-800 focus:outline-hidden"
                   >
+                    <option value="none">Önceliksiz</option>
                     <option value="low">Düşük</option>
                     <option value="medium">Orta</option>
                     <option value="high">Yüksek</option>
                   </select>
                 </div>
 
-                <div>
-                  <label className="block text-xs font-bold text-slate-700 mb-1">
-                    Son Tarih
-                  </label>
-                  <input
-                    type="date"
-                    value={editingTask.dueDate || ''}
-                    onChange={(e) =>
-                      setEditingTask({
-                        ...editingTask,
-                        dueDate: e.target.value,
-                      })
-                    }
-                    className="w-full px-3 py-2 text-xs bg-slate-50 border border-slate-200 rounded-xl font-bold text-slate-800"
-                  />
-                </div>
+                {editingTask.priority !== 'none' && (
+                  <div>
+                    <label className="block text-xs font-bold text-slate-700 mb-1">
+                      Son Tarih
+                    </label>
+                    <input
+                      type="date"
+                      value={editingTask.dueDate || ''}
+                      onChange={(e) =>
+                        setEditingTask({
+                          ...editingTask,
+                          dueDate: e.target.value,
+                        })
+                      }
+                      className="w-full px-3 py-2 text-xs bg-slate-50 border border-slate-200 rounded-xl font-bold text-slate-800 focus:outline-hidden"
+                    />
+                  </div>
+                )}
               </div>
 
               <div className="flex justify-end gap-2 pt-2">
@@ -1140,120 +1207,265 @@ export const ProjectsSection: React.FC<Props> = ({
         </div>
       )}
 
-      {/* CARD DETAIL MODAL */}
+      {/* 5. FULL PAGE CARD DETAIL VIEW */}
       {detailTask && activeProject && (() => {
-        const countdown = getCountdown(detailTask.dueDate);
+        const countdown = detailTask.dueDate ? getCountdown(detailTask.dueDate) : null;
+
+        // Extract note tags for this project
+        const allNoteTags = Array.from(
+          new Set(
+            projectNotes.flatMap((n) => n.tags || []).filter(Boolean)
+          )
+        );
+
+        // Filter notes by tag
+        let filteredNotes = projectNotes.filter((n) => {
+          if (noteTagFilter === 'all') return true;
+          return n.tags?.includes(noteTagFilter);
+        });
+
+        // Sort notes
+        filteredNotes.sort((a, b) => {
+          if (noteSortOrder === 'newest') {
+            return new Date(b.createdAt || b.date || '').getTime() - new Date(a.createdAt || a.date || '').getTime();
+          }
+          if (noteSortOrder === 'oldest') {
+            return new Date(a.createdAt || a.date || '').getTime() - new Date(b.createdAt || b.date || '').getTime();
+          }
+          if (noteSortOrder === 'title') {
+            return a.title.localeCompare(b.title, 'tr');
+          }
+          return 0;
+        });
 
         return (
-          <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-xs flex items-center justify-center p-4 z-50">
-            <div className="bg-white rounded-3xl max-w-2xl w-full max-h-[90vh] overflow-y-auto shadow-2xl border border-slate-200 flex flex-col p-6 animate-in fade-in zoom-in-95 duration-150">
-              {/* Modal Header */}
-              <div className="flex items-start justify-between border-b border-slate-100 pb-4 mb-4">
-                <div>
-                  <div className="flex items-center gap-2 mb-1">
-                    <span className="px-2.5 py-0.5 bg-purple-100 text-purple-800 text-xs font-black rounded-lg">
-                      {activeProject.columns.find((c) => c.id === detailTask.columnId)?.title || 'Geliştirme'}
-                    </span>
-                    <span
-                      className={`px-2 py-0.5 text-xs font-black rounded-lg ${
-                        detailTask.priority === 'high'
-                          ? 'bg-rose-100 text-rose-700'
-                          : detailTask.priority === 'medium'
-                          ? 'bg-amber-100 text-amber-800'
-                          : 'bg-slate-100 text-slate-700'
-                      }`}
-                    >
-                      {detailTask.priority === 'high'
-                        ? 'Yüksek Öncelik'
-                        : detailTask.priority === 'medium'
-                        ? 'Orta Öncelik'
-                        : 'Düşük Öncelik'}
-                    </span>
-                  </div>
-                  <h2 className="text-xl font-black text-slate-900 leading-snug">
-                    {detailTask.title}
-                  </h2>
-                </div>
+          <div className="fixed inset-0 z-50 bg-slate-100 flex flex-col overflow-hidden animate-in fade-in duration-150">
+            {/* Top Bar Navigation */}
+            <div className="bg-white border-b border-slate-200 px-6 py-3.5 flex items-center justify-between gap-4 shrink-0 shadow-2xs">
+              <div className="flex items-center gap-3 min-w-0">
                 <button
                   onClick={() => setDetailTask(null)}
-                  className="p-1.5 text-slate-400 hover:text-slate-600 rounded-xl hover:bg-slate-100 cursor-pointer"
+                  className="px-3.5 py-1.5 bg-slate-100 hover:bg-slate-200 text-slate-800 rounded-xl text-xs font-black flex items-center gap-1.5 transition-colors cursor-pointer shrink-0"
+                >
+                  <ChevronLeft className="w-4 h-4" />
+                  <span>Kanban Panosuna Dön</span>
+                </button>
+                <div className="h-4 w-px bg-slate-200" />
+                <span className="px-2.5 py-0.5 bg-purple-100 text-purple-800 text-xs font-black rounded-lg shrink-0">
+                  {activeProject.name}
+                </span>
+                <span className="text-xs text-slate-400 font-semibold truncate">/ Kart Detayı</span>
+              </div>
+
+              <div className="flex items-center gap-2 shrink-0">
+                <button
+                  onClick={async () => {
+                    if (window.confirm('Bu kartı silmek istediğinizden emin misiniz?')) {
+                      await onDeleteTask(detailTask.id);
+                      setDetailTask(null);
+                    }
+                  }}
+                  className="px-3.5 py-1.5 bg-rose-50 hover:bg-rose-100 text-rose-700 border border-rose-200 rounded-xl text-xs font-extrabold flex items-center gap-1.5 transition-colors cursor-pointer"
+                  title="Kartı Sil"
+                >
+                  <Trash2 className="w-3.5 h-3.5" />
+                  <span>Kartı Sil</span>
+                </button>
+                <button
+                  onClick={() => setDetailTask(null)}
+                  className="p-1.5 text-slate-400 hover:text-slate-700 hover:bg-slate-100 rounded-xl transition-colors cursor-pointer"
                 >
                   <X className="w-5 h-5" />
                 </button>
               </div>
+            </div>
 
-              {/* Deadline & Description Container */}
-              <div className="space-y-4 mb-6">
-                {/* DEADLINE & LIVE COUNTDOWN (PLACED IMMEDIATELY ABOVE DESCRIPTION) */}
-                <div className="bg-gradient-to-r from-slate-900 via-purple-950 to-slate-900 text-white p-4 rounded-2xl border border-purple-900/40 shadow-md flex flex-col sm:flex-row sm:items-center justify-between gap-3">
-                  <div className="space-y-1">
-                    <span className="text-[10px] font-black text-purple-300 uppercase tracking-wider flex items-center gap-1.5">
-                      <Clock className="w-3.5 h-3.5 text-purple-400" /> Son Tarih (Deadline)
-                    </span>
-                    <div className="flex items-center gap-2">
-                      <input
-                        type="date"
-                        value={detailTask.dueDate || ''}
+            {/* Main Content Area (2-Column Responsive Layout) */}
+            <div className="flex-1 overflow-y-auto p-6 grid grid-cols-1 lg:grid-cols-12 gap-6 bg-slate-50">
+              
+              {/* LEFT COLUMN (8 cols in lg: 66% width) */}
+              <div className="lg:col-span-8 space-y-6">
+                
+                {/* Card Title & Main Metadata Header Card */}
+                <div className="bg-white rounded-3xl p-6 border border-slate-200 shadow-xs space-y-4">
+                  {/* Title View / Edit */}
+                  <div className="space-y-2">
+                    <div className="flex items-center justify-between">
+                      <span className="text-[10px] font-black text-purple-600 uppercase tracking-wider">
+                        Kart Başlığı
+                      </span>
+                      {!isEditingTitle && (
+                        <button
+                          onClick={() => {
+                            setEditTitleText(detailTask.title);
+                            setIsEditingTitle(true);
+                          }}
+                          className="text-xs font-bold text-purple-600 hover:text-purple-800 flex items-center gap-1 cursor-pointer"
+                        >
+                          <Edit2 className="w-3 h-3" /> Başlığı Düzenle
+                        </button>
+                      )}
+                    </div>
+
+                    {isEditingTitle ? (
+                      <div className="flex items-center gap-2">
+                        <input
+                          type="text"
+                          autoFocus
+                          value={editTitleText}
+                          onChange={(e) => setEditTitleText(e.target.value)}
+                          className="flex-1 px-4 py-2 text-lg font-black bg-slate-50 border-2 border-purple-500 rounded-2xl text-slate-900 focus:outline-hidden"
+                        />
+                        <button
+                          onClick={async () => {
+                            if (!editTitleText.trim()) return;
+                            const updated = { ...detailTask, title: editTitleText.trim() };
+                            setDetailTask(updated);
+                            await onUpdateTask(updated);
+                            setIsEditingTitle(false);
+                          }}
+                          className="px-4 py-2 bg-purple-600 hover:bg-purple-700 text-white text-xs font-black rounded-xl cursor-pointer shadow-xs flex items-center gap-1"
+                        >
+                          <Save className="w-3.5 h-3.5" /> Kaydet
+                        </button>
+                        <button
+                          onClick={() => {
+                            setEditTitleText(detailTask.title);
+                            setIsEditingTitle(false);
+                          }}
+                          className="px-3 py-2 bg-slate-200 hover:bg-slate-300 text-slate-700 text-xs font-bold rounded-xl cursor-pointer"
+                        >
+                          Vazgeç
+                        </button>
+                      </div>
+                    ) : (
+                      <h1 className="text-2xl font-black text-slate-900 leading-snug">
+                        {detailTask.title}
+                      </h1>
+                    )}
+                  </div>
+
+                  {/* Status, Priority, Due Date Settings */}
+                  <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 pt-3 border-t border-slate-100">
+                    {/* Sütun / Aşama */}
+                    <div>
+                      <label className="block text-[10px] font-black text-slate-400 uppercase mb-1">
+                        Sütun / Aşama
+                      </label>
+                      <select
+                        value={detailTask.columnId}
                         onChange={async (e) => {
-                          const newDate = e.target.value;
-                          const updated = { ...detailTask, dueDate: newDate };
+                          const updated = { ...detailTask, columnId: e.target.value };
                           setDetailTask(updated);
                           await onUpdateTask(updated);
                         }}
-                        className="bg-slate-800 text-white text-xs font-black px-3 py-1.5 rounded-xl border border-slate-700 focus:outline-hidden cursor-pointer shadow-inner hover:border-purple-400 transition-colors"
-                      />
+                        className="w-full bg-slate-50 border border-slate-200 text-slate-800 text-xs font-bold rounded-xl px-3 py-2 focus:outline-hidden cursor-pointer"
+                      >
+                        {activeProject.columns.map((c) => (
+                          <option key={c.id} value={c.id}>
+                            {c.title}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+
+                    {/* Öncelik */}
+                    <div>
+                      <label className="block text-[10px] font-black text-slate-400 uppercase mb-1">
+                        Öncelik Seviyesi
+                      </label>
+                      <select
+                        value={detailTask.priority || 'none'}
+                        onChange={async (e) => {
+                          const newPriority = e.target.value as TaskPriority;
+                          const updated = {
+                            ...detailTask,
+                            priority: newPriority,
+                            dueDate: newPriority === 'none' ? undefined : detailTask.dueDate,
+                          };
+                          setDetailTask(updated);
+                          await onUpdateTask(updated);
+                        }}
+                        className="w-full bg-slate-50 border border-slate-200 text-slate-800 text-xs font-bold rounded-xl px-3 py-2 focus:outline-hidden cursor-pointer"
+                      >
+                        <option value="none">Önceliksiz</option>
+                        <option value="low">Düşük Öncelik</option>
+                        <option value="medium">Orta Öncelik</option>
+                        <option value="high">Yüksek Öncelik</option>
+                      </select>
+                    </div>
+
+                    {/* Son Tarih (Sadece önceliksiz değilse gösterilir) */}
+                    <div>
+                      <label className="block text-[10px] font-black text-slate-400 uppercase mb-1">
+                        Son Tarih (Deadline)
+                      </label>
+                      {detailTask.priority !== 'none' ? (
+                        <input
+                          type="date"
+                          value={detailTask.dueDate || ''}
+                          onChange={async (e) => {
+                            const newDate = e.target.value;
+                            const updated = { ...detailTask, dueDate: newDate };
+                            setDetailTask(updated);
+                            await onUpdateTask(updated);
+                          }}
+                          className="w-full bg-slate-50 border border-slate-200 text-slate-800 text-xs font-bold rounded-xl px-3 py-2 focus:outline-hidden cursor-pointer"
+                        />
+                      ) : (
+                        <div className="text-xs text-slate-400 italic bg-slate-50 border border-slate-200 rounded-xl px-3 py-2">
+                          Önceliksiz (Tarih Yok)
+                        </div>
+                      )}
                     </div>
                   </div>
 
-                  {countdown ? (
+                  {/* Countdown Badge if set */}
+                  {detailTask.priority !== 'none' && countdown && (
                     <div
-                      className={`px-4 py-2 rounded-xl font-black text-xs flex items-center gap-2 shrink-0 shadow-md ${
+                      className={`p-3 rounded-2xl font-black text-xs flex items-center justify-between gap-2 shadow-xs ${
                         countdown.status === 'expired'
-                          ? 'bg-rose-600 text-white animate-pulse'
+                          ? 'bg-rose-100 text-rose-800 border border-rose-300'
                           : countdown.status === 'urgent'
-                          ? 'bg-amber-500 text-white'
-                          : countdown.status === 'warning'
-                          ? 'bg-amber-400/20 text-amber-200 border border-amber-400/40'
-                          : 'bg-emerald-500/20 text-emerald-200 border border-emerald-500/40'
+                          ? 'bg-amber-100 text-amber-900 border border-amber-300'
+                          : 'bg-emerald-50 text-emerald-800 border border-emerald-200'
                       }`}
                     >
-                      <Clock className="w-4 h-4" />
+                      <span className="flex items-center gap-2">
+                        <Clock className="w-4 h-4" />
+                        <span>Kalan Süre (Canlı)</span>
+                      </span>
                       <span>{countdown.text}</span>
                     </div>
-                  ) : (
-                    <span className="text-xs text-slate-400 font-bold italic">Bitiş tarihi belirlenmedi</span>
                   )}
                 </div>
 
-                {/* DESCRIPTION WITH DOUBLE-CLICK TO EDIT DIRECTLY */}
-                <div>
-                  <div className="flex items-center justify-between mb-1.5">
-                    <h4 className="text-xs font-extrabold text-slate-500 uppercase tracking-wider flex items-center gap-1.5">
-                      <FileText className="w-3.5 h-3.5 text-purple-600" /> Açıklama / Detaylar
-                    </h4>
+                {/* Description Card */}
+                <div className="bg-white rounded-3xl p-6 border border-slate-200 shadow-xs space-y-3">
+                  <div className="flex items-center justify-between">
+                    <h3 className="text-sm font-extrabold text-slate-900 flex items-center gap-2">
+                      <FileText className="w-4 h-4 text-purple-600" /> Açıklama & Detaylar
+                    </h3>
                     {!isEditingDescription && (
-                      <span className="text-[10px] font-bold text-slate-400 italic">
-                        (Düzenlemek için çift tıklayın)
+                      <span className="text-[10px] text-slate-400 font-bold">
+                        (Çift tıklayarak düzenleyin)
                       </span>
                     )}
                   </div>
 
                   {isEditingDescription ? (
-                    <div className="space-y-2">
+                    <div className="space-y-3">
                       <textarea
                         autoFocus
                         value={editDescriptionText}
                         onChange={(e) => setEditDescriptionText(e.target.value)}
-                        placeholder="Açıklama veya proje detaylarını yazın..."
-                        className="w-full p-3.5 text-xs bg-white border-2 border-purple-500 rounded-2xl text-slate-900 font-medium resize-none h-32 focus:outline-hidden shadow-inner"
+                        placeholder="Açıklama veya detayları buraya yazabilirsiniz..."
+                        className="w-full p-4 text-xs bg-slate-50 border-2 border-purple-500 rounded-2xl text-slate-900 font-medium resize-none h-36 focus:outline-hidden shadow-inner"
                       />
                       <div className="flex justify-end gap-2">
                         <button
-                          onClick={() => {
-                            setEditDescriptionText(detailTask.description || '');
-                            setIsEditingDescription(false);
-                          }}
-                          className="px-3 py-1.5 bg-slate-200 text-slate-700 text-xs font-extrabold rounded-xl hover:bg-slate-300 transition-colors cursor-pointer"
+                          onClick={() => setIsEditingDescription(false)}
+                          className="px-3.5 py-1.5 bg-slate-200 text-slate-700 text-xs font-extrabold rounded-xl hover:bg-slate-300 cursor-pointer"
                         >
                           Vazgeç
                         </button>
@@ -1264,9 +1476,9 @@ export const ProjectsSection: React.FC<Props> = ({
                             await onUpdateTask(updated);
                             setIsEditingDescription(false);
                           }}
-                          className="px-4 py-1.5 bg-purple-600 text-white text-xs font-extrabold rounded-xl hover:bg-purple-700 transition-colors cursor-pointer shadow-xs flex items-center gap-1"
+                          className="px-4 py-1.5 bg-purple-600 text-white text-xs font-black rounded-xl hover:bg-purple-700 shadow-xs cursor-pointer flex items-center gap-1"
                         >
-                          <CheckCircle2 className="w-3.5 h-3.5" /> Kaydet
+                          <Save className="w-3.5 h-3.5" /> Kaydet
                         </button>
                       </div>
                     </div>
@@ -1276,182 +1488,313 @@ export const ProjectsSection: React.FC<Props> = ({
                         setEditDescriptionText(detailTask.description || '');
                         setIsEditingDescription(true);
                       }}
-                      title="Açıklamayı düzenlemek için çift tıklayın"
-                      className="text-xs text-slate-800 leading-relaxed bg-slate-50 hover:bg-purple-50/50 p-4 rounded-2xl border border-slate-200 hover:border-purple-300 font-medium whitespace-pre-wrap cursor-pointer transition-all shadow-2xs group relative min-h-[70px]"
+                      className="text-xs text-slate-800 leading-relaxed bg-slate-50 hover:bg-purple-50/40 p-4 rounded-2xl border border-slate-200 hover:border-purple-300 font-medium whitespace-pre-wrap cursor-pointer transition-all min-h-[80px]"
                     >
                       {detailTask.description ? (
                         detailTask.description
                       ) : (
                         <span className="text-slate-400 italic">
-                          Henüz açıklama eklenmemiş. Düzenlemek için çift tıklayın.
+                          Açıklama girilmemiş. Çift tıklayarak açıklama yazabilirsiniz.
                         </span>
                       )}
-                      <div className="absolute right-3 top-3 opacity-0 group-hover:opacity-100 transition-opacity bg-white/90 border border-purple-200 px-2 py-0.5 rounded-md text-[10px] font-bold text-purple-700 shadow-2xs">
-                        Çift Tıkla ✏️
-                      </div>
                     </div>
                   )}
                 </div>
-              </div>
 
-              {/* Connected Workspace Items */}
-              <div className="border-t border-slate-100 pt-4 space-y-4 flex-1">
-                <h3 className="text-sm font-black text-slate-900 flex items-center gap-2">
-                  <Layers className="w-4 h-4 text-purple-600" />
-                  Proje & Kart İle İlişkili Workspace Ögeleri
-                </h3>
+                {/* Left Side Notes Listing Section with Tag Filtering & Sorting */}
+                <div className="bg-white rounded-3xl p-6 border border-slate-200 shadow-xs space-y-4">
+                  <div className="flex flex-wrap items-center justify-between gap-3 border-b border-slate-100 pb-3">
+                    <div className="flex items-center gap-2">
+                      <div className="p-2 bg-amber-100 text-amber-700 rounded-xl">
+                        <FileText className="w-4 h-4" />
+                      </div>
+                      <div>
+                        <h3 className="text-sm font-black text-slate-900">
+                          Notlar ({filteredNotes.length})
+                        </h3>
+                        <p className="text-[11px] text-slate-500">
+                          Bu projeye veya karta eklenen notlar
+                        </p>
+                      </div>
+                    </div>
 
-                {/* Connected Notes */}
-                <div className="space-y-2">
-                  <span className="text-xs font-extrabold text-slate-700 flex items-center gap-1.5">
-                    <FileText className="w-3.5 h-3.5 text-amber-500" /> Bağlı Notlar ({projectNotes.length})
-                  </span>
-                  <div className="space-y-1.5 max-h-36 overflow-y-auto">
-                    {projectNotes.length === 0 ? (
-                      <p className="text-[11px] text-slate-400 italic">Bağlı not yok.</p>
+                    {/* Filter & Sort Controls */}
+                    <div className="flex flex-wrap items-center gap-2">
+                      {/* Tag Filter */}
+                      <div className="flex items-center gap-1 bg-slate-50 border border-slate-200 rounded-xl px-2.5 py-1">
+                        <Tag className="w-3 h-3 text-amber-600 shrink-0" />
+                        <select
+                          value={noteTagFilter}
+                          onChange={(e) => setNoteTagFilter(e.target.value)}
+                          className="bg-transparent text-xs font-bold text-slate-800 focus:outline-hidden cursor-pointer"
+                        >
+                          <option value="all">Tüm Etiketler</option>
+                          {allNoteTags.map((tag) => (
+                            <option key={tag} value={tag}>
+                              #{tag}
+                            </option>
+                          ))}
+                        </select>
+                      </div>
+
+                      {/* Sort Order */}
+                      <div className="flex items-center gap-1 bg-slate-50 border border-slate-200 rounded-xl px-2.5 py-1">
+                        <span className="text-[10px] font-extrabold text-slate-400">Sırala:</span>
+                        <select
+                          value={noteSortOrder}
+                          onChange={(e) =>
+                            setNoteSortOrder(
+                              e.target.value as 'newest' | 'oldest' | 'title'
+                            )
+                          }
+                          className="bg-transparent text-xs font-bold text-slate-800 focus:outline-hidden cursor-pointer"
+                        >
+                          <option value="newest">En Yeni</option>
+                          <option value="oldest">En Eski</option>
+                          <option value="title">Başlık (A-Z)</option>
+                        </select>
+                      </div>
+
+                      {/* New Note Button */}
+                      <button
+                        onClick={() =>
+                          onOpenNoteModal({
+                            id: '',
+                            title: '',
+                            content: '',
+                            tags: [],
+                            projectId: activeProject.id,
+                            date: new Date().toISOString().split('T')[0],
+                            createdAt: new Date().toISOString(),
+                            updatedAt: new Date().toISOString(),
+                          })
+                        }
+                        className="px-3 py-1.5 bg-amber-500 hover:bg-amber-600 text-white text-xs font-extrabold rounded-xl shadow-2xs flex items-center gap-1 cursor-pointer transition-colors"
+                      >
+                        <Plus className="w-3.5 h-3.5" />
+                        <span>Yeni Not Ekle</span>
+                      </button>
+                    </div>
+                  </div>
+
+                  {/* Notes Cards Container */}
+                  <div className="space-y-3">
+                    {filteredNotes.length === 0 ? (
+                      <div className="p-8 text-center border-2 border-dashed border-slate-200 rounded-2xl text-slate-400 text-xs italic">
+                        {noteTagFilter !== 'all'
+                          ? `"#${noteTagFilter}" etiketine sahip not bulunamadı.`
+                          : 'Henüz not eklenmemiş.'}
+                      </div>
                     ) : (
-                      projectNotes.map((note) => (
+                      filteredNotes.map((note) => (
                         <div
                           key={note.id}
-                          className="p-2.5 bg-amber-50/50 border border-amber-200/60 rounded-xl flex items-center justify-between text-xs"
+                          className="p-4 bg-amber-50/40 hover:bg-amber-50/80 border border-amber-200/80 rounded-2xl transition-all space-y-2 group"
                         >
-                          <span className="font-bold text-amber-950 truncate max-w-md">
-                            {note.title}
-                          </span>
-                          <button
-                            onClick={() => {
-                              setDetailTask(null);
-                              onOpenNoteModal(note);
-                            }}
-                            className="text-[10px] font-extrabold text-amber-700 hover:underline cursor-pointer shrink-0 ml-2"
-                          >
-                            Görüntüle
-                          </button>
-                        </div>
-                      ))
-                    )}
-                  </div>
-                </div>
-
-                {/* Connected Emails */}
-                <div className="space-y-2">
-                  <span className="text-xs font-extrabold text-slate-700 flex items-center gap-1.5">
-                    <Mail className="w-3.5 h-3.5 text-rose-500" /> Bağlı E-postalar ({linkedEmailsList.length})
-                  </span>
-                  <div className="space-y-1.5 max-h-36 overflow-y-auto">
-                    {linkedEmailsList.length === 0 ? (
-                      <p className="text-[11px] text-slate-400 italic">Bağlı e-posta yok.</p>
-                    ) : (
-                      linkedEmailsList.map((email) => (
-                        <div
-                          key={email.id}
-                          className="p-2.5 bg-rose-50/50 border border-rose-200/60 rounded-xl flex items-center justify-between text-xs"
-                        >
-                          <div className="min-w-0 flex-1 pr-2">
-                            <p className="font-bold text-slate-900 truncate">{email.subject}</p>
-                            <p className="text-[10px] text-slate-500 truncate">{email.sender}</p>
-                          </div>
-                        </div>
-                      ))
-                    )}
-                  </div>
-                </div>
-
-                {/* Connected Calendar Events */}
-                <div className="space-y-2">
-                  <span className="text-xs font-extrabold text-slate-700 flex items-center gap-1.5">
-                    <Calendar className="w-3.5 h-3.5 text-blue-500" /> Bağlı Takvim Etkinlikleri ({linkedEventsList.length})
-                  </span>
-                  <div className="space-y-1.5 max-h-36 overflow-y-auto">
-                    {linkedEventsList.length === 0 ? (
-                      <p className="text-[11px] text-slate-400 italic">Bağlı etkinlik yok.</p>
-                    ) : (
-                      linkedEventsList.map((evt) => (
-                        <div
-                          key={evt.id}
-                          className="p-2.5 bg-blue-50/50 border border-blue-200/60 rounded-xl flex items-center justify-between text-xs"
-                        >
-                          <div className="min-w-0 flex-1 pr-2">
-                            <p className="font-bold text-slate-900 truncate">{evt.summary}</p>
-                            <p className="text-[10px] text-slate-500 truncate">{new Date(evt.start).toLocaleString('tr-TR')}</p>
-                          </div>
-                          {evt.htmlLink && (
-                            <a
-                              href={evt.htmlLink}
-                              target="_blank"
-                              rel="noreferrer"
-                              className="text-blue-600 hover:underline text-[10px] font-bold shrink-0 ml-2"
+                          <div className="flex items-start justify-between gap-2">
+                            <h4 className="font-extrabold text-slate-900 text-xs leading-snug">
+                              {note.title || 'Başlıksız Not'}
+                            </h4>
+                            <button
+                              onClick={() => onOpenNoteModal(note)}
+                              className="px-2.5 py-1 bg-amber-200/60 hover:bg-amber-200 text-amber-900 text-[10px] font-extrabold rounded-lg transition-colors cursor-pointer shrink-0"
                             >
-                              Takvimde Aç
-                            </a>
-                          )}
+                              Görüntüle & Düzenle
+                            </button>
+                          </div>
+
+                          <p className="text-[11px] text-slate-600 line-clamp-3 leading-relaxed">
+                            {note.content}
+                          </p>
+
+                          <div className="flex items-center justify-between pt-1 border-t border-amber-200/40 text-[10px] text-slate-400">
+                            <div className="flex items-center gap-1.5 flex-wrap">
+                              {note.tags?.map((t) => (
+                                <span
+                                  key={t}
+                                  className="px-2 py-0.5 bg-amber-200/60 text-amber-900 font-bold rounded-md"
+                                >
+                                  #{t}
+                                </span>
+                              ))}
+                            </div>
+                            <span>{note.date}</span>
+                          </div>
                         </div>
                       ))
                     )}
                   </div>
                 </div>
 
-                {/* Connected Drive Files */}
-                <div className="space-y-2">
-                  <span className="text-xs font-extrabold text-slate-700 flex items-center gap-1.5">
-                    <HardDrive className="w-3.5 h-3.5 text-emerald-500" /> Bağlı Drive Dosyaları ({linkedDriveFilesList.length})
-                  </span>
-                  <div className="space-y-1.5 max-h-36 overflow-y-auto">
-                    {linkedDriveFilesList.length === 0 ? (
-                      <p className="text-[11px] text-slate-400 italic">Bağlı Drive dosyası yok.</p>
-                    ) : (
-                      linkedDriveFilesList.map((file) => (
-                        <div
-                          key={file.id}
-                          className="p-2.5 bg-emerald-50/50 border border-emerald-200/60 rounded-xl flex items-center justify-between text-xs"
-                        >
-                          <span className="font-bold text-slate-900 truncate">{file.name}</span>
-                          <a
-                            href={file.webViewLink}
-                            target="_blank"
-                            rel="noreferrer"
-                            className="text-emerald-700 font-bold hover:underline text-[10px] shrink-0 ml-2"
+              </div>
+
+              {/* RIGHT COLUMN (4 cols in lg: 33% width - Connected Items) */}
+              <div className="lg:col-span-4 space-y-6">
+                
+                <div className="bg-white rounded-3xl p-6 border border-slate-200 shadow-xs space-y-5">
+                  <div className="border-b border-slate-100 pb-3">
+                    <h3 className="text-sm font-black text-slate-900 flex items-center gap-2">
+                      <Layers className="w-4 h-4 text-purple-600" />
+                      Bağlanan Öğeler (Workspace)
+                    </h3>
+                    <p className="text-[11px] text-slate-500 mt-0.5">
+                      Bu kart ve projeye bağlı e-posta, etkinlik ve dosyalar
+                    </p>
+                  </div>
+
+                  {/* 1. Connected Emails */}
+                  <div className="space-y-2">
+                    <div className="flex items-center justify-between">
+                      <span className="text-xs font-extrabold text-slate-800 flex items-center gap-1.5">
+                        <Mail className="w-3.5 h-3.5 text-rose-500" /> E-postalar ({linkedEmailsList.length})
+                      </span>
+                      <button
+                        onClick={() => {
+                          setLinkEntityType('email');
+                          setIsLinkModalOpen(true);
+                        }}
+                        className="text-[10px] font-extrabold text-purple-600 hover:underline cursor-pointer"
+                      >
+                        + E-posta Bağla
+                      </button>
+                    </div>
+
+                    <div className="space-y-1.5 max-h-40 overflow-y-auto pr-1">
+                      {linkedEmailsList.length === 0 ? (
+                        <p className="text-[11px] text-slate-400 italic">E-posta bağlanmadı.</p>
+                      ) : (
+                        linkedEmailsList.map((email) => (
+                          <div
+                            key={email.id}
+                            className="p-2.5 bg-rose-50/50 border border-rose-200/60 rounded-xl flex items-center justify-between text-xs"
                           >
-                            Drive'da Aç
-                          </a>
-                        </div>
-                      ))
-                    )}
+                            <div className="min-w-0 flex-1 pr-2">
+                              <p className="font-bold text-slate-900 truncate">{email.subject}</p>
+                              <p className="text-[10px] text-slate-500 truncate">{email.sender}</p>
+                            </div>
+                          </div>
+                        ))
+                      )}
+                    </div>
                   </div>
+
+                  {/* 2. Connected Calendar Events */}
+                  <div className="space-y-2 pt-2 border-t border-slate-100">
+                    <div className="flex items-center justify-between">
+                      <span className="text-xs font-extrabold text-slate-800 flex items-center gap-1.5">
+                        <Calendar className="w-3.5 h-3.5 text-blue-500" /> Takvim Etkinlikleri ({linkedEventsList.length})
+                      </span>
+                      <button
+                        onClick={() => {
+                          setLinkEntityType('event');
+                          setIsLinkModalOpen(true);
+                        }}
+                        className="text-[10px] font-extrabold text-purple-600 hover:underline cursor-pointer"
+                      >
+                        + Etkinlik Bağla
+                      </button>
+                    </div>
+
+                    <div className="space-y-1.5 max-h-40 overflow-y-auto pr-1">
+                      {linkedEventsList.length === 0 ? (
+                        <p className="text-[11px] text-slate-400 italic">Takvim etkinliği bağlanmadı.</p>
+                      ) : (
+                        linkedEventsList.map((evt) => (
+                          <div
+                            key={evt.id}
+                            className="p-2.5 bg-blue-50/50 border border-blue-200/60 rounded-xl flex items-center justify-between text-xs"
+                          >
+                            <div className="min-w-0 flex-1 pr-2">
+                              <p className="font-bold text-slate-900 truncate">{evt.summary}</p>
+                              <p className="text-[10px] text-slate-500 truncate">{new Date(evt.start).toLocaleString('tr-TR')}</p>
+                            </div>
+                          </div>
+                        ))
+                      )}
+                    </div>
+                  </div>
+
+                  {/* 3. Connected Drive Files */}
+                  <div className="space-y-2 pt-2 border-t border-slate-100">
+                    <div className="flex items-center justify-between">
+                      <span className="text-xs font-extrabold text-slate-800 flex items-center gap-1.5">
+                        <HardDrive className="w-3.5 h-3.5 text-emerald-500" /> Drive Dosyaları ({linkedDriveFilesList.length})
+                      </span>
+                      <button
+                        onClick={() => {
+                          setLinkEntityType('drive');
+                          setIsLinkModalOpen(true);
+                        }}
+                        className="text-[10px] font-extrabold text-purple-600 hover:underline cursor-pointer"
+                      >
+                        + Dosya Bağla
+                      </button>
+                    </div>
+
+                    <div className="space-y-1.5 max-h-40 overflow-y-auto pr-1">
+                      {linkedDriveFilesList.length === 0 ? (
+                        <p className="text-[11px] text-slate-400 italic">Drive dosyası bağlanmadı.</p>
+                      ) : (
+                        linkedDriveFilesList.map((file) => (
+                          <div
+                            key={file.id}
+                            className="p-2.5 bg-emerald-50/50 border border-emerald-200/60 rounded-xl flex items-center justify-between text-xs"
+                          >
+                            <span className="font-bold text-slate-900 truncate">{file.name}</span>
+                            {file.webViewLink && (
+                              <a
+                                href={file.webViewLink}
+                                target="_blank"
+                                rel="noreferrer"
+                                className="text-emerald-700 font-bold hover:underline text-[10px] shrink-0 ml-2"
+                              >
+                                Aç
+                              </a>
+                            )}
+                          </div>
+                        ))
+                      )}
+                    </div>
+                  </div>
+
+                  {/* 4. Connected Contacts */}
+                  <div className="space-y-2 pt-2 border-t border-slate-100">
+                    <div className="flex items-center justify-between">
+                      <span className="text-xs font-extrabold text-slate-800 flex items-center gap-1.5">
+                        <Users className="w-3.5 h-3.5 text-indigo-500" /> Kişiler ({linkedContactsList.length})
+                      </span>
+                      <button
+                        onClick={() => {
+                          setLinkEntityType('contact');
+                          setIsLinkModalOpen(true);
+                        }}
+                        className="text-[10px] font-extrabold text-purple-600 hover:underline cursor-pointer"
+                      >
+                        + Kişi Bağla
+                      </button>
+                    </div>
+
+                    <div className="space-y-1.5 max-h-40 overflow-y-auto pr-1">
+                      {linkedContactsList.length === 0 ? (
+                        <p className="text-[11px] text-slate-400 italic">Kişi bağlanmadı.</p>
+                      ) : (
+                        linkedContactsList.map((c) => (
+                          <div
+                            key={c.resourceName}
+                            className="p-2.5 bg-indigo-50/50 border border-indigo-200/60 rounded-xl flex items-center justify-between text-xs"
+                          >
+                            <span className="font-bold text-indigo-950 truncate">{c.displayName}</span>
+                            <span className="text-[10px] text-slate-500">{c.email || c.phone}</span>
+                          </div>
+                        ))
+                      )}
+                    </div>
+                  </div>
+
                 </div>
 
-                {/* Connected Contacts */}
-                <div className="space-y-2">
-                  <span className="text-xs font-extrabold text-slate-700 flex items-center gap-1.5">
-                    <Users className="w-3.5 h-3.5 text-indigo-500" /> Bağlı Kişiler ({linkedContactsList.length})
-                  </span>
-                  <div className="space-y-1.5 max-h-36 overflow-y-auto">
-                    {linkedContactsList.length === 0 ? (
-                      <p className="text-[11px] text-slate-400 italic">Bağlı kişi yok.</p>
-                    ) : (
-                      linkedContactsList.map((c) => (
-                        <div
-                          key={c.resourceName}
-                          className="p-2.5 bg-indigo-50/50 border border-indigo-200/60 rounded-xl flex items-center justify-between text-xs"
-                        >
-                          <span className="font-bold text-indigo-950 truncate">{c.displayName}</span>
-                          <span className="text-[10px] text-slate-500">{c.email || c.phone}</span>
-                        </div>
-                      ))
-                    )}
-                  </div>
-                </div>
               </div>
 
-              {/* Modal Footer (Only Close Button, Edit Button Removed as requested) */}
-              <div className="mt-6 pt-4 border-t border-slate-100 flex items-center justify-end">
-                <button
-                  onClick={() => setDetailTask(null)}
-                  className="px-5 py-2 bg-slate-100 hover:bg-slate-200 text-slate-700 font-extrabold text-xs rounded-xl transition-colors cursor-pointer"
-                >
-                  Kapat
-                </button>
-              </div>
             </div>
           </div>
         );

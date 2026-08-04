@@ -14,21 +14,8 @@ if (!fs.existsSync(ADMINSPACE_DIR)) {
 
 let dbInstance: Database | null = null;
 
-// Initialize SQLite with sql.js
-export async function getAdminSpaceDb(): Promise<Database> {
-  if (dbInstance) return dbInstance;
-
-  const SQL = await initSqlJs();
-
-  if (fs.existsSync(SQLITE_FILE)) {
-    const fileBuffer = fs.readFileSync(SQLITE_FILE);
-    dbInstance = new SQL.Database(fileBuffer);
-  } else {
-    dbInstance = new SQL.Database();
-  }
-
-  // Ensure tables exist
-  dbInstance.run(`
+export function ensureTablesExist(db: Database) {
+  db.run(`
     CREATE TABLE IF NOT EXISTS locations (
       id TEXT PRIMARY KEY,
       name TEXT NOT NULL,
@@ -37,7 +24,7 @@ export async function getAdminSpaceDb(): Promise<Database> {
     );
   `);
 
-  dbInstance.run(`
+  db.run(`
     CREATE TABLE IF NOT EXISTS notes (
       id TEXT PRIMARY KEY,
       title TEXT NOT NULL,
@@ -57,7 +44,7 @@ export async function getAdminSpaceDb(): Promise<Database> {
     );
   `);
 
-  dbInstance.run(`
+  db.run(`
     CREATE TABLE IF NOT EXISTS projects (
       id TEXT PRIMARY KEY,
       name TEXT NOT NULL,
@@ -75,7 +62,7 @@ export async function getAdminSpaceDb(): Promise<Database> {
     );
   `);
 
-  dbInstance.run(`
+  db.run(`
     CREATE TABLE IF NOT EXISTS project_tasks (
       id TEXT PRIMARY KEY,
       projectId TEXT NOT NULL,
@@ -89,7 +76,7 @@ export async function getAdminSpaceDb(): Promise<Database> {
     );
   `);
 
-  dbInstance.run(`
+  db.run(`
     CREATE TABLE IF NOT EXISTS timelogs (
       id TEXT PRIMARY KEY,
       cardId TEXT,
@@ -107,14 +94,30 @@ export async function getAdminSpaceDb(): Promise<Database> {
     );
   `);
 
-  try { dbInstance.run("ALTER TABLE timelogs ADD COLUMN linkType TEXT"); } catch {}
-  try { dbInstance.run("ALTER TABLE timelogs ADD COLUMN linkId TEXT"); } catch {}
-  try { dbInstance.run("ALTER TABLE timelogs ADD COLUMN linkTitle TEXT"); } catch {}
+  try { db.run("ALTER TABLE timelogs ADD COLUMN linkType TEXT"); } catch {}
+  try { db.run("ALTER TABLE timelogs ADD COLUMN linkId TEXT"); } catch {}
+  try { db.run("ALTER TABLE timelogs ADD COLUMN linkTitle TEXT"); } catch {}
 
-  try { dbInstance.run("ALTER TABLE notes ADD COLUMN contacts TEXT"); } catch {}
-  try { dbInstance.run("ALTER TABLE notes ADD COLUMN linkedEmails TEXT"); } catch {}
-  try { dbInstance.run("ALTER TABLE notes ADD COLUMN linkedEvents TEXT"); } catch {}
-  try { dbInstance.run("ALTER TABLE notes ADD COLUMN projectId TEXT"); } catch {}
+  try { db.run("ALTER TABLE notes ADD COLUMN contacts TEXT"); } catch {}
+  try { db.run("ALTER TABLE notes ADD COLUMN linkedEmails TEXT"); } catch {}
+  try { db.run("ALTER TABLE notes ADD COLUMN linkedEvents TEXT"); } catch {}
+  try { db.run("ALTER TABLE notes ADD COLUMN projectId TEXT"); } catch {}
+}
+
+// Initialize SQLite with sql.js
+export async function getAdminSpaceDb(): Promise<Database> {
+  if (dbInstance) return dbInstance;
+
+  const SQL = await initSqlJs();
+
+  if (fs.existsSync(SQLITE_FILE)) {
+    const fileBuffer = fs.readFileSync(SQLITE_FILE);
+    dbInstance = new SQL.Database(fileBuffer);
+  } else {
+    dbInstance = new SQL.Database();
+  }
+
+  ensureTablesExist(dbInstance);
 
   // Seed default demo project if table is empty
   try {
@@ -178,9 +181,10 @@ export function saveDbToDisk() {
     const notes = getAllNotesFromDb();
     const projects = getAllProjectsFromDb();
     const projectTasks = getAllProjectTasksFromDb();
+    const timelogs = getAllTimelogsFromDb();
     fs.writeFileSync(
       DATA_JSON_FILE,
-      JSON.stringify({ locations, notes, projects, projectTasks, updatedAt: new Date().toISOString() }, null, 2)
+      JSON.stringify({ locations, notes, projects, projectTasks, timelogs, updatedAt: new Date().toISOString() }, null, 2)
     );
 
     // Save notes as Markdown file in ./adminspace/adminspace_notes.md
@@ -494,11 +498,12 @@ export function deleteNoteFromDb(id: string) {
   saveDbToDisk();
 }
 
-// Ensure Google Drive folder 'adminspace' exists and sync SQLite/JSON data into it
+// Ensure Google Drive folder 'adminspace' exists and sync SQLite/JSON/MD data into it
 export async function syncWithGoogleDriveAdminSpace(authClient: any) {
   if (!authClient) return null;
 
   try {
+    saveDbToDisk();
     const drive = google.drive({ version: 'v3', auth: authClient });
 
     // 1. Search if 'adminspace' folder exists
@@ -525,49 +530,95 @@ export async function syncWithGoogleDriveAdminSpace(authClient: any) {
 
     if (!folderId) return null;
 
-    // 3. Sync notes as Markdown file (adminspace_notes.md) into 'adminspace' folder
-    const notes = getAllNotesFromDb();
-    let notesMd = `# AdminSpace Notlar\n\n- **Son Güncelleme:** ${new Date().toLocaleString('tr-TR')}\n\n---\n\n`;
-    if (notes.length === 0) {
-      notesMd += `*Henüz kayıtlı not bulunmuyor.*\n`;
-    } else {
-      notes.forEach((n: any) => {
-        notesMd += `## 📝 ${n.title}\n`;
-        notesMd += `- **Tarih:** ${n.date || n.createdAt}\n`;
-        if (n.pinned) notesMd += `- **Sabitlenmiş:** Evet 📌\n`;
-        if (n.contactDisplayName) notesMd += `- **İlişkili Kişi:** ${n.contactDisplayName}\n`;
-        if (n.tags && n.tags.length > 0) notesMd += `- **Etiketler:** ${n.tags.join(', ')}\n`;
-        notesMd += `\n${n.content || ''}\n\n---\n\n`;
+    // 3. Sync adminspace.sqlite binary file into Drive
+    if (fs.existsSync(SQLITE_FILE)) {
+      const sqliteSearch = await drive.files.list({
+        q: `'${folderId}' in parents and name = 'adminspace.sqlite' and trashed = false`,
+        fields: 'files(id, name)',
       });
+      const sqliteFileId = sqliteSearch.data.files?.[0]?.id;
+      if (sqliteFileId) {
+        await drive.files.update({
+          fileId: sqliteFileId,
+          media: {
+            mimeType: 'application/x-sqlite3',
+            body: fs.createReadStream(SQLITE_FILE),
+          },
+        });
+      } else {
+        await drive.files.create({
+          requestBody: {
+            name: 'adminspace.sqlite',
+            parents: [folderId],
+            mimeType: 'application/x-sqlite3',
+          },
+          media: {
+            mimeType: 'application/x-sqlite3',
+            body: fs.createReadStream(SQLITE_FILE),
+          },
+        });
+      }
     }
 
-    const fileSearch = await drive.files.list({
-      q: `'${folderId}' in parents and name = 'adminspace_notes.md' and trashed = false`,
-      fields: 'files(id, name)',
-    });
-
-    const existingFileId = fileSearch.data.files?.[0]?.id;
-
-    if (existingFileId) {
-      await drive.files.update({
-        fileId: existingFileId,
-        media: {
-          mimeType: 'text/markdown',
-          body: notesMd,
-        },
+    // 4. Sync data.json dump file into Drive
+    if (fs.existsSync(DATA_JSON_FILE)) {
+      const jsonSearch = await drive.files.list({
+        q: `'${folderId}' in parents and name = 'data.json' and trashed = false`,
+        fields: 'files(id, name)',
       });
-    } else {
-      await drive.files.create({
-        requestBody: {
-          name: 'adminspace_notes.md',
-          parents: [folderId],
-          mimeType: 'text/markdown',
-        },
-        media: {
-          mimeType: 'text/markdown',
-          body: notesMd,
-        },
+      const jsonFileId = jsonSearch.data.files?.[0]?.id;
+      if (jsonFileId) {
+        await drive.files.update({
+          fileId: jsonFileId,
+          media: {
+            mimeType: 'application/json',
+            body: fs.createReadStream(DATA_JSON_FILE),
+          },
+        });
+      } else {
+        await drive.files.create({
+          requestBody: {
+            name: 'data.json',
+            parents: [folderId],
+            mimeType: 'application/json',
+          },
+          media: {
+            mimeType: 'application/json',
+            body: fs.createReadStream(DATA_JSON_FILE),
+          },
+        });
+      }
+    }
+
+    // 5. Sync adminspace_notes.md Markdown file into Drive
+    const NOTES_MD_FILE = path.join(ADMINSPACE_DIR, 'adminspace_notes.md');
+    if (fs.existsSync(NOTES_MD_FILE)) {
+      const mdSearch = await drive.files.list({
+        q: `'${folderId}' in parents and name = 'adminspace_notes.md' and trashed = false`,
+        fields: 'files(id, name)',
       });
+      const mdFileId = mdSearch.data.files?.[0]?.id;
+      if (mdFileId) {
+        await drive.files.update({
+          fileId: mdFileId,
+          media: {
+            mimeType: 'text/markdown',
+            body: fs.createReadStream(NOTES_MD_FILE),
+          },
+        });
+      } else {
+        await drive.files.create({
+          requestBody: {
+            name: 'adminspace_notes.md',
+            parents: [folderId],
+            mimeType: 'text/markdown',
+          },
+          media: {
+            mimeType: 'text/markdown',
+            body: fs.createReadStream(NOTES_MD_FILE),
+          },
+        });
+      }
     }
 
     return {
@@ -579,6 +630,93 @@ export async function syncWithGoogleDriveAdminSpace(authClient: any) {
   } catch (err) {
     console.error('Google Drive adminspace sync error:', err);
     return null;
+  }
+}
+
+// Restore SQLite DB / data.json from Google Drive 'adminspace' folder into local SQLite engine
+export async function restoreFromGoogleDriveAdminSpace(authClient: any) {
+  if (!authClient) return null;
+
+  try {
+    const drive = google.drive({ version: 'v3', auth: authClient });
+
+    // 1. Search if 'adminspace' folder exists
+    const searchRes = await drive.files.list({
+      q: "mimeType = 'application/vnd.google-apps.folder' and name = 'adminspace' and trashed = false",
+      fields: 'files(id, name, webViewLink)',
+    });
+
+    const folderId = searchRes.data.files?.[0]?.id;
+    if (!folderId) {
+      console.log('No adminspace folder found in Google Drive to restore from.');
+      return { restored: false, reason: 'No adminspace folder in Drive' };
+    }
+
+    // 2. Search for adminspace.sqlite or data.json inside 'adminspace' folder
+    const sqliteSearch = await drive.files.list({
+      q: `'${folderId}' in parents and name = 'adminspace.sqlite' and trashed = false`,
+      fields: 'files(id, name, modifiedTime)',
+    });
+    const sqliteFile = sqliteSearch.data.files?.[0];
+
+    const jsonSearch = await drive.files.list({
+      q: `'${folderId}' in parents and name = 'data.json' and trashed = false`,
+      fields: 'files(id, name, modifiedTime)',
+    });
+    const jsonFile = jsonSearch.data.files?.[0];
+
+    const SQL = await initSqlJs();
+
+    if (sqliteFile?.id) {
+      console.log('Restoring adminspace.sqlite from Google Drive...');
+      const fileRes = await drive.files.get(
+        { fileId: sqliteFile.id, alt: 'media' },
+        { responseType: 'arraybuffer' }
+      );
+      const buffer = Buffer.from(fileRes.data as ArrayBuffer);
+      fs.writeFileSync(SQLITE_FILE, buffer);
+
+      dbInstance = new SQL.Database(buffer);
+      ensureTablesExist(dbInstance);
+      saveDbToDisk();
+      return { restored: true, source: 'sqlite', modifiedTime: sqliteFile.modifiedTime };
+    } else if (jsonFile?.id) {
+      console.log('Restoring data.json from Google Drive...');
+      const fileRes = await drive.files.get(
+        { fileId: jsonFile.id, alt: 'media' },
+        { responseType: 'text' }
+      );
+      const jsonStr = String(fileRes.data);
+      fs.writeFileSync(DATA_JSON_FILE, jsonStr);
+
+      const parsed = JSON.parse(jsonStr);
+      dbInstance = new SQL.Database();
+      ensureTablesExist(dbInstance);
+
+      if (parsed.locations && Array.isArray(parsed.locations)) {
+        parsed.locations.forEach((l: any) => saveLocationToDb(l));
+      }
+      if (parsed.notes && Array.isArray(parsed.notes)) {
+        parsed.notes.forEach((n: any) => saveNoteToDb(n));
+      }
+      if (parsed.projects && Array.isArray(parsed.projects)) {
+        parsed.projects.forEach((p: any) => saveProjectToDb(p));
+      }
+      if (parsed.projectTasks && Array.isArray(parsed.projectTasks)) {
+        parsed.projectTasks.forEach((t: any) => saveProjectTaskToDb(t));
+      }
+      if (parsed.timelogs && Array.isArray(parsed.timelogs)) {
+        parsed.timelogs.forEach((t: any) => saveTimelogToDb(t));
+      }
+
+      saveDbToDisk();
+      return { restored: true, source: 'json', modifiedTime: jsonFile.modifiedTime };
+    }
+
+    return { restored: false, reason: 'No sqlite or json file in adminspace folder' };
+  } catch (err: any) {
+    console.error('Error restoring from Google Drive:', err);
+    return { restored: false, error: err?.message || String(err) };
   }
 }
 

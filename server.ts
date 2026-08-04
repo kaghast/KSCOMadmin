@@ -12,6 +12,7 @@ import {
   saveLocationToDb,
   deleteNoteFromDb,
   syncWithGoogleDriveAdminSpace,
+  restoreFromGoogleDriveAdminSpace,
   getAllProjectsFromDb,
   saveProjectToDb,
   deleteProjectFromDb,
@@ -28,6 +29,24 @@ type TaskPriority = 'high' | 'medium' | 'low';
 
 const app = express();
 const PORT = 3000;
+
+let hasAutoRestoredFromDrive = false;
+
+async function ensureRestoredFromDrive(req: express.Request) {
+  if (hasAutoRestoredFromDrive) return;
+  const authClient = getAuthenticatedClient(req);
+  if (authClient) {
+    try {
+      const res = await restoreFromGoogleDriveAdminSpace(authClient);
+      if (res) {
+        console.log('Auto-restore check from Google Drive completed:', res);
+        hasAutoRestoredFromDrive = true;
+      }
+    } catch (err) {
+      console.error('Error during auto-restore from Drive:', err);
+    }
+  }
+}
 
 app.set('trust proxy', true);
 
@@ -1162,6 +1181,8 @@ app.patch('/api/contacts/update', async (req, res) => {
 
 app.get('/api/notes', async (req, res) => {
   await getAdminSpaceDb();
+  await ensureRestoredFromDrive(req);
+
   let notes = getAllNotesFromDb();
   let locations = getAllLocationsFromDb();
 
@@ -1289,6 +1310,8 @@ app.put('/api/notes/:id', async (req, res) => {
 
 app.get('/api/projects', async (req, res) => {
   await getAdminSpaceDb();
+  await ensureRestoredFromDrive(req);
+
   const projects = getAllProjectsFromDb();
   const tasks = getAllProjectTasksFromDb();
 
@@ -1321,6 +1344,12 @@ app.post('/api/projects', async (req, res) => {
   };
 
   saveProjectToDb(newProject);
+
+  const authClient = getAuthenticatedClient(req);
+  if (authClient) {
+    syncWithGoogleDriveAdminSpace(authClient).catch(() => {});
+  }
+
   res.json({ success: true, project: newProject });
 });
 
@@ -1349,6 +1378,12 @@ app.put('/api/projects/:id', async (req, res) => {
   };
 
   saveProjectToDb(updatedProject);
+
+  const authClient = getAuthenticatedClient(req);
+  if (authClient) {
+    syncWithGoogleDriveAdminSpace(authClient).catch(() => {});
+  }
+
   res.json({ success: true, project: updatedProject });
 });
 
@@ -1356,12 +1391,20 @@ app.delete('/api/projects/:id', async (req, res) => {
   await getAdminSpaceDb();
   const { id } = req.params;
   deleteProjectFromDb(id);
+
+  const authClient = getAuthenticatedClient(req);
+  if (authClient) {
+    syncWithGoogleDriveAdminSpace(authClient).catch(() => {});
+  }
+
   res.json({ success: true });
 });
 
 // PROJECT TASKS ENDPOINTS
 app.get('/api/projects/:id/tasks', async (req, res) => {
   await getAdminSpaceDb();
+  await ensureRestoredFromDrive(req);
+
   const { id } = req.params;
   const tasks = getAllProjectTasksFromDb(id);
   res.json({ tasks });
@@ -1385,6 +1428,12 @@ app.post('/api/projects/:id/tasks', async (req, res) => {
   };
 
   saveProjectTaskToDb(newTask);
+
+  const authClient = getAuthenticatedClient(req);
+  if (authClient) {
+    syncWithGoogleDriveAdminSpace(authClient).catch(() => {});
+  }
+
   res.json({ success: true, task: newTask });
 });
 
@@ -1410,6 +1459,12 @@ app.put('/api/projects/tasks/:taskId', async (req, res) => {
   };
 
   saveProjectTaskToDb(updatedTask);
+
+  const authClient = getAuthenticatedClient(req);
+  if (authClient) {
+    syncWithGoogleDriveAdminSpace(authClient).catch(() => {});
+  }
+
   res.json({ success: true, task: updatedTask });
 });
 
@@ -1417,6 +1472,12 @@ app.delete('/api/projects/tasks/:taskId', async (req, res) => {
   await getAdminSpaceDb();
   const { taskId } = req.params;
   deleteProjectTaskFromDb(taskId);
+
+  const authClient = getAuthenticatedClient(req);
+  if (authClient) {
+    syncWithGoogleDriveAdminSpace(authClient).catch(() => {});
+  }
+
   res.json({ success: true });
 });
 
@@ -1440,6 +1501,8 @@ app.post('/api/projects/:id/export-markdown', async (req, res) => {
 
 app.get('/api/timelogs', async (req, res) => {
   await getAdminSpaceDb();
+  await ensureRestoredFromDrive(req);
+
   const logs = getAllTimelogsFromDb();
   res.json({ timelogs: logs });
 });
@@ -1451,6 +1514,12 @@ app.post('/api/timelogs', async (req, res) => {
     log.id = `log-${Date.now()}-${Math.random().toString(36).substring(2, 7)}`;
   }
   saveTimelogToDb(log);
+
+  const authClient = getAuthenticatedClient(req);
+  if (authClient) {
+    syncWithGoogleDriveAdminSpace(authClient).catch(() => {});
+  }
+
   res.json({ success: true, timelog: log });
 });
 
@@ -1458,6 +1527,12 @@ app.delete('/api/timelogs/:id', async (req, res) => {
   await getAdminSpaceDb();
   const { id } = req.params;
   deleteTimelogFromDb(id);
+
+  const authClient = getAuthenticatedClient(req);
+  if (authClient) {
+    syncWithGoogleDriveAdminSpace(authClient).catch(() => {});
+  }
+
   res.json({ success: true });
 });
 
@@ -1518,6 +1593,22 @@ app.post('/api/adminspace/sync', async (req, res) => {
     res.json({ success: true, ...result });
   } else {
     res.status(500).json({ error: 'Failed to sync adminspace folder to Google Drive' });
+  }
+});
+
+app.post('/api/adminspace/restore', async (req, res) => {
+  const authClient = getAuthenticatedClient(req);
+  if (!authClient) {
+    return res.status(401).json({ error: 'Google OAuth authentication required' });
+  }
+
+  await getAdminSpaceDb();
+  const result = await restoreFromGoogleDriveAdminSpace(authClient);
+  if (result) {
+    hasAutoRestoredFromDrive = true;
+    res.json({ success: true, ...result });
+  } else {
+    res.status(500).json({ error: 'Failed to restore adminspace from Google Drive' });
   }
 });
 

@@ -38,7 +38,7 @@ export interface DriveFile {
   parents?: string[];
 }
 
-export type TaskPriority = 'high' | 'medium' | 'low';
+export type TaskPriority = 'high' | 'medium' | 'low' | 'none';
 
 export interface TaskItem {
   id: string;
@@ -165,7 +165,7 @@ export interface ProjectTask {
   columnId: string;
   title: string;
   description?: string;
-  priority?: 'high' | 'medium' | 'low';
+  priority?: TaskPriority;
   dueDate?: string;
   assignee?: string;
   createdAt: string;
