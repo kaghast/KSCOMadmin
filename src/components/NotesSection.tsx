@@ -15,8 +15,8 @@ import {
   Mail,
   Calendar as CalendarIcon,
 } from 'lucide-react';
-import ReactMarkdown from 'react-markdown';
-import { NoteItem, ContactItem, NoteLocation, EmailItem, CalendarEvent } from '../types';
+import { MarkdownPreview } from './MarkdownPreview';
+import { NoteItem, ContactItem, NoteLocation, EmailItem, CalendarEvent, TimeLog } from '../types';
 import { NoteCalendarSidebar } from './NoteCalendarSidebar';
 
 interface Props {
@@ -25,6 +25,7 @@ interface Props {
   emails?: EmailItem[];
   events?: CalendarEvent[];
   locations: NoteLocation[];
+  timeLogs?: TimeLog[];
   onAddNote: () => void;
   onEditNote: (note: NoteItem) => void;
   onDeleteNote: (id: string) => Promise<void>;
@@ -40,6 +41,7 @@ export const NotesSection: React.FC<Props> = ({
   emails = [],
   events = [],
   locations,
+  timeLogs = [],
   onAddNote,
   onEditNote,
   onDeleteNote,
@@ -52,9 +54,14 @@ export const NotesSection: React.FC<Props> = ({
   const [selectedTagFilter, setSelectedTagFilter] = useState<string | null>(null);
   const [selectedDateFilter, setSelectedDateFilter] = useState<string | null>(null);
 
-  // Extract all unique tags
+  // Extract all unique tags across notes and timelogs
   const allTags = Array.from(
-    new Set(notes.flatMap((n) => n.tags || []))
+    new Set(
+      [
+        ...notes.flatMap((n) => n.tags || []),
+        ...timeLogs.flatMap((tl) => tl.tags || []),
+      ].filter((t) => t && typeof t === 'string' && t.trim())
+    )
   );
 
   // Filter notes based on search, tag, date
@@ -234,25 +241,8 @@ export const NotesSection: React.FC<Props> = ({
                     </div>
 
                     {/* Markdown Content Box */}
-                    <div className="text-xs text-slate-700 leading-relaxed bg-white/80 p-3 rounded-xl border border-slate-100 prose max-w-none">
-                      <ReactMarkdown
-                        urlTransform={(url) => url}
-                        components={{
-                          img: ({ src, alt, ...props }) => {
-                            if (!src) return null;
-                            return (
-                              <img
-                                src={src}
-                                alt={alt || 'Çizim Notu'}
-                                className="max-h-72 rounded-xl border border-slate-200 my-2 object-contain bg-white shadow-2xs"
-                                {...props}
-                              />
-                            );
-                          },
-                        }}
-                      >
-                        {note.content}
-                      </ReactMarkdown>
+                    <div className="text-xs text-slate-700 bg-white/80 p-3 rounded-xl border border-slate-100">
+                      <MarkdownPreview content={note.content} imgMaxHeight="max-h-72" />
                     </div>
 
                     {/* Linked Relational Items (Emails & Events) */}

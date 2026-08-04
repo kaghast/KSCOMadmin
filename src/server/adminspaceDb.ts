@@ -105,6 +105,12 @@ export function ensureTablesExist(db: Database) {
   try { db.run("ALTER TABLE notes ADD COLUMN linkedTasks TEXT"); } catch {}
   try { db.run("ALTER TABLE notes ADD COLUMN projectId TEXT"); } catch {}
   try { db.run("ALTER TABLE projects ADD COLUMN linkedTaskIds TEXT"); } catch {}
+
+  try { db.run("ALTER TABLE project_tasks ADD COLUMN linkedEmailIds TEXT"); } catch {}
+  try { db.run("ALTER TABLE project_tasks ADD COLUMN linkedEventIds TEXT"); } catch {}
+  try { db.run("ALTER TABLE project_tasks ADD COLUMN linkedDriveFileIds TEXT"); } catch {}
+  try { db.run("ALTER TABLE project_tasks ADD COLUMN linkedContactResourceNames TEXT"); } catch {}
+  try { db.run("ALTER TABLE project_tasks ADD COLUMN linkedTaskIds TEXT"); } catch {}
 }
 
 // Initialize SQLite with sql.js
@@ -474,6 +480,22 @@ export function getAllProjectTasksFromDb(projectId?: string) {
     const tasks = [];
     while (stmt.step()) {
       const row = stmt.getAsObject();
+
+      let linkedEmailIds = [];
+      try { linkedEmailIds = row.linkedEmailIds ? JSON.parse(String(row.linkedEmailIds)) : []; } catch { linkedEmailIds = []; }
+
+      let linkedEventIds = [];
+      try { linkedEventIds = row.linkedEventIds ? JSON.parse(String(row.linkedEventIds)) : []; } catch { linkedEventIds = []; }
+
+      let linkedDriveFileIds = [];
+      try { linkedDriveFileIds = row.linkedDriveFileIds ? JSON.parse(String(row.linkedDriveFileIds)) : []; } catch { linkedDriveFileIds = []; }
+
+      let linkedContactResourceNames = [];
+      try { linkedContactResourceNames = row.linkedContactResourceNames ? JSON.parse(String(row.linkedContactResourceNames)) : []; } catch { linkedContactResourceNames = []; }
+
+      let linkedTaskIds = [];
+      try { linkedTaskIds = row.linkedTaskIds ? JSON.parse(String(row.linkedTaskIds)) : []; } catch { linkedTaskIds = []; }
+
       tasks.push({
         id: String(row.id),
         projectId: String(row.projectId),
@@ -484,6 +506,11 @@ export function getAllProjectTasksFromDb(projectId?: string) {
         dueDate: row.dueDate ? String(row.dueDate) : undefined,
         assignee: row.assignee ? String(row.assignee) : undefined,
         createdAt: String(row.createdAt),
+        linkedEmailIds,
+        linkedEventIds,
+        linkedDriveFileIds,
+        linkedContactResourceNames,
+        linkedTaskIds,
       });
     }
     stmt.free();
@@ -496,10 +523,17 @@ export function getAllProjectTasksFromDb(projectId?: string) {
 
 export function saveProjectTaskToDb(task: any) {
   if (!dbInstance) return;
+
+  const emailsJson = JSON.stringify(task.linkedEmailIds || []);
+  const eventsJson = JSON.stringify(task.linkedEventIds || []);
+  const driveJson = JSON.stringify(task.linkedDriveFileIds || []);
+  const contactsJson = JSON.stringify(task.linkedContactResourceNames || []);
+  const tasksJson = JSON.stringify(task.linkedTaskIds || []);
+
   dbInstance.run(
     `INSERT OR REPLACE INTO project_tasks 
-     (id, projectId, columnId, title, description, priority, dueDate, assignee, createdAt)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+     (id, projectId, columnId, title, description, priority, dueDate, assignee, createdAt, linkedEmailIds, linkedEventIds, linkedDriveFileIds, linkedContactResourceNames, linkedTaskIds)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     [
       task.id,
       task.projectId,
@@ -510,6 +544,11 @@ export function saveProjectTaskToDb(task: any) {
       task.dueDate || null,
       task.assignee || null,
       task.createdAt || new Date().toISOString(),
+      emailsJson,
+      eventsJson,
+      driveJson,
+      contactsJson,
+      tasksJson,
     ]
   );
   saveDbToDisk();

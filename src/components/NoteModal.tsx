@@ -24,7 +24,7 @@ import {
   HardDrive,
   Users,
 } from 'lucide-react';
-import ReactMarkdown from 'react-markdown';
+import { MarkdownPreview } from './MarkdownPreview';
 import L from 'leaflet';
 import {
   NoteItem,
@@ -729,26 +729,9 @@ export const NoteModal: React.FC<Props> = ({
               )}
 
               {activeTab === 'preview' && (
-                <div className="w-full flex-1 p-4 text-xs bg-slate-50 border border-slate-200 rounded-2xl prose max-w-none text-slate-800 overflow-y-auto">
+                <div className="w-full flex-1 p-4 text-xs bg-slate-50 border border-slate-200 rounded-2xl overflow-y-auto">
                   {content.trim() ? (
-                    <ReactMarkdown
-                      urlTransform={(url) => url}
-                      components={{
-                        img: ({ src, alt, ...props }) => {
-                          if (!src) return null;
-                          return (
-                            <img
-                              src={src}
-                              alt={alt || 'Çizim Notu'}
-                              className="max-h-72 rounded-xl border border-slate-200 my-2 object-contain bg-white shadow-2xs"
-                              {...props}
-                            />
-                          );
-                        },
-                      }}
-                    >
-                      {content}
-                    </ReactMarkdown>
+                    <MarkdownPreview content={content} imgMaxHeight="max-h-72" />
                   ) : (
                     <span className="text-slate-400 italic">Önizleme için metin giriniz...</span>
                   )}

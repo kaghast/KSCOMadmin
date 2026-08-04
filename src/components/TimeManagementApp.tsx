@@ -72,26 +72,31 @@ export const TimeManagementApp: React.FC<TimeManagementAppProps> = ({
 }) => {
   const isTr = language === 'tr';
 
-  // 1. DYNAMIC TAGS FROM NOTES ONLY + DYNAMICALLY CREATED TAGS
-  const noteTags = useMemo(() => {
-    const extracted = new Set<string>();
+  // 1. DYNAMIC TAGS FROM NOTES + TIMELOGS + USER CREATED TAGS
+  const [userCreatedTags, setUserCreatedTags] = useState<string[]>([]);
+
+  // Combined tags across Notes, TimeLogs, and User dynamically added tags
+  const availableTags = useMemo(() => {
+    const all = new Set<string>();
     notes.forEach((n) => {
       if (n.tags && Array.isArray(n.tags)) {
         n.tags.forEach((t) => {
-          if (t && t.trim()) extracted.add(t.trim());
+          if (t && t.trim()) all.add(t.trim());
         });
       }
     });
-    return Array.from(extracted);
-  }, [notes]);
-
-  const [userCreatedTags, setUserCreatedTags] = useState<string[]>([]);
-
-  // Combined tags: Strictly Note tags + User dynamically added tags
-  const availableTags = useMemo(() => {
-    const all = new Set([...noteTags, ...userCreatedTags]);
+    timeLogs.forEach((l) => {
+      if (l.tags && Array.isArray(l.tags)) {
+        l.tags.forEach((t) => {
+          if (t && t.trim()) all.add(t.trim());
+        });
+      }
+    });
+    userCreatedTags.forEach((t) => {
+      if (t && t.trim()) all.add(t.trim());
+    });
     return Array.from(all);
-  }, [noteTags, userCreatedTags]);
+  }, [notes, timeLogs, userCreatedTags]);
 
   const handleAddNewTag = (newTag: string) => {
     const trimmed = newTag.trim();

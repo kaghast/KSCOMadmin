@@ -1514,7 +1514,7 @@ app.get('/api/projects/:id/tasks', async (req, res) => {
 app.post('/api/projects/:id/tasks', async (req, res) => {
   await getAdminSpaceDb();
   const { id } = req.params;
-  const { columnId, title, description, priority, dueDate, assignee } = req.body;
+  const { columnId, title, description, priority, dueDate, assignee, linkedEmailIds, linkedEventIds, linkedDriveFileIds, linkedContactResourceNames, linkedTaskIds } = req.body;
 
   const newTask = {
     id: `pt-${Date.now()}`,
@@ -1526,6 +1526,11 @@ app.post('/api/projects/:id/tasks', async (req, res) => {
     dueDate: dueDate || null,
     assignee: assignee || null,
     createdAt: new Date().toISOString(),
+    linkedEmailIds: Array.isArray(linkedEmailIds) ? linkedEmailIds : [],
+    linkedEventIds: Array.isArray(linkedEventIds) ? linkedEventIds : [],
+    linkedDriveFileIds: Array.isArray(linkedDriveFileIds) ? linkedDriveFileIds : [],
+    linkedContactResourceNames: Array.isArray(linkedContactResourceNames) ? linkedContactResourceNames : [],
+    linkedTaskIds: Array.isArray(linkedTaskIds) ? linkedTaskIds : [],
   };
 
   saveProjectTaskToDb(newTask);
@@ -1541,7 +1546,7 @@ app.post('/api/projects/:id/tasks', async (req, res) => {
 app.put('/api/projects/tasks/:taskId', async (req, res) => {
   await getAdminSpaceDb();
   const { taskId } = req.params;
-  const { columnId, title, description, priority, dueDate, assignee } = req.body;
+  const { columnId, title, description, priority, dueDate, assignee, linkedEmailIds, linkedEventIds, linkedDriveFileIds, linkedContactResourceNames, linkedTaskIds } = req.body;
 
   const allTasks = getAllProjectTasksFromDb();
   const existing = allTasks.find((t) => t.id === taskId);
@@ -1557,6 +1562,11 @@ app.put('/api/projects/tasks/:taskId', async (req, res) => {
     priority: priority !== undefined ? priority : existing.priority,
     dueDate: dueDate !== undefined ? dueDate : existing.dueDate,
     assignee: assignee !== undefined ? assignee : existing.assignee,
+    linkedEmailIds: linkedEmailIds !== undefined ? (Array.isArray(linkedEmailIds) ? linkedEmailIds : []) : existing.linkedEmailIds,
+    linkedEventIds: linkedEventIds !== undefined ? (Array.isArray(linkedEventIds) ? linkedEventIds : []) : existing.linkedEventIds,
+    linkedDriveFileIds: linkedDriveFileIds !== undefined ? (Array.isArray(linkedDriveFileIds) ? linkedDriveFileIds : []) : existing.linkedDriveFileIds,
+    linkedContactResourceNames: linkedContactResourceNames !== undefined ? (Array.isArray(linkedContactResourceNames) ? linkedContactResourceNames : []) : existing.linkedContactResourceNames,
+    linkedTaskIds: linkedTaskIds !== undefined ? (Array.isArray(linkedTaskIds) ? linkedTaskIds : []) : existing.linkedTaskIds,
   };
 
   saveProjectTaskToDb(updatedTask);

@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react';
+import { MarkdownPreview } from './MarkdownPreview';
 import {
   FolderKanban,
   Plus,
@@ -699,6 +700,41 @@ export const ProjectsSection: React.FC<Props> = ({
     type: 'email' | 'event' | 'drive' | 'contact' | 'task',
     idOrResource: string
   ) => {
+    if (detailTask) {
+      let updatedTask = { ...detailTask };
+
+      if (type === 'email') {
+        const current = updatedTask.linkedEmailIds || [];
+        updatedTask.linkedEmailIds = current.includes(idOrResource)
+          ? current.filter((id) => id !== idOrResource)
+          : [...current, idOrResource];
+      } else if (type === 'event') {
+        const current = updatedTask.linkedEventIds || [];
+        updatedTask.linkedEventIds = current.includes(idOrResource)
+          ? current.filter((id) => id !== idOrResource)
+          : [...current, idOrResource];
+      } else if (type === 'drive') {
+        const current = updatedTask.linkedDriveFileIds || [];
+        updatedTask.linkedDriveFileIds = current.includes(idOrResource)
+          ? current.filter((id) => id !== idOrResource)
+          : [...current, idOrResource];
+      } else if (type === 'contact') {
+        const current = updatedTask.linkedContactResourceNames || [];
+        updatedTask.linkedContactResourceNames = current.includes(idOrResource)
+          ? current.filter((res) => res !== idOrResource)
+          : [...current, idOrResource];
+      } else if (type === 'task') {
+        const current = updatedTask.linkedTaskIds || [];
+        updatedTask.linkedTaskIds = current.includes(idOrResource)
+          ? current.filter((id) => id !== idOrResource)
+          : [...current, idOrResource];
+      }
+
+      setDetailTask(updatedTask);
+      await onUpdateTask(updatedTask);
+      return;
+    }
+
     if (!activeProject) return;
 
     let updatedProject = { ...activeProject };
@@ -1373,21 +1409,19 @@ export const ProjectsSection: React.FC<Props> = ({
       {detailTask && activeProject && (() => {
         const countdown = detailTask.dueDate ? getCountdown(detailTask.dueDate) : null;
 
-        // Notes specific to this card OR general project notes
+        // Notes specific to this card
         const cardNotes = notes.filter((n) => {
           if (n.projectId === detailTask.id) return true;
-          if (n.projectId === activeProject.id) return true;
-          if (activeProject.linkedNoteIds?.includes(n.id)) return true;
-          if (projectTasks.some((t) => t.id === n.projectId)) {
-            return n.projectId === detailTask.id;
-          }
           return false;
         });
 
-        // Extract note tags for this card & project
+        // Extract note tags across card notes and all system notes
         const allNoteTags = Array.from(
           new Set(
-            cardNotes.flatMap((n) => n.tags || []).filter(Boolean)
+            [
+              ...cardNotes.flatMap((n) => n.tags || []),
+              ...notes.flatMap((n) => n.tags || []),
+            ].filter((t) => t && typeof t === 'string' && t.trim())
           )
         );
 
@@ -1417,7 +1451,6 @@ export const ProjectsSection: React.FC<Props> = ({
           if (log.projectId && log.projectId === detailTask.id) return true;
           if (log.cardTitle && detailTask.title && log.cardTitle.toLowerCase() === detailTask.title.toLowerCase()) return true;
           if (log.linkId === detailTask.id || log.entityId === detailTask.id) return true;
-          if (log.projectId && log.projectId === activeProject.id && (!log.cardId || log.cardId === detailTask.id)) return true;
           return false;
         });
 
@@ -1460,6 +1493,92 @@ export const ProjectsSection: React.FC<Props> = ({
           }
           return true;
         });
+
+        // Extract workspace items linked specifically to this detailTask
+        const cardTimelogTaskIds = new Set<string>();
+        const cardTimelogEmailIds = new Set<string>();
+        const cardTimelogEventIds = new Set<string>();
+        const cardTimelogDriveIds = new Set<string>();
+        const cardTimelogContactIds = new Set<string>();
+
+        cardTimelogs.forEach((log) => {
+          const targetId = log.linkId || log.entityId || log.eventId;
+          const targetType = log.linkType || log.entityType;
+          if (!targetId) return;
+
+          if (targetType === 'tasks' || targetType === 'task') cardTimelogTaskIds.add(targetId);
+          if (targetType === 'gmail' || targetType === 'email') cardTimelogEmailIds.add(targetId);
+          if (targetType === 'calendar' || targetType === 'event') cardTimelogEventIds.add(targetId);
+          if (targetType === 'drive') cardTimelogDriveIds.add(targetId);
+          if (targetType === 'contact') cardTimelogContactIds.add(targetId);
+        });
+
+        cardNotes.forEach((n: any) => {
+          if (n.linkedTasks && Array.isArray(n.linkedTasks)) n.linkedTasks.forEach((t: any) => cardTimelogTaskIds.add(typeof t === 'string' ? t : t.id));
+          if (n.linkedEmails && Array.isArray(n.linkedEmails)) n.linkedEmails.forEach((e: any) => cardTimelogEmailIds.add(typeof e === 'string' ? e : e.id));
+          if (n.linkedEvents && Array.isArray(n.linkedEvents)) n.linkedEvents.forEach((ev: any) => cardTimelogEventIds.add(typeof ev === 'string' ? ev : ev.id));
+          if (n.linkedDriveFiles && Array.isArray(n.linkedDriveFiles)) n.linkedDriveFiles.forEach((f: any) => cardTimelogDriveIds.add(typeof f === 'string' ? f : f.id));
+          if (n.contacts && Array.isArray(n.contacts)) n.contacts.forEach((c: any) => cardTimelogContactIds.add(typeof c === 'string' ? c : c.resourceName));
+        });
+
+        const cardTaskIds = Array.from(
+          new Set([
+            ...(detailTask.linkedTaskIds || []),
+            ...Array.from(cardTimelogTaskIds),
+          ])
+        );
+
+        const cardLinkedGoogleTasksList = cardTaskIds
+          .map((id) => allTasksMap.get(id))
+          .filter(Boolean) as TaskItem[];
+
+        const cardFilteredGoogleTasksList = cardLinkedGoogleTasksList.filter(
+          (gt) => showCompletedGoogleTasks || gt.status !== 'completed'
+        );
+
+        const cardEmailIds = Array.from(
+          new Set([
+            ...(detailTask.linkedEmailIds || []),
+            ...Array.from(cardTimelogEmailIds),
+          ])
+        );
+
+        const cardLinkedEmailsList = cardEmailIds
+          .map((id) => allEmailsMap.get(id))
+          .filter(Boolean) as EmailItem[];
+
+        const cardEventIds = Array.from(
+          new Set([
+            ...(detailTask.linkedEventIds || []),
+            ...Array.from(cardTimelogEventIds),
+          ])
+        );
+
+        const cardLinkedEventsList = cardEventIds
+          .map((id) => allEventsMap.get(id))
+          .filter(Boolean) as CalendarEvent[];
+
+        const cardDriveIds = Array.from(
+          new Set([
+            ...(detailTask.linkedDriveFileIds || []),
+            ...Array.from(cardTimelogDriveIds),
+          ])
+        );
+
+        const cardLinkedDriveFilesList = cardDriveIds
+          .map((id) => allDriveFilesMap.get(id))
+          .filter(Boolean) as DriveFile[];
+
+        const cardContactIds = Array.from(
+          new Set([
+            ...(detailTask.linkedContactResourceNames || []),
+            ...Array.from(cardTimelogContactIds),
+          ])
+        );
+
+        const cardLinkedContactsList = cardContactIds
+          .map((resName) => allContactsMap.get(resName))
+          .filter(Boolean) as ContactItem[];
 
         return (
           <div className="fixed inset-0 z-50 bg-slate-100 flex flex-col overflow-hidden animate-in fade-in duration-150">
@@ -1857,9 +1976,9 @@ export const ProjectsSection: React.FC<Props> = ({
                                   </button>
                                 </div>
 
-                                <p className="text-[11px] text-slate-600 line-clamp-3 leading-relaxed">
-                                  {note.content}
-                                </p>
+                                <div className="text-xs text-slate-700 bg-white/80 p-3 rounded-xl border border-amber-100">
+                                  <MarkdownPreview content={note.content} imgMaxHeight="max-h-60" />
+                                </div>
 
                                 <div className="flex items-center justify-between pt-1 border-t border-amber-200/40 text-[10px] text-slate-400">
                                   <div className="flex items-center gap-1.5 flex-wrap">
@@ -2065,7 +2184,7 @@ export const ProjectsSection: React.FC<Props> = ({
                     <div className="flex items-center justify-between flex-wrap gap-2">
                       <div className="flex items-center gap-2">
                         <span className="text-xs font-extrabold text-slate-800 flex items-center gap-1.5">
-                          <CheckCircle2 className="w-3.5 h-3.5 text-purple-600" /> Google Görevler ({filteredGoogleTasksList.length})
+                          <CheckCircle2 className="w-3.5 h-3.5 text-purple-600" /> Google Görevler ({cardFilteredGoogleTasksList.length})
                         </span>
                         <label className="inline-flex items-center gap-1.5 cursor-pointer select-none text-[10px] text-slate-500 bg-slate-100 hover:bg-slate-200/80 px-2 py-0.5 rounded-full transition-colors">
                           <input
@@ -2094,14 +2213,14 @@ export const ProjectsSection: React.FC<Props> = ({
                     </div>
 
                     <div className="space-y-1.5 max-h-40 overflow-y-auto pr-1">
-                      {filteredGoogleTasksList.length === 0 ? (
+                      {cardFilteredGoogleTasksList.length === 0 ? (
                         <p className="text-[11px] text-slate-400 italic">
-                          {linkedGoogleTasksList.length > 0 && !showCompletedGoogleTasks
+                          {cardLinkedGoogleTasksList.length > 0 && !showCompletedGoogleTasks
                             ? 'Tüm bağlı görevler tamamlanmış (görmek için tamamlananları açın).'
                             : 'Google Görevi bağlanmadı.'}
                         </p>
                       ) : (
-                        filteredGoogleTasksList.map((gTask) => {
+                        cardFilteredGoogleTasksList.map((gTask) => {
                           const durationMins = getItemTimelogMinutes('task', gTask.id);
                           return (
                             <div
@@ -2158,7 +2277,7 @@ export const ProjectsSection: React.FC<Props> = ({
                   <div className="space-y-2 pt-2 border-t border-slate-100">
                     <div className="flex items-center justify-between">
                       <span className="text-xs font-extrabold text-slate-800 flex items-center gap-1.5">
-                        <Mail className="w-3.5 h-3.5 text-rose-500" /> E-postalar ({linkedEmailsList.length})
+                        <Mail className="w-3.5 h-3.5 text-rose-500" /> E-postalar ({cardLinkedEmailsList.length})
                       </span>
                       <button
                         onClick={() => {
@@ -2173,10 +2292,10 @@ export const ProjectsSection: React.FC<Props> = ({
                     </div>
 
                     <div className="space-y-1.5 max-h-40 overflow-y-auto pr-1">
-                      {linkedEmailsList.length === 0 ? (
+                      {cardLinkedEmailsList.length === 0 ? (
                         <p className="text-[11px] text-slate-400 italic">E-posta bağlanmadı.</p>
                       ) : (
-                        linkedEmailsList.map((email) => {
+                        cardLinkedEmailsList.map((email) => {
                           const durationMins = getItemTimelogMinutes('email', email.id);
                           const gmailUrl = `https://mail.google.com/mail/u/0/#search/${encodeURIComponent(email.subject)}`;
                           return (
@@ -2221,7 +2340,7 @@ export const ProjectsSection: React.FC<Props> = ({
                   <div className="space-y-2 pt-2 border-t border-slate-100">
                     <div className="flex items-center justify-between">
                       <span className="text-xs font-extrabold text-slate-800 flex items-center gap-1.5">
-                        <Calendar className="w-3.5 h-3.5 text-blue-500" /> Takvim Etkinlikleri ({linkedEventsList.length})
+                        <Calendar className="w-3.5 h-3.5 text-blue-500" /> Takvim Etkinlikleri ({cardLinkedEventsList.length})
                       </span>
                       <button
                         onClick={() => {
@@ -2236,10 +2355,10 @@ export const ProjectsSection: React.FC<Props> = ({
                     </div>
 
                     <div className="space-y-1.5 max-h-40 overflow-y-auto pr-1">
-                      {linkedEventsList.length === 0 ? (
+                      {cardLinkedEventsList.length === 0 ? (
                         <p className="text-[11px] text-slate-400 italic">Takvim etkinliği bağlanmadı.</p>
                       ) : (
-                        linkedEventsList.map((evt) => {
+                        cardLinkedEventsList.map((evt) => {
                           const durationMins = getItemTimelogMinutes('event', evt.id);
                           const calUrl = evt.htmlLink || 'https://calendar.google.com';
                           return (
@@ -2284,7 +2403,7 @@ export const ProjectsSection: React.FC<Props> = ({
                   <div className="space-y-2 pt-2 border-t border-slate-100">
                     <div className="flex items-center justify-between">
                       <span className="text-xs font-extrabold text-slate-800 flex items-center gap-1.5">
-                        <HardDrive className="w-3.5 h-3.5 text-emerald-500" /> Drive Dosyaları ({linkedDriveFilesList.length})
+                        <HardDrive className="w-3.5 h-3.5 text-emerald-500" /> Drive Dosyaları ({cardLinkedDriveFilesList.length})
                       </span>
                       <button
                         onClick={() => {
@@ -2299,10 +2418,10 @@ export const ProjectsSection: React.FC<Props> = ({
                     </div>
 
                     <div className="space-y-1.5 max-h-40 overflow-y-auto pr-1">
-                      {linkedDriveFilesList.length === 0 ? (
+                      {cardLinkedDriveFilesList.length === 0 ? (
                         <p className="text-[11px] text-slate-400 italic">Drive dosyası bağlanmadı.</p>
                       ) : (
-                        linkedDriveFilesList.map((file) => {
+                        cardLinkedDriveFilesList.map((file) => {
                           const durationMins = getItemTimelogMinutes('drive', file.id);
                           const fileUrl = file.webViewLink && file.webViewLink !== '#' ? file.webViewLink : `https://drive.google.com/file/d/${file.id}/view`;
                           return (
@@ -2346,7 +2465,7 @@ export const ProjectsSection: React.FC<Props> = ({
                   <div className="space-y-2 pt-2 border-t border-slate-100">
                     <div className="flex items-center justify-between">
                       <span className="text-xs font-extrabold text-slate-800 flex items-center gap-1.5">
-                        <Users className="w-3.5 h-3.5 text-indigo-500" /> Kişiler ({linkedContactsList.length})
+                        <Users className="w-3.5 h-3.5 text-indigo-500" /> Kişiler ({cardLinkedContactsList.length})
                       </span>
                       <button
                         onClick={() => {
@@ -2361,10 +2480,10 @@ export const ProjectsSection: React.FC<Props> = ({
                     </div>
 
                     <div className="space-y-1.5 max-h-40 overflow-y-auto pr-1">
-                      {linkedContactsList.length === 0 ? (
+                      {cardLinkedContactsList.length === 0 ? (
                         <p className="text-[11px] text-slate-400 italic">Kişi bağlanmadı.</p>
                       ) : (
-                        linkedContactsList.map((c) => {
+                        cardLinkedContactsList.map((c) => {
                           const durationMins = getItemTimelogMinutes('contact', c.resourceName);
                           const contactUrl = c.email ? `mailto:${c.email}` : `https://contacts.google.com/search/${encodeURIComponent(c.displayName)}`;
                           return (

@@ -187,6 +187,11 @@ export interface ProjectTask {
   dueDate?: string;
   assignee?: string;
   createdAt: string;
+  linkedEmailIds?: string[];
+  linkedEventIds?: string[];
+  linkedDriveFileIds?: string[];
+  linkedContactResourceNames?: string[];
+  linkedTaskIds?: string[];
 }
 
 export interface Project {

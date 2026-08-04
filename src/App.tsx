@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import {
   AuthStatus,
   EmailItem,
@@ -11,6 +11,7 @@ import {
   NoteLocation,
   Project,
   ProjectTask,
+  TimeLog,
 } from './types';
 import { Navbar } from './components/Navbar';
 import { Sidebar, NavTab } from './components/Sidebar';
@@ -79,6 +80,7 @@ export default function App() {
   const [locations, setLocations] = useState<NoteLocation[]>([]);
   const [projects, setProjects] = useState<Project[]>([]);
   const [projectTasks, setProjectTasks] = useState<ProjectTask[]>([]);
+  const [timeLogs, setTimeLogs] = useState<TimeLog[]>([]);
 
   // Loading States
   const [isLoadingGmail, setIsLoadingGmail] = useState(false);
@@ -345,6 +347,36 @@ export default function App() {
     }
   };
 
+  const fetchTimelogs = async () => {
+    try {
+      const res = await fetch('/api/timelogs');
+      if (res.ok && res.headers.get('content-type')?.includes('application/json')) {
+        const data = await res.json();
+        if (data.timelogs && Array.isArray(data.timelogs)) {
+          setTimeLogs(data.timelogs);
+        }
+      }
+    } catch {
+      // Silent error handling
+    }
+  };
+
+  // Combined tags across notes and timelogs
+  const allTags = useMemo(() => {
+    const set = new Set<string>();
+    notes.forEach((n) => {
+      (n.tags || []).forEach((t) => {
+        if (t && typeof t === 'string' && t.trim()) set.add(t.trim());
+      });
+    });
+    timeLogs.forEach((tl) => {
+      (tl.tags || []).forEach((t) => {
+        if (t && typeof t === 'string' && t.trim()) set.add(t.trim());
+      });
+    });
+    return Array.from(set);
+  }, [notes, timeLogs]);
+
   // Auto Drive Sync Trigger
   const triggerAutoDriveSync = async (projectId: string) => {
     try {
@@ -546,6 +578,7 @@ export default function App() {
     fetchContacts();
     fetchNotes();
     fetchProjects();
+    fetchTimelogs();
   };
 
   useEffect(() => {
@@ -857,6 +890,7 @@ export default function App() {
               emails={emails}
               events={calendarEvents}
               locations={locations}
+              timeLogs={timeLogs}
               onAddNote={() => {
                 setEditingNote(null);
                 setSelectedLocationFromMap(null);
@@ -1140,7 +1174,7 @@ export default function App() {
         existingLocations={locations}
         projects={projects}
         projectTasks={projectTasks}
-        allExistingTags={Array.from(new Set(notes.flatMap((n) => n.tags || [])))}
+        allExistingTags={allTags}
         onClose={() => {
           setIsNoteModalOpen(false);
           setEditingNote(null);
