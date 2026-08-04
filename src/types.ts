@@ -61,6 +61,8 @@ export interface TimeLog {
   linkType?: 'tasks' | 'calendar' | 'gmail' | 'drive' | string;
   linkId?: string;
   linkTitle?: string;
+  entityId?: string;
+  entityType?: string;
   eventId?: string;
   eventSummary?: string;
   startTime: string; // ISO string or YYYY-MM-DDTHH:mm
@@ -134,6 +136,20 @@ export interface LinkedEvent {
   start?: string;
 }
 
+export interface LinkedDriveFile {
+  id: string;
+  name: string;
+  webViewLink?: string;
+  mimeType?: string;
+}
+
+export interface LinkedTask {
+  id: string;
+  title: string;
+  status?: string;
+  due?: string;
+}
+
 export interface NoteItem {
   id: string;
   title: string;
@@ -143,6 +159,8 @@ export interface NoteItem {
   contacts?: LinkedContact[];
   linkedEmails?: LinkedEmail[];
   linkedEvents?: LinkedEvent[];
+  linkedDriveFiles?: LinkedDriveFile[];
+  linkedTasks?: LinkedTask[];
   tags: string[];
   location?: NoteLocation;
   date: string; // YYYY-MM-DD
@@ -184,6 +202,7 @@ export interface Project {
   linkedEventIds?: string[];
   linkedDriveFileIds?: string[];
   linkedContactResourceNames?: string[];
+  linkedTaskIds?: string[];
   driveFileId?: string;
   driveFileUrl?: string;
 }

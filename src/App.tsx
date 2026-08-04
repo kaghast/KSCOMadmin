@@ -692,9 +692,12 @@ export default function App() {
     contacts?: any[];
     linkedEmails?: any[];
     linkedEvents?: any[];
+    linkedDriveFiles?: any[];
+    linkedTasks?: any[];
     tags: string[];
     location?: NoteLocation | null;
     date: string;
+    projectId?: string;
   }) => {
     if (data.id) {
       await fetch(`/api/notes/${data.id}`, {
@@ -1056,6 +1059,7 @@ export default function App() {
             <ProjectsSection
               projects={projects}
               tasks={projectTasks}
+              googleTasks={tasks}
               notes={notes}
               emails={emails}
               events={calendarEvents}

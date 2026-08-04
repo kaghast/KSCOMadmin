@@ -101,7 +101,10 @@ export function ensureTablesExist(db: Database) {
   try { db.run("ALTER TABLE notes ADD COLUMN contacts TEXT"); } catch {}
   try { db.run("ALTER TABLE notes ADD COLUMN linkedEmails TEXT"); } catch {}
   try { db.run("ALTER TABLE notes ADD COLUMN linkedEvents TEXT"); } catch {}
+  try { db.run("ALTER TABLE notes ADD COLUMN linkedDriveFiles TEXT"); } catch {}
+  try { db.run("ALTER TABLE notes ADD COLUMN linkedTasks TEXT"); } catch {}
   try { db.run("ALTER TABLE notes ADD COLUMN projectId TEXT"); } catch {}
+  try { db.run("ALTER TABLE projects ADD COLUMN linkedTaskIds TEXT"); } catch {}
 }
 
 // Initialize SQLite with sql.js
@@ -277,6 +280,20 @@ export function getAllNotesFromDb() {
         linkedEvents = [];
       }
 
+      let linkedDriveFiles: any[] = [];
+      try {
+        linkedDriveFiles = row.linkedDriveFiles ? JSON.parse(String(row.linkedDriveFiles)) : [];
+      } catch {
+        linkedDriveFiles = [];
+      }
+
+      let linkedTasks: any[] = [];
+      try {
+        linkedTasks = row.linkedTasks ? JSON.parse(String(row.linkedTasks)) : [];
+      } catch {
+        linkedTasks = [];
+      }
+
       const locId = row.locationId ? String(row.locationId) : null;
       const locationObj = locId ? locMap.get(locId) || null : null;
 
@@ -289,6 +306,8 @@ export function getAllNotesFromDb() {
         contacts: contactsList,
         linkedEmails,
         linkedEvents,
+        linkedDriveFiles,
+        linkedTasks,
         tags,
         location: locationObj,
         date: String(row.date),
@@ -318,11 +337,13 @@ export function saveNoteToDb(note: any) {
   const contactsJson = JSON.stringify(note.contacts || []);
   const linkedEmailsJson = JSON.stringify(note.linkedEmails || []);
   const linkedEventsJson = JSON.stringify(note.linkedEvents || []);
+  const linkedDriveFilesJson = JSON.stringify(note.linkedDriveFiles || []);
+  const linkedTasksJson = JSON.stringify(note.linkedTasks || []);
 
   dbInstance.run(
     `INSERT OR REPLACE INTO notes 
-     (id, title, content, contactResourceName, contactDisplayName, contacts, linkedEmails, linkedEvents, tags, locationId, date, createdAt, updatedAt, pinned, projectId)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+     (id, title, content, contactResourceName, contactDisplayName, contacts, linkedEmails, linkedEvents, linkedDriveFiles, linkedTasks, tags, locationId, date, createdAt, updatedAt, pinned, projectId)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     [
       note.id,
       note.title,
@@ -332,6 +353,8 @@ export function saveNoteToDb(note: any) {
       contactsJson,
       linkedEmailsJson,
       linkedEventsJson,
+      linkedDriveFilesJson,
+      linkedTasksJson,
       tagsJson,
       locationId,
       note.date,
@@ -368,6 +391,9 @@ export function getAllProjectsFromDb() {
       let linkedContactResourceNames = [];
       try { linkedContactResourceNames = row.linkedContactResourceNames ? JSON.parse(String(row.linkedContactResourceNames)) : []; } catch { linkedContactResourceNames = []; }
 
+      let linkedTaskIds = [];
+      try { linkedTaskIds = row.linkedTaskIds ? JSON.parse(String(row.linkedTaskIds)) : []; } catch { linkedTaskIds = []; }
+
       projects.push({
         id: String(row.id),
         name: String(row.name),
@@ -378,6 +404,7 @@ export function getAllProjectsFromDb() {
         linkedEventIds,
         linkedDriveFileIds,
         linkedContactResourceNames,
+        linkedTaskIds,
         driveFileId: row.driveFileId ? String(row.driveFileId) : undefined,
         driveFileUrl: row.driveFileUrl ? String(row.driveFileUrl) : undefined,
         createdAt: String(row.createdAt),
@@ -400,11 +427,12 @@ export function saveProjectToDb(project: any) {
   const eventsJson = JSON.stringify(project.linkedEventIds || []);
   const driveJson = JSON.stringify(project.linkedDriveFileIds || []);
   const contactsJson = JSON.stringify(project.linkedContactResourceNames || []);
+  const tasksJson = JSON.stringify(project.linkedTaskIds || []);
 
   dbInstance.run(
     `INSERT OR REPLACE INTO projects 
-     (id, name, description, color, columns, linkedEmailIds, linkedEventIds, linkedDriveFileIds, linkedContactResourceNames, driveFileId, driveFileUrl, createdAt, updatedAt)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+     (id, name, description, color, columns, linkedEmailIds, linkedEventIds, linkedDriveFileIds, linkedContactResourceNames, linkedTaskIds, driveFileId, driveFileUrl, createdAt, updatedAt)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     [
       project.id,
       project.name,
@@ -415,6 +443,7 @@ export function saveProjectToDb(project: any) {
       eventsJson,
       driveJson,
       contactsJson,
+      tasksJson,
       project.driveFileId || null,
       project.driveFileUrl || null,
       project.createdAt || new Date().toISOString(),

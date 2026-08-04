@@ -26,6 +26,7 @@ import {
   MoreVertical,
   Layers,
   Filter,
+  BarChart3,
 } from 'lucide-react';
 import {
   Project,
@@ -37,11 +38,14 @@ import {
   CalendarEvent,
   DriveFile,
   ContactItem,
+  TaskItem,
+  TimeLog,
 } from '../types';
 
 interface Props {
   projects: Project[];
   tasks: ProjectTask[];
+  googleTasks?: TaskItem[];
   notes: NoteItem[];
   emails: EmailItem[];
   events: CalendarEvent[];
@@ -60,6 +64,7 @@ interface Props {
 export const ProjectsSection: React.FC<Props> = ({
   projects,
   tasks,
+  googleTasks = [],
   notes,
   emails,
   events,
@@ -180,12 +185,237 @@ export const ProjectsSection: React.FC<Props> = ({
     type: 'success' | 'error';
   } | null>(null);
 
-  // Link Modals
+  // Link Modals & Realtime Entity Search
   const [isLinkModalOpen, setIsLinkModalOpen] = useState(false);
   const [linkEntityType, setLinkEntityType] = useState<
-    'email' | 'event' | 'drive' | 'contact'
+    'email' | 'event' | 'drive' | 'contact' | 'task'
   >('email');
   const [entitySearch, setEntitySearch] = useState('');
+  const [isSearchingEntities, setIsSearchingEntities] = useState(false);
+  const [remoteDriveFiles, setRemoteDriveFiles] = useState<DriveFile[]>([]);
+  const [remoteContacts, setRemoteContacts] = useState<ContactItem[]>([]);
+  const [remoteGoogleTasks, setRemoteGoogleTasks] = useState<TaskItem[]>([]);
+  const [remoteEmails, setRemoteEmails] = useState<EmailItem[]>([]);
+  const [remoteEvents, setRemoteEvents] = useState<CalendarEvent[]>([]);
+  const [showCompletedGoogleTasks, setShowCompletedGoogleTasks] = useState(false);
+
+  useEffect(() => {
+    if (!isLinkModalOpen) return;
+
+    const timer = setTimeout(() => {
+      setIsSearchingEntities(true);
+      const q = encodeURIComponent(entitySearch.trim());
+
+      if (linkEntityType === 'drive') {
+        const queryParam = entitySearch.trim()
+          ? `search=${q}&limit=30`
+          : `limit=10`;
+        fetch(`/api/drive/files?${queryParam}`)
+          .then((res) => res.json())
+          .then((data) => {
+            if (data.files && Array.isArray(data.files)) {
+              setRemoteDriveFiles(data.files);
+            }
+          })
+          .catch((err) => console.error('Drive fetch error:', err))
+          .finally(() => setIsSearchingEntities(false));
+      } else if (linkEntityType === 'contact') {
+        fetch(`/api/contacts?search=${q}`)
+          .then((res) => res.json())
+          .then((data) => {
+            if (data.contacts && Array.isArray(data.contacts)) {
+              setRemoteContacts(data.contacts);
+            }
+          })
+          .catch((err) => console.error('Contacts fetch error:', err))
+          .finally(() => setIsSearchingEntities(false));
+      } else if (linkEntityType === 'task') {
+        fetch(`/api/tasks?search=${q}`)
+          .then((res) => res.json())
+          .then((data) => {
+            if (data.tasks && Array.isArray(data.tasks)) {
+              setRemoteGoogleTasks(data.tasks);
+            }
+          })
+          .catch((err) => console.error('Tasks fetch error:', err))
+          .finally(() => setIsSearchingEntities(false));
+      } else if (linkEntityType === 'email') {
+        fetch(`/api/gmail/messages?search=${q}`)
+          .then((res) => res.json())
+          .then((data) => {
+            if (data.messages && Array.isArray(data.messages)) {
+              setRemoteEmails(data.messages);
+            }
+          })
+          .catch((err) => console.error('Emails fetch error:', err))
+          .finally(() => setIsSearchingEntities(false));
+      } else if (linkEntityType === 'event') {
+        fetch(`/api/calendar/events?search=${q}`)
+          .then((res) => res.json())
+          .then((data) => {
+            if (data.events && Array.isArray(data.events)) {
+              setRemoteEvents(data.events);
+            }
+          })
+          .catch((err) => console.error('Events fetch error:', err))
+          .finally(() => setIsSearchingEntities(false));
+      }
+    }, 300);
+
+    return () => clearTimeout(timer);
+  }, [isLinkModalOpen, linkEntityType, entitySearch]);
+
+  // Timelogs State & Filters
+  const [timeLogs, setTimeLogs] = useState<TimeLog[]>([]);
+  const [detailActiveTab, setDetailActiveTab] = useState<'notes' | 'timelogs'>('notes');
+  const [timelogSearch, setTimelogSearch] = useState('');
+  const [timelogServiceFilter, setTimelogServiceFilter] = useState('all');
+  const [timelogTagFilter, setTimelogTagFilter] = useState('all');
+
+  // Add Manual Timelog Modal State
+  const [isAddTimelogModalOpen, setIsAddTimelogModalOpen] = useState(false);
+  const [manualDescription, setManualDescription] = useState('');
+  const [manualStartTime, setManualStartTime] = useState('');
+  const [manualEndTime, setManualEndTime] = useState('');
+  const [manualDurationMinutes, setManualDurationMinutes] = useState(30);
+  const [manualLinkType, setManualLinkType] = useState<string>('');
+  const [manualLinkId, setManualLinkId] = useState<string>('');
+  const [manualLinkTitle, setManualLinkTitle] = useState<string>('');
+  const [manualTags, setManualTags] = useState<string[]>([]);
+  const [manualTagInput, setManualTagInput] = useState<string>('');
+  const [isSavingTimelog, setIsSavingTimelog] = useState(false);
+
+  useEffect(() => {
+    fetchTimelogs();
+  }, []);
+
+  const fetchTimelogs = async () => {
+    try {
+      const res = await fetch('/api/timelogs');
+      if (res.ok) {
+        const data = await res.json();
+        if (data.timelogs && Array.isArray(data.timelogs)) {
+          setTimeLogs(data.timelogs);
+        }
+      }
+    } catch (err) {
+      console.error('Failed to fetch timelogs:', err);
+    }
+  };
+
+  const getItemTimelogMinutes = (
+    type: 'task' | 'email' | 'event' | 'drive' | 'contact',
+    itemId: string
+  ) => {
+    if (!timeLogs || timeLogs.length === 0) return 0;
+    return timeLogs.reduce((sum, log) => {
+      let match = false;
+      if (log.linkId === itemId) match = true;
+      if (type === 'event' && log.eventId === itemId) match = true;
+      if (type === 'task' && (log.linkType === 'tasks' || log.linkType === 'task') && log.linkId === itemId) match = true;
+      if (type === 'email' && (log.linkType === 'gmail' || log.linkType === 'email') && log.linkId === itemId) match = true;
+      if (type === 'event' && (log.linkType === 'calendar' || log.linkType === 'event') && log.linkId === itemId) match = true;
+      if (type === 'drive' && log.linkType === 'drive' && log.linkId === itemId) match = true;
+      if (type === 'contact' && log.linkId === itemId) match = true;
+      return match ? sum + (log.durationMinutes || 0) : sum;
+    }, 0);
+  };
+
+  const formatMinutesToText = (minutes: number) => {
+    if (!minutes || minutes <= 0) return '0 dk';
+    const hrs = Math.floor(minutes / 60);
+    const mins = minutes % 60;
+    if (hrs > 0 && mins > 0) return `${hrs}s ${mins}dk`;
+    if (hrs > 0) return `${hrs}s`;
+    return `${mins}dk`;
+  };
+
+  const handleDeleteTimelog = async (logId: string) => {
+    try {
+      await fetch(`/api/timelogs/${logId}`, { method: 'DELETE' });
+      setTimeLogs((prev) => prev.filter((l) => l.id !== logId));
+    } catch (err) {
+      console.error('Failed to delete timelog:', err);
+    }
+  };
+
+  const handleOpenAddTimelogModal = () => {
+    const now = new Date();
+    const thirtyMinsAgo = new Date(now.getTime() - 30 * 60 * 1000);
+
+    const toDatetimeLocal = (d: Date) => {
+      const pad = (n: number) => (n < 10 ? '0' + n : n);
+      return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(
+        d.getDate()
+      )}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
+    };
+
+    setManualStartTime(toDatetimeLocal(thirtyMinsAgo));
+    setManualEndTime(toDatetimeLocal(now));
+    setManualDurationMinutes(30);
+    setManualDescription('');
+    setManualLinkType('');
+    setManualLinkId('');
+    setManualLinkTitle('');
+    setManualTags([]);
+    setManualTagInput('');
+    setIsAddTimelogModalOpen(true);
+  };
+
+  const handleCalculateManualDuration = (startStr: string, endStr: string) => {
+    if (!startStr || !endStr) return;
+    const start = new Date(startStr).getTime();
+    const end = new Date(endStr).getTime();
+    if (!isNaN(start) && !isNaN(end) && end > start) {
+      const mins = Math.round((end - start) / (60 * 1000));
+      setManualDurationMinutes(mins);
+    }
+  };
+
+  const handleSaveManualTimelog = async (
+    e: React.FormEvent,
+    cardId: string,
+    cardTitle: string,
+    projId: string,
+    projName: string
+  ) => {
+    e.preventDefault();
+    setIsSavingTimelog(true);
+
+    const newLog: TimeLog = {
+      id: `log-${Date.now()}-${Math.random().toString(36).substring(2, 7)}`,
+      cardId,
+      cardTitle,
+      projectId: projId,
+      projectName: projName,
+      linkType: manualLinkType || undefined,
+      linkId: manualLinkId || undefined,
+      linkTitle: manualLinkTitle || undefined,
+      startTime: manualStartTime || new Date().toISOString(),
+      endTime: manualEndTime || new Date().toISOString(),
+      durationMinutes: Math.max(1, Number(manualDurationMinutes) || 1),
+      description: manualDescription.trim() || 'Manuel Zaman Kaydı',
+      tags: manualTags,
+      createdAt: new Date().toISOString(),
+    };
+
+    try {
+      const res = await fetch('/api/timelogs', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(newLog),
+      });
+
+      if (res.ok) {
+        setTimeLogs((prev) => [newLog, ...prev]);
+        setIsAddTimelogModalOpen(false);
+      }
+    } catch (err) {
+      console.error('Failed to save timelog:', err);
+    } finally {
+      setIsSavingTimelog(false);
+    }
+  };
 
   const activeProject =
     projects.find((p) => p.id === selectedProjectId) || projects[0];
@@ -194,27 +424,126 @@ export const ProjectsSection: React.FC<Props> = ({
     (t) => t.projectId === (activeProject?.id || '')
   );
 
-  const projectNotes = notes.filter(
-    (n) =>
-      n.projectId === activeProject?.id ||
-      activeProject?.linkedNoteIds?.includes(n.id)
+  const projectNotes = notes.filter((n) => {
+    if (!activeProject) return false;
+    if (n.projectId === activeProject.id) return true;
+    if (activeProject.linkedNoteIds?.includes(n.id)) return true;
+    if (projectTasks.some((t) => t.id === n.projectId)) return true;
+    return false;
+  });
+
+  // Projeye ve zaman kayıtlarına/notlara bağlı tüm öğeleri derleyelim
+  const projectTimelogs = timeLogs.filter((log) => {
+    if (!activeProject) return false;
+    if (log.projectId === activeProject.id) return true;
+    if (projectTasks.some((t) => t.id === log.projectId || t.id === log.cardId)) return true;
+    return false;
+  });
+
+  const timelogTaskIds = new Set<string>();
+  const timelogEmailIds = new Set<string>();
+  const timelogEventIds = new Set<string>();
+  const timelogDriveIds = new Set<string>();
+  const timelogContactIds = new Set<string>();
+
+  projectTimelogs.forEach((log) => {
+    const targetId = log.linkId || log.entityId || log.eventId;
+    const targetType = log.linkType || log.entityType;
+    if (!targetId) return;
+
+    if (targetType === 'tasks' || targetType === 'task') timelogTaskIds.add(targetId);
+    if (targetType === 'gmail' || targetType === 'email') timelogEmailIds.add(targetId);
+    if (targetType === 'calendar' || targetType === 'event') timelogEventIds.add(targetId);
+    if (targetType === 'drive') timelogDriveIds.add(targetId);
+    if (targetType === 'contact') timelogContactIds.add(targetId);
+  });
+
+  projectNotes.forEach((n: any) => {
+    if (n.linkedTaskIds && Array.isArray(n.linkedTaskIds)) n.linkedTaskIds.forEach((id: string) => timelogTaskIds.add(id));
+    if (n.linkedEmailIds && Array.isArray(n.linkedEmailIds)) n.linkedEmailIds.forEach((id: string) => timelogEmailIds.add(id));
+    if (n.linkedEventIds && Array.isArray(n.linkedEventIds)) n.linkedEventIds.forEach((id: string) => timelogEventIds.add(id));
+    if (n.linkedDriveFileIds && Array.isArray(n.linkedDriveFileIds)) n.linkedDriveFileIds.forEach((id: string) => timelogDriveIds.add(id));
+    if (n.linkedContactResourceNames && Array.isArray(n.linkedContactResourceNames)) n.linkedContactResourceNames.forEach((res: string) => timelogContactIds.add(res));
+  });
+
+  const allTasksMap = new Map<string, TaskItem>();
+  (googleTasks || []).forEach((gt) => allTasksMap.set(gt.id, gt));
+  (remoteGoogleTasks || []).forEach((gt) => allTasksMap.set(gt.id, gt));
+
+  const combinedTaskIds = Array.from(
+    new Set([
+      ...(activeProject?.linkedTaskIds || []),
+      ...Array.from(timelogTaskIds),
+    ])
   );
 
-  const linkedEmailsList = emails.filter((e) =>
-    activeProject?.linkedEmailIds?.includes(e.id)
+  const linkedGoogleTasksList = combinedTaskIds
+    .map((id) => allTasksMap.get(id))
+    .filter(Boolean) as TaskItem[];
+
+  const filteredGoogleTasksList = linkedGoogleTasksList.filter(
+    (gt) => showCompletedGoogleTasks || gt.status !== 'completed'
   );
 
-  const linkedEventsList = events.filter((evt) =>
-    activeProject?.linkedEventIds?.includes(evt.id)
+  const allEmailsMap = new Map<string, EmailItem>();
+  (emails || []).forEach((e) => allEmailsMap.set(e.id, e));
+  (remoteEmails || []).forEach((e) => allEmailsMap.set(e.id, e));
+
+  const combinedEmailIds = Array.from(
+    new Set([
+      ...(activeProject?.linkedEmailIds || []),
+      ...Array.from(timelogEmailIds),
+    ])
   );
 
-  const linkedDriveFilesList = driveFiles.filter((f) =>
-    activeProject?.linkedDriveFileIds?.includes(f.id)
+  const linkedEmailsList = combinedEmailIds
+    .map((id) => allEmailsMap.get(id))
+    .filter(Boolean) as EmailItem[];
+
+  const allEventsMap = new Map<string, CalendarEvent>();
+  (events || []).forEach((evt) => allEventsMap.set(evt.id, evt));
+  (remoteEvents || []).forEach((evt) => allEventsMap.set(evt.id, evt));
+
+  const combinedEventIds = Array.from(
+    new Set([
+      ...(activeProject?.linkedEventIds || []),
+      ...Array.from(timelogEventIds),
+    ])
   );
 
-  const linkedContactsList = contacts.filter((c) =>
-    activeProject?.linkedContactResourceNames?.includes(c.resourceName)
+  const linkedEventsList = combinedEventIds
+    .map((id) => allEventsMap.get(id))
+    .filter(Boolean) as CalendarEvent[];
+
+  const allDriveFilesMap = new Map<string, DriveFile>();
+  (driveFiles || []).forEach((f) => allDriveFilesMap.set(f.id, f));
+  (remoteDriveFiles || []).forEach((f) => allDriveFilesMap.set(f.id, f));
+
+  const combinedDriveIds = Array.from(
+    new Set([
+      ...(activeProject?.linkedDriveFileIds || []),
+      ...Array.from(timelogDriveIds),
+    ])
   );
+
+  const linkedDriveFilesList = combinedDriveIds
+    .map((id) => allDriveFilesMap.get(id))
+    .filter(Boolean) as DriveFile[];
+
+  const allContactsMap = new Map<string, ContactItem>();
+  (contacts || []).forEach((c) => allContactsMap.set(c.resourceName, c));
+  (remoteContacts || []).forEach((c) => allContactsMap.set(c.resourceName, c));
+
+  const combinedContactIds = Array.from(
+    new Set([
+      ...(activeProject?.linkedContactResourceNames || []),
+      ...Array.from(timelogContactIds),
+    ])
+  );
+
+  const linkedContactsList = combinedContactIds
+    .map((resName) => allContactsMap.get(resName))
+    .filter(Boolean) as ContactItem[];
 
   // Handle Export Markdown to Google Drive
   const handleExportMarkdown = async () => {
@@ -367,7 +696,7 @@ export const ProjectsSection: React.FC<Props> = ({
 
   // Toggle Entity Link
   const handleToggleEntityLink = async (
-    type: 'email' | 'event' | 'drive' | 'contact',
+    type: 'email' | 'event' | 'drive' | 'contact' | 'task',
     idOrResource: string
   ) => {
     if (!activeProject) return;
@@ -395,6 +724,11 @@ export const ProjectsSection: React.FC<Props> = ({
         idOrResource
       )
         ? current.filter((res) => res !== idOrResource)
+        : [...current, idOrResource];
+    } else if (type === 'task') {
+      const current = updatedProject.linkedTaskIds || [];
+      updatedProject.linkedTaskIds = current.includes(idOrResource)
+        ? current.filter((id) => id !== idOrResource)
         : [...current, idOrResource];
     }
 
@@ -1035,191 +1369,30 @@ export const ProjectsSection: React.FC<Props> = ({
         </div>
       )}
 
-      {/* MODAL 6: ENTITY LINKER MODAL (Email, Event, Drive File, Contact) */}
-      {isLinkModalOpen && (
-        <div className="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-xs flex items-center justify-center p-4">
-          <div className="bg-white rounded-3xl max-w-lg w-full p-6 shadow-2xl border border-slate-200 space-y-4 animate-in fade-in zoom-in-95 duration-150 flex flex-col max-h-[80vh]">
-            <div className="flex items-center justify-between border-b border-slate-100 pb-3">
-              <h3 className="font-extrabold text-slate-900 text-base">
-                {linkEntityType === 'email' && 'E-posta Bağla'}
-                {linkEntityType === 'event' && 'Takvim Etkinliği Bağla'}
-                {linkEntityType === 'drive' && 'Drive Dosyası Bağla'}
-                {linkEntityType === 'contact' && 'Kişi Bağla'}
-              </h3>
-              <button
-                onClick={() => setIsLinkModalOpen(false)}
-                className="text-slate-400 hover:text-slate-600 cursor-pointer"
-              >
-                <X className="w-5 h-5" />
-              </button>
-            </div>
-
-            {/* Search Input */}
-            <div className="relative">
-              <Search className="w-4 h-4 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2" />
-              <input
-                type="text"
-                value={entitySearch}
-                onChange={(e) => setEntitySearch(e.target.value)}
-                placeholder="Arama yapın..."
-                className="w-full pl-9 pr-3 py-2 text-xs bg-slate-50 border border-slate-200 rounded-xl focus:outline-hidden font-medium text-slate-800"
-              />
-            </div>
-
-            {/* List for Selection */}
-            <div className="flex-1 overflow-y-auto space-y-2 divide-y divide-slate-100">
-              {linkEntityType === 'email' &&
-                emails
-                  .filter(
-                    (e) =>
-                      e.subject.toLowerCase().includes(entitySearch.toLowerCase()) ||
-                      e.sender.toLowerCase().includes(entitySearch.toLowerCase())
-                  )
-                  .map((e) => {
-                    const isLinked = activeProject.linkedEmailIds?.includes(e.id);
-                    return (
-                      <div
-                        key={e.id}
-                        onClick={() => handleToggleEntityLink('email', e.id)}
-                        className={`p-3 text-xs rounded-xl cursor-pointer flex items-center justify-between transition-colors ${
-                          isLinked
-                            ? 'bg-rose-50 border border-rose-200 text-rose-900 font-bold'
-                            : 'hover:bg-slate-50 text-slate-700'
-                        }`}
-                      >
-                        <div className="min-w-0 pr-2">
-                          <div className="font-bold">{e.subject}</div>
-                          <div className="text-[10px] text-slate-400">
-                            {e.sender} ({e.date})
-                          </div>
-                        </div>
-                        {isLinked && (
-                          <Check className="w-4 h-4 text-rose-600 shrink-0" />
-                        )}
-                      </div>
-                    );
-                  })}
-
-              {linkEntityType === 'event' &&
-                events
-                  .filter((ev) =>
-                    ev.summary.toLowerCase().includes(entitySearch.toLowerCase())
-                  )
-                  .map((ev) => {
-                    const isLinked = activeProject.linkedEventIds?.includes(ev.id);
-                    return (
-                      <div
-                        key={ev.id}
-                        onClick={() => handleToggleEntityLink('event', ev.id)}
-                        className={`p-3 text-xs rounded-xl cursor-pointer flex items-center justify-between transition-colors ${
-                          isLinked
-                            ? 'bg-blue-50 border border-blue-200 text-blue-900 font-bold'
-                            : 'hover:bg-slate-50 text-slate-700'
-                        }`}
-                      >
-                        <div className="min-w-0 pr-2">
-                          <div className="font-bold">{ev.summary}</div>
-                          <div className="text-[10px] text-slate-400">
-                            {new Date(ev.start).toLocaleString('tr-TR')}
-                          </div>
-                        </div>
-                        {isLinked && (
-                          <Check className="w-4 h-4 text-blue-600 shrink-0" />
-                        )}
-                      </div>
-                    );
-                  })}
-
-              {linkEntityType === 'drive' &&
-                driveFiles
-                  .filter((f) =>
-                    f.name.toLowerCase().includes(entitySearch.toLowerCase())
-                  )
-                  .map((f) => {
-                    const isLinked = activeProject.linkedDriveFileIds?.includes(f.id);
-                    return (
-                      <div
-                        key={f.id}
-                        onClick={() => handleToggleEntityLink('drive', f.id)}
-                        className={`p-3 text-xs rounded-xl cursor-pointer flex items-center justify-between transition-colors ${
-                          isLinked
-                            ? 'bg-emerald-50 border border-emerald-200 text-emerald-900 font-bold'
-                            : 'hover:bg-slate-50 text-slate-700'
-                        }`}
-                      >
-                        <div className="min-w-0 pr-2">
-                          <div className="font-bold">{f.name}</div>
-                          <div className="text-[10px] text-slate-400 font-mono">
-                            {f.mimeType}
-                          </div>
-                        </div>
-                        {isLinked && (
-                          <Check className="w-4 h-4 text-emerald-600 shrink-0" />
-                        )}
-                      </div>
-                    );
-                  })}
-
-              {linkEntityType === 'contact' &&
-                contacts
-                  .filter((c) =>
-                    c.displayName.toLowerCase().includes(entitySearch.toLowerCase())
-                  )
-                  .map((c) => {
-                    const isLinked = activeProject.linkedContactResourceNames?.includes(
-                      c.resourceName
-                    );
-                    return (
-                      <div
-                        key={c.resourceName}
-                        onClick={() =>
-                          handleToggleEntityLink('contact', c.resourceName)
-                        }
-                        className={`p-3 text-xs rounded-xl cursor-pointer flex items-center justify-between transition-colors ${
-                          isLinked
-                            ? 'bg-indigo-50 border border-indigo-200 text-indigo-900 font-bold'
-                            : 'hover:bg-slate-50 text-slate-700'
-                        }`}
-                      >
-                        <div className="min-w-0 pr-2">
-                          <div className="font-bold">{c.displayName}</div>
-                          <div className="text-[10px] text-slate-400">
-                            {c.email || c.phone}
-                          </div>
-                        </div>
-                        {isLinked && (
-                          <Check className="w-4 h-4 text-indigo-600 shrink-0" />
-                        )}
-                      </div>
-                    );
-                  })}
-            </div>
-
-            <div className="pt-2 border-t border-slate-100 flex justify-end">
-              <button
-                onClick={() => setIsLinkModalOpen(false)}
-                className="px-5 py-2 bg-slate-900 text-white text-xs font-bold rounded-xl cursor-pointer"
-              >
-                Tamam
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
-
       {/* 5. FULL PAGE CARD DETAIL VIEW */}
       {detailTask && activeProject && (() => {
         const countdown = detailTask.dueDate ? getCountdown(detailTask.dueDate) : null;
 
-        // Extract note tags for this project
+        // Notes specific to this card OR general project notes
+        const cardNotes = notes.filter((n) => {
+          if (n.projectId === detailTask.id) return true;
+          if (n.projectId === activeProject.id) return true;
+          if (activeProject.linkedNoteIds?.includes(n.id)) return true;
+          if (projectTasks.some((t) => t.id === n.projectId)) {
+            return n.projectId === detailTask.id;
+          }
+          return false;
+        });
+
+        // Extract note tags for this card & project
         const allNoteTags = Array.from(
           new Set(
-            projectNotes.flatMap((n) => n.tags || []).filter(Boolean)
+            cardNotes.flatMap((n) => n.tags || []).filter(Boolean)
           )
         );
 
         // Filter notes by tag
-        let filteredNotes = projectNotes.filter((n) => {
+        let filteredNotes = cardNotes.filter((n) => {
           if (noteTagFilter === 'all') return true;
           return n.tags?.includes(noteTagFilter);
         });
@@ -1236,6 +1409,56 @@ export const ProjectsSection: React.FC<Props> = ({
             return a.title.localeCompare(b.title, 'tr');
           }
           return 0;
+        });
+
+        // Extract all card timelogs
+        const cardTimelogs = timeLogs.filter((log) => {
+          if (log.cardId && log.cardId === detailTask.id) return true;
+          if (log.projectId && log.projectId === detailTask.id) return true;
+          if (log.cardTitle && detailTask.title && log.cardTitle.toLowerCase() === detailTask.title.toLowerCase()) return true;
+          if (log.linkId === detailTask.id || log.entityId === detailTask.id) return true;
+          if (log.projectId && log.projectId === activeProject.id && (!log.cardId || log.cardId === detailTask.id)) return true;
+          return false;
+        });
+
+        // Calculate stats for cardTimelogs
+        const cardTotalMinutes = cardTimelogs.reduce((sum, l) => sum + (l.durationMinutes || 0), 0);
+        const cardUniqueDays = new Set(
+          cardTimelogs
+            .map((l) => (l.startTime ? l.startTime.split('T')[0] : l.createdAt ? l.createdAt.split('T')[0] : ''))
+            .filter(Boolean)
+        );
+        const cardDaysCount = Math.max(1, cardUniqueDays.size);
+        const cardDailyAvgMinutes = cardTimelogs.length > 0 ? Math.round(cardTotalMinutes / cardDaysCount) : 0;
+
+        // All available tags from notes and timelogs
+        const allTimelogTags = Array.from(
+          new Set([
+            ...allNoteTags,
+            ...cardTimelogs.flatMap((l) => l.tags || []).filter(Boolean),
+          ])
+        );
+
+        // Filter card timelogs
+        const filteredCardTimelogs = cardTimelogs.filter((log) => {
+          if (timelogSearch.trim()) {
+            const q = timelogSearch.toLowerCase();
+            const matchDesc = log.description?.toLowerCase().includes(q);
+            const matchTitle = log.cardTitle?.toLowerCase().includes(q) || log.linkTitle?.toLowerCase().includes(q);
+            const matchTag = log.tags?.some((t) => t.toLowerCase().includes(q));
+            if (!matchDesc && !matchTitle && !matchTag) return false;
+          }
+          if (timelogServiceFilter !== 'all') {
+            if (timelogServiceFilter === 'card_only') {
+              if (log.linkType && log.linkType !== '') return false;
+            } else {
+              if (log.linkType !== timelogServiceFilter) return false;
+            }
+          }
+          if (timelogTagFilter !== 'all') {
+            if (!log.tags?.includes(timelogTagFilter)) return false;
+          }
+          return true;
         });
 
         return (
@@ -1501,127 +1724,322 @@ export const ProjectsSection: React.FC<Props> = ({
                   )}
                 </div>
 
-                {/* Left Side Notes Listing Section with Tag Filtering & Sorting */}
-                <div className="bg-white rounded-3xl p-6 border border-slate-200 shadow-xs space-y-4">
-                  <div className="flex flex-wrap items-center justify-between gap-3 border-b border-slate-100 pb-3">
-                    <div className="flex items-center gap-2">
-                      <div className="p-2 bg-amber-100 text-amber-700 rounded-xl">
-                        <FileText className="w-4 h-4" />
-                      </div>
-                      <div>
-                        <h3 className="text-sm font-black text-slate-900">
-                          Notlar ({filteredNotes.length})
-                        </h3>
-                        <p className="text-[11px] text-slate-500">
-                          Bu projeye veya karta eklenen notlar
-                        </p>
-                      </div>
-                    </div>
+                {/* 2-TAB CONTAINER: NOTLAR & ZAMANLAR */}
+                <div className="bg-white rounded-3xl border border-slate-200 shadow-xs overflow-hidden">
+                  {/* Tab Navigation Header */}
+                  <div className="flex items-center border-b border-slate-200 bg-slate-50/80 p-2 gap-2">
+                    <button
+                      onClick={() => setDetailActiveTab('notes')}
+                      className={`flex-1 py-2.5 px-4 rounded-2xl text-xs font-black flex items-center justify-center gap-2 transition-all cursor-pointer ${
+                        detailActiveTab === 'notes'
+                          ? 'bg-white text-amber-900 shadow-xs border border-slate-200'
+                          : 'text-slate-500 hover:text-slate-900 hover:bg-slate-100/60'
+                      }`}
+                    >
+                      <FileText className="w-4 h-4 text-amber-500" />
+                      <span>Notlar ({filteredNotes.length})</span>
+                    </button>
 
-                    {/* Filter & Sort Controls */}
-                    <div className="flex flex-wrap items-center gap-2">
-                      {/* Tag Filter */}
-                      <div className="flex items-center gap-1 bg-slate-50 border border-slate-200 rounded-xl px-2.5 py-1">
-                        <Tag className="w-3 h-3 text-amber-600 shrink-0" />
-                        <select
-                          value={noteTagFilter}
-                          onChange={(e) => setNoteTagFilter(e.target.value)}
-                          className="bg-transparent text-xs font-bold text-slate-800 focus:outline-hidden cursor-pointer"
-                        >
-                          <option value="all">Tüm Etiketler</option>
-                          {allNoteTags.map((tag) => (
-                            <option key={tag} value={tag}>
-                              #{tag}
-                            </option>
-                          ))}
-                        </select>
-                      </div>
-
-                      {/* Sort Order */}
-                      <div className="flex items-center gap-1 bg-slate-50 border border-slate-200 rounded-xl px-2.5 py-1">
-                        <span className="text-[10px] font-extrabold text-slate-400">Sırala:</span>
-                        <select
-                          value={noteSortOrder}
-                          onChange={(e) =>
-                            setNoteSortOrder(
-                              e.target.value as 'newest' | 'oldest' | 'title'
-                            )
-                          }
-                          className="bg-transparent text-xs font-bold text-slate-800 focus:outline-hidden cursor-pointer"
-                        >
-                          <option value="newest">En Yeni</option>
-                          <option value="oldest">En Eski</option>
-                          <option value="title">Başlık (A-Z)</option>
-                        </select>
-                      </div>
-
-                      {/* New Note Button */}
-                      <button
-                        onClick={() =>
-                          onOpenNoteModal({
-                            id: '',
-                            title: '',
-                            content: '',
-                            tags: [],
-                            projectId: activeProject.id,
-                            date: new Date().toISOString().split('T')[0],
-                            createdAt: new Date().toISOString(),
-                            updatedAt: new Date().toISOString(),
-                          })
-                        }
-                        className="px-3 py-1.5 bg-amber-500 hover:bg-amber-600 text-white text-xs font-extrabold rounded-xl shadow-2xs flex items-center gap-1 cursor-pointer transition-colors"
-                      >
-                        <Plus className="w-3.5 h-3.5" />
-                        <span>Yeni Not Ekle</span>
-                      </button>
-                    </div>
+                    <button
+                      onClick={() => setDetailActiveTab('timelogs')}
+                      className={`flex-1 py-2.5 px-4 rounded-2xl text-xs font-black flex items-center justify-center gap-2 transition-all cursor-pointer ${
+                        detailActiveTab === 'timelogs'
+                          ? 'bg-white text-purple-900 shadow-xs border border-slate-200'
+                          : 'text-slate-500 hover:text-slate-900 hover:bg-slate-100/60'
+                      }`}
+                    >
+                      <Clock className="w-4 h-4 text-purple-600" />
+                      <span>Zamanlar ({cardTimelogs.length})</span>
+                    </button>
                   </div>
 
-                  {/* Notes Cards Container */}
-                  <div className="space-y-3">
-                    {filteredNotes.length === 0 ? (
-                      <div className="p-8 text-center border-2 border-dashed border-slate-200 rounded-2xl text-slate-400 text-xs italic">
-                        {noteTagFilter !== 'all'
-                          ? `"#${noteTagFilter}" etiketine sahip not bulunamadı.`
-                          : 'Henüz not eklenmemiş.'}
-                      </div>
-                    ) : (
-                      filteredNotes.map((note) => (
-                        <div
-                          key={note.id}
-                          className="p-4 bg-amber-50/40 hover:bg-amber-50/80 border border-amber-200/80 rounded-2xl transition-all space-y-2 group"
-                        >
-                          <div className="flex items-start justify-between gap-2">
-                            <h4 className="font-extrabold text-slate-900 text-xs leading-snug">
-                              {note.title || 'Başlıksız Not'}
-                            </h4>
+                  <div className="p-6">
+                    {detailActiveTab === 'notes' ? (
+                      /* --- TAB 1: NOTLAR --- */
+                      <div className="space-y-4">
+                        <div className="flex flex-wrap items-center justify-between gap-3 border-b border-slate-100 pb-3">
+                          <div className="flex items-center gap-2">
+                            <div className="p-2 bg-amber-100 text-amber-700 rounded-xl">
+                              <FileText className="w-4 h-4" />
+                            </div>
+                            <div>
+                              <h3 className="text-sm font-black text-slate-900">
+                                Notlar ({filteredNotes.length})
+                              </h3>
+                              <p className="text-[11px] text-slate-500">
+                                Bu projeye veya karta eklenen notlar
+                              </p>
+                            </div>
+                          </div>
+
+                          {/* Filter & Sort Controls */}
+                          <div className="flex flex-wrap items-center gap-2">
+                            {/* Tag Filter */}
+                            <div className="flex items-center gap-1 bg-slate-50 border border-slate-200 rounded-xl px-2.5 py-1">
+                              <Tag className="w-3 h-3 text-amber-600 shrink-0" />
+                              <select
+                                value={noteTagFilter}
+                                onChange={(e) => setNoteTagFilter(e.target.value)}
+                                className="bg-transparent text-xs font-bold text-slate-800 focus:outline-hidden cursor-pointer"
+                              >
+                                <option value="all">Tüm Etiketler</option>
+                                {allNoteTags.map((tag) => (
+                                  <option key={tag} value={tag}>
+                                    #{tag}
+                                  </option>
+                                ))}
+                              </select>
+                            </div>
+
+                            {/* Sort Order */}
+                            <div className="flex items-center gap-1 bg-slate-50 border border-slate-200 rounded-xl px-2.5 py-1">
+                              <span className="text-[10px] font-extrabold text-slate-400">Sırala:</span>
+                              <select
+                                value={noteSortOrder}
+                                onChange={(e) =>
+                                  setNoteSortOrder(
+                                    e.target.value as 'newest' | 'oldest' | 'title'
+                                  )
+                                }
+                                className="bg-transparent text-xs font-bold text-slate-800 focus:outline-hidden cursor-pointer"
+                              >
+                                <option value="newest">En Yeni</option>
+                                <option value="oldest">En Eski</option>
+                                <option value="title">Başlık (A-Z)</option>
+                              </select>
+                            </div>
+
+                            {/* New Note Button */}
                             <button
-                              onClick={() => onOpenNoteModal(note)}
-                              className="px-2.5 py-1 bg-amber-200/60 hover:bg-amber-200 text-amber-900 text-[10px] font-extrabold rounded-lg transition-colors cursor-pointer shrink-0"
+                              onClick={() =>
+                                onOpenNoteModal({
+                                  id: '',
+                                  title: '',
+                                  content: '',
+                                  tags: [],
+                                  projectId: detailTask.id,
+                                  date: new Date().toISOString().split('T')[0],
+                                  createdAt: new Date().toISOString(),
+                                  updatedAt: new Date().toISOString(),
+                                })
+                              }
+                              className="px-3 py-1.5 bg-amber-500 hover:bg-amber-600 text-white text-xs font-extrabold rounded-xl shadow-2xs flex items-center gap-1 cursor-pointer transition-colors"
                             >
-                              Görüntüle & Düzenle
+                              <Plus className="w-3.5 h-3.5" />
+                              <span>Yeni Not Ekle</span>
                             </button>
                           </div>
+                        </div>
 
-                          <p className="text-[11px] text-slate-600 line-clamp-3 leading-relaxed">
-                            {note.content}
-                          </p>
-
-                          <div className="flex items-center justify-between pt-1 border-t border-amber-200/40 text-[10px] text-slate-400">
-                            <div className="flex items-center gap-1.5 flex-wrap">
-                              {note.tags?.map((t) => (
-                                <span
-                                  key={t}
-                                  className="px-2 py-0.5 bg-amber-200/60 text-amber-900 font-bold rounded-md"
-                                >
-                                  #{t}
-                                </span>
-                              ))}
+                        {/* Notes Cards Container */}
+                        <div className="space-y-3">
+                          {filteredNotes.length === 0 ? (
+                            <div className="p-8 text-center border-2 border-dashed border-slate-200 rounded-2xl text-slate-400 text-xs italic">
+                              {noteTagFilter !== 'all'
+                                ? `"#${noteTagFilter}" etiketine sahip not bulunamadı.`
+                                : 'Henüz not eklenmemiş.'}
                             </div>
-                            <span>{note.date}</span>
+                          ) : (
+                            filteredNotes.map((note) => (
+                              <div
+                                key={note.id}
+                                className="p-4 bg-amber-50/40 hover:bg-amber-50/80 border border-amber-200/80 rounded-2xl transition-all space-y-2 group"
+                              >
+                                <div className="flex items-start justify-between gap-2">
+                                  <h4 className="font-extrabold text-slate-900 text-xs leading-snug">
+                                    {note.title || 'Başlıksız Not'}
+                                  </h4>
+                                  <button
+                                    onClick={() => onOpenNoteModal(note)}
+                                    className="px-2.5 py-1 bg-amber-200/60 hover:bg-amber-200 text-amber-900 text-[10px] font-extrabold rounded-lg transition-colors cursor-pointer shrink-0"
+                                  >
+                                    Görüntüle & Düzenle
+                                  </button>
+                                </div>
+
+                                <p className="text-[11px] text-slate-600 line-clamp-3 leading-relaxed">
+                                  {note.content}
+                                </p>
+
+                                <div className="flex items-center justify-between pt-1 border-t border-amber-200/40 text-[10px] text-slate-400">
+                                  <div className="flex items-center gap-1.5 flex-wrap">
+                                    {note.tags?.map((t) => (
+                                      <span
+                                        key={t}
+                                        className="px-2 py-0.5 bg-amber-200/60 text-amber-900 font-bold rounded-md"
+                                      >
+                                        #{t}
+                                      </span>
+                                    ))}
+                                  </div>
+                                  <span>{note.date}</span>
+                                </div>
+                              </div>
+                            ))
+                          )}
+                        </div>
+                      </div>
+                    ) : (
+                      /* --- TAB 2: ZAMANLAR --- */
+                      <div className="space-y-4">
+                        {/* Top Summary Stats Banner */}
+                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 p-4 bg-gradient-to-br from-purple-900 via-indigo-900 to-slate-900 text-white rounded-2xl shadow-xs">
+                          <div className="flex items-center gap-3">
+                            <div className="p-2.5 bg-white/10 rounded-xl backdrop-blur-xs">
+                              <Clock className="w-5 h-5 text-purple-300" />
+                            </div>
+                            <div>
+                              <div className="text-[10px] font-extrabold text-purple-200 uppercase tracking-wider">
+                                Kart'la İlişkili Toplam Zaman
+                              </div>
+                              <div className="text-lg font-black text-white">
+                                {formatMinutesToText(cardTotalMinutes)}
+                              </div>
+                            </div>
+                          </div>
+
+                          <div className="flex items-center gap-3 border-t sm:border-t-0 sm:border-l border-white/10 pt-3 sm:pt-0 sm:pl-4">
+                            <div className="p-2.5 bg-white/10 rounded-xl backdrop-blur-xs">
+                              <BarChart3 className="w-5 h-5 text-indigo-300" />
+                            </div>
+                            <div>
+                              <div className="text-[10px] font-extrabold text-indigo-200 uppercase tracking-wider">
+                                Günlük Ortalama Süre
+                              </div>
+                              <div className="text-lg font-black text-white">
+                                {formatMinutesToText(cardDailyAvgMinutes)}
+                                <span className="text-[11px] font-normal text-purple-200 ml-1.5">
+                                  / gün ({cardUniqueDays.size} aktif gün)
+                                </span>
+                              </div>
+                            </div>
                           </div>
                         </div>
-                      ))
+
+                        {/* Filter & Search Toolbar */}
+                        <div className="flex flex-wrap items-center justify-between gap-2 pt-1 pb-2 border-b border-slate-100">
+                          <div className="flex flex-wrap items-center gap-2 flex-1">
+                            {/* Search Input */}
+                            <div className="relative min-w-[150px] flex-1">
+                              <Search className="w-3.5 h-3.5 text-slate-400 absolute left-2.5 top-1/2 -translate-y-1/2" />
+                              <input
+                                type="text"
+                                value={timelogSearch}
+                                onChange={(e) => setTimelogSearch(e.target.value)}
+                                placeholder="Zaman kaydı ara..."
+                                className="w-full pl-8 pr-2.5 py-1.5 bg-slate-50 border border-slate-200 rounded-xl text-xs font-medium text-slate-800 focus:outline-hidden focus:bg-white"
+                              />
+                            </div>
+
+                            {/* Service Filter */}
+                            <div className="flex items-center gap-1 bg-slate-50 border border-slate-200 rounded-xl px-2.5 py-1.5">
+                              <Filter className="w-3 h-3 text-purple-600 shrink-0" />
+                              <select
+                                value={timelogServiceFilter}
+                                onChange={(e) => setTimelogServiceFilter(e.target.value)}
+                                className="bg-transparent text-xs font-bold text-slate-800 focus:outline-hidden cursor-pointer"
+                              >
+                                <option value="all">Tüm Servisler</option>
+                                <option value="calendar">Google Takvim</option>
+                                <option value="gmail">Gmail</option>
+                                <option value="drive">Google Drive</option>
+                                <option value="tasks">Google Görevler</option>
+                                <option value="card_only">Sadece Kart</option>
+                              </select>
+                            </div>
+
+                            {/* Tag Filter */}
+                            <div className="flex items-center gap-1 bg-slate-50 border border-slate-200 rounded-xl px-2.5 py-1.5">
+                              <Tag className="w-3 h-3 text-purple-600 shrink-0" />
+                              <select
+                                value={timelogTagFilter}
+                                onChange={(e) => setTimelogTagFilter(e.target.value)}
+                                className="bg-transparent text-xs font-bold text-slate-800 focus:outline-hidden cursor-pointer"
+                              >
+                                <option value="all">Tüm Etiketler</option>
+                                {allTimelogTags.map((tag) => (
+                                  <option key={tag} value={tag}>
+                                    #{tag}
+                                  </option>
+                                ))}
+                              </select>
+                            </div>
+                          </div>
+
+                          {/* Add Manual Timelog Button */}
+                          <button
+                            onClick={handleOpenAddTimelogModal}
+                            className="px-3.5 py-1.5 bg-purple-600 hover:bg-purple-700 text-white text-xs font-extrabold rounded-xl shadow-2xs flex items-center gap-1.5 cursor-pointer transition-colors shrink-0"
+                          >
+                            <Plus className="w-3.5 h-3.5" />
+                            <span>Manuel Kayıt Ekle</span>
+                          </button>
+                        </div>
+
+                        {/* Timelogs List Cards */}
+                        <div className="space-y-2.5">
+                          {filteredCardTimelogs.length === 0 ? (
+                            <div className="p-8 text-center border-2 border-dashed border-slate-200 rounded-2xl text-slate-400 text-xs italic">
+                              {timelogSearch || timelogServiceFilter !== 'all' || timelogTagFilter !== 'all'
+                                ? 'Filtrelere uygun zaman kaydı bulunamadı.'
+                                : 'Bu karta ait henüz zaman kaydı yok. "Manuel Kayıt Ekle" butonu ile zaman kaydı ekleyebilirsiniz.'}
+                            </div>
+                          ) : (
+                            filteredCardTimelogs.map((log) => (
+                              <div
+                                key={log.id}
+                                className="p-3.5 bg-purple-50/30 hover:bg-purple-50/70 border border-purple-200/60 rounded-2xl transition-all flex flex-col sm:flex-row sm:items-center justify-between gap-3"
+                              >
+                                <div className="space-y-1 min-w-0 flex-1">
+                                  <div className="flex items-center gap-2 flex-wrap">
+                                    <span className="text-xs font-bold text-slate-900">
+                                      {log.description || 'Açıklamasız Kayıt'}
+                                    </span>
+                                    {log.linkType && (
+                                      <span className="px-2 py-0.5 bg-purple-100 text-purple-800 text-[10px] font-black rounded-md flex items-center gap-1">
+                                        {log.linkType === 'calendar' && <Calendar className="w-3 h-3 text-blue-600" />}
+                                        {log.linkType === 'gmail' && <Mail className="w-3 h-3 text-rose-600" />}
+                                        {log.linkType === 'drive' && <HardDrive className="w-3 h-3 text-emerald-600" />}
+                                        {log.linkType === 'tasks' && <CheckCircle2 className="w-3 h-3 text-purple-600" />}
+                                        <span>{log.linkTitle || log.linkType}</span>
+                                      </span>
+                                    )}
+                                  </div>
+
+                                  <div className="flex items-center gap-3 text-[10px] text-slate-500 flex-wrap">
+                                    <span>
+                                      📅 {log.startTime ? new Date(log.startTime).toLocaleString('tr-TR', { dateStyle: 'short', timeStyle: 'short' }) : 'Belirtilmedi'}
+                                    </span>
+                                    {log.tags && log.tags.length > 0 && (
+                                      <div className="flex items-center gap-1">
+                                        {log.tags.map((t) => (
+                                          <span key={t} className="px-1.5 py-0.2 bg-slate-200/70 text-slate-700 font-bold rounded-md">
+                                            #{t}
+                                          </span>
+                                        ))}
+                                      </div>
+                                    )}
+                                  </div>
+                                </div>
+
+                                <div className="flex items-center gap-2 shrink-0 self-end sm:self-center">
+                                  <span className="px-2.5 py-1 bg-purple-600 text-white text-xs font-black rounded-xl shadow-2xs flex items-center gap-1">
+                                    <Clock className="w-3 h-3" />
+                                    {formatMinutesToText(log.durationMinutes)}
+                                  </span>
+                                  <button
+                                    onClick={() => handleDeleteTimelog(log.id)}
+                                    className="p-1.5 text-slate-400 hover:text-rose-600 hover:bg-rose-50 rounded-lg transition-colors cursor-pointer"
+                                    title="Sil"
+                                  >
+                                    <Trash2 className="w-3.5 h-3.5" />
+                                  </button>
+                                </div>
+                              </div>
+                            ))
+                          )}
+                        </div>
+                      </div>
                     )}
                   </div>
                 </div>
@@ -1638,12 +2056,106 @@ export const ProjectsSection: React.FC<Props> = ({
                       Bağlanan Öğeler (Workspace)
                     </h3>
                     <p className="text-[11px] text-slate-500 mt-0.5">
-                      Bu kart ve projeye bağlı e-posta, etkinlik ve dosyalar
+                      Bu kart ve projeye bağlı e-posta, etkinlik, dosya ve görevler
                     </p>
                   </div>
 
-                  {/* 1. Connected Emails */}
+                  {/* 0. Connected Google Tasks */}
                   <div className="space-y-2">
+                    <div className="flex items-center justify-between flex-wrap gap-2">
+                      <div className="flex items-center gap-2">
+                        <span className="text-xs font-extrabold text-slate-800 flex items-center gap-1.5">
+                          <CheckCircle2 className="w-3.5 h-3.5 text-purple-600" /> Google Görevler ({filteredGoogleTasksList.length})
+                        </span>
+                        <label className="inline-flex items-center gap-1.5 cursor-pointer select-none text-[10px] text-slate-500 bg-slate-100 hover:bg-slate-200/80 px-2 py-0.5 rounded-full transition-colors">
+                          <input
+                            type="checkbox"
+                            checked={showCompletedGoogleTasks}
+                            onChange={(e) => setShowCompletedGoogleTasks(e.target.checked)}
+                            className="sr-only peer"
+                          />
+                          <div className="w-5 h-3 bg-slate-300 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[1px] after:left-[1px] after:bg-white after:border-slate-300 after:border after:rounded-full after:h-2 after:w-2 after:transition-all peer-checked:bg-purple-600 relative"></div>
+                          <span className="font-medium text-slate-600">
+                            {showCompletedGoogleTasks ? 'Tamamlananlar Açık' : 'Tamamlananlar'}
+                          </span>
+                        </label>
+                      </div>
+
+                      <button
+                        onClick={() => {
+                          setLinkEntityType('task');
+                          setIsLinkModalOpen(true);
+                        }}
+                        className="w-6 h-6 rounded-full bg-purple-100 hover:bg-purple-200 text-purple-700 flex items-center justify-center transition-colors shrink-0 cursor-pointer"
+                        title="Görev Bağla"
+                      >
+                        <Plus className="w-3.5 h-3.5" />
+                      </button>
+                    </div>
+
+                    <div className="space-y-1.5 max-h-40 overflow-y-auto pr-1">
+                      {filteredGoogleTasksList.length === 0 ? (
+                        <p className="text-[11px] text-slate-400 italic">
+                          {linkedGoogleTasksList.length > 0 && !showCompletedGoogleTasks
+                            ? 'Tüm bağlı görevler tamamlanmış (görmek için tamamlananları açın).'
+                            : 'Google Görevi bağlanmadı.'}
+                        </p>
+                      ) : (
+                        filteredGoogleTasksList.map((gTask) => {
+                          const durationMins = getItemTimelogMinutes('task', gTask.id);
+                          return (
+                            <div
+                              key={gTask.id}
+                              className="p-2.5 bg-purple-50/50 border border-purple-200/60 rounded-xl flex items-center justify-between text-xs"
+                            >
+                              <div className="min-w-0 flex-1 pr-2">
+                                <a
+                                  href="https://tasks.google.com"
+                                  target="_blank"
+                                  rel="noreferrer"
+                                  className="font-bold text-slate-900 hover:text-purple-600 truncate flex items-center gap-1.5 group"
+                                  title="Google Görevler'de Aç ↗"
+                                >
+                                  <span
+                                    className={`w-2 h-2 rounded-full shrink-0 ${
+                                      gTask.status === 'completed'
+                                        ? 'bg-emerald-500'
+                                        : 'bg-amber-500'
+                                    }`}
+                                  />
+                                  <span className={gTask.status === 'completed' ? 'line-through text-slate-400' : ''}>
+                                    {gTask.title}
+                                  </span>
+                                  <ExternalLink className="w-3 h-3 text-slate-400 opacity-0 group-hover:opacity-100 transition-opacity shrink-0 ml-1" />
+                                </a>
+                                {gTask.due && (
+                                  <p className="text-[10px] text-slate-500 truncate ml-3.5">
+                                    Tarih: {gTask.due.split('T')[0]}
+                                  </p>
+                                )}
+                              </div>
+                              <div className="flex items-center gap-1.5 shrink-0">
+                                <span className="text-[10px] font-extrabold text-purple-700 bg-purple-100/80 px-1.5 py-0.5 rounded-md flex items-center gap-1">
+                                  <Clock className="w-3 h-3 text-purple-600" />
+                                  {formatMinutesToText(durationMins)}
+                                </span>
+                                <button
+                                  onClick={() => handleToggleEntityLink('task', gTask.id)}
+                                  className="p-1 text-slate-400 hover:text-rose-600 hover:bg-rose-100/60 rounded-md transition-colors cursor-pointer"
+                                  title="Bağlantıyı Kaldır"
+                                >
+                                  <X className="w-3.5 h-3.5" />
+                                </button>
+                              </div>
+                            </div>
+                          );
+                        })
+                      )}
+                    </div>
+                  </div>
+
+                  {/* 1. Connected Emails */}
+                  <div className="space-y-2 pt-2 border-t border-slate-100">
                     <div className="flex items-center justify-between">
                       <span className="text-xs font-extrabold text-slate-800 flex items-center gap-1.5">
                         <Mail className="w-3.5 h-3.5 text-rose-500" /> E-postalar ({linkedEmailsList.length})
@@ -1653,9 +2165,10 @@ export const ProjectsSection: React.FC<Props> = ({
                           setLinkEntityType('email');
                           setIsLinkModalOpen(true);
                         }}
-                        className="text-[10px] font-extrabold text-purple-600 hover:underline cursor-pointer"
+                        className="w-6 h-6 rounded-full bg-rose-100 hover:bg-rose-200 text-rose-700 flex items-center justify-center transition-colors shrink-0 cursor-pointer"
+                        title="E-posta Bağla"
                       >
-                        + E-posta Bağla
+                        <Plus className="w-3.5 h-3.5" />
                       </button>
                     </div>
 
@@ -1663,17 +2176,43 @@ export const ProjectsSection: React.FC<Props> = ({
                       {linkedEmailsList.length === 0 ? (
                         <p className="text-[11px] text-slate-400 italic">E-posta bağlanmadı.</p>
                       ) : (
-                        linkedEmailsList.map((email) => (
-                          <div
-                            key={email.id}
-                            className="p-2.5 bg-rose-50/50 border border-rose-200/60 rounded-xl flex items-center justify-between text-xs"
-                          >
-                            <div className="min-w-0 flex-1 pr-2">
-                              <p className="font-bold text-slate-900 truncate">{email.subject}</p>
-                              <p className="text-[10px] text-slate-500 truncate">{email.sender}</p>
+                        linkedEmailsList.map((email) => {
+                          const durationMins = getItemTimelogMinutes('email', email.id);
+                          const gmailUrl = `https://mail.google.com/mail/u/0/#search/${encodeURIComponent(email.subject)}`;
+                          return (
+                            <div
+                              key={email.id}
+                              className="p-2.5 bg-rose-50/50 border border-rose-200/60 rounded-xl flex items-center justify-between text-xs"
+                            >
+                              <div className="min-w-0 flex-1 pr-2">
+                                <a
+                                  href={gmailUrl}
+                                  target="_blank"
+                                  rel="noreferrer"
+                                  className="font-bold text-slate-900 hover:text-rose-600 truncate flex items-center gap-1 group"
+                                  title="Gmail'de Aç ↗"
+                                >
+                                  <span className="truncate">{email.subject}</span>
+                                  <ExternalLink className="w-3 h-3 text-slate-400 opacity-0 group-hover:opacity-100 transition-opacity shrink-0" />
+                                </a>
+                                <p className="text-[10px] text-slate-500 truncate">{email.sender}</p>
+                              </div>
+                              <div className="flex items-center gap-1.5 shrink-0">
+                                <span className="text-[10px] font-extrabold text-rose-700 bg-rose-100/80 px-1.5 py-0.5 rounded-md flex items-center gap-1">
+                                  <Clock className="w-3 h-3 text-rose-600" />
+                                  {formatMinutesToText(durationMins)}
+                                </span>
+                                <button
+                                  onClick={() => handleToggleEntityLink('email', email.id)}
+                                  className="p-1 text-slate-400 hover:text-rose-600 hover:bg-rose-100/60 rounded-md transition-colors cursor-pointer"
+                                  title="Bağlantıyı Kaldır"
+                                >
+                                  <X className="w-3.5 h-3.5" />
+                                </button>
+                              </div>
                             </div>
-                          </div>
-                        ))
+                          );
+                        })
                       )}
                     </div>
                   </div>
@@ -1689,9 +2228,10 @@ export const ProjectsSection: React.FC<Props> = ({
                           setLinkEntityType('event');
                           setIsLinkModalOpen(true);
                         }}
-                        className="text-[10px] font-extrabold text-purple-600 hover:underline cursor-pointer"
+                        className="w-6 h-6 rounded-full bg-blue-100 hover:bg-blue-200 text-blue-700 flex items-center justify-center transition-colors shrink-0 cursor-pointer"
+                        title="Etkinlik Bağla"
                       >
-                        + Etkinlik Bağla
+                        <Plus className="w-3.5 h-3.5" />
                       </button>
                     </div>
 
@@ -1699,17 +2239,43 @@ export const ProjectsSection: React.FC<Props> = ({
                       {linkedEventsList.length === 0 ? (
                         <p className="text-[11px] text-slate-400 italic">Takvim etkinliği bağlanmadı.</p>
                       ) : (
-                        linkedEventsList.map((evt) => (
-                          <div
-                            key={evt.id}
-                            className="p-2.5 bg-blue-50/50 border border-blue-200/60 rounded-xl flex items-center justify-between text-xs"
-                          >
-                            <div className="min-w-0 flex-1 pr-2">
-                              <p className="font-bold text-slate-900 truncate">{evt.summary}</p>
-                              <p className="text-[10px] text-slate-500 truncate">{new Date(evt.start).toLocaleString('tr-TR')}</p>
+                        linkedEventsList.map((evt) => {
+                          const durationMins = getItemTimelogMinutes('event', evt.id);
+                          const calUrl = evt.htmlLink || 'https://calendar.google.com';
+                          return (
+                            <div
+                              key={evt.id}
+                              className="p-2.5 bg-blue-50/50 border border-blue-200/60 rounded-xl flex items-center justify-between text-xs"
+                            >
+                              <div className="min-w-0 flex-1 pr-2">
+                                <a
+                                  href={calUrl}
+                                  target="_blank"
+                                  rel="noreferrer"
+                                  className="font-bold text-slate-900 hover:text-blue-600 truncate flex items-center gap-1 group"
+                                  title="Google Takvim'de Aç ↗"
+                                >
+                                  <span className="truncate">{evt.summary}</span>
+                                  <ExternalLink className="w-3 h-3 text-slate-400 opacity-0 group-hover:opacity-100 transition-opacity shrink-0" />
+                                </a>
+                                <p className="text-[10px] text-slate-500 truncate">{new Date(evt.start).toLocaleString('tr-TR')}</p>
+                              </div>
+                              <div className="flex items-center gap-1.5 shrink-0">
+                                <span className="text-[10px] font-extrabold text-blue-700 bg-blue-100/80 px-1.5 py-0.5 rounded-md flex items-center gap-1">
+                                  <Clock className="w-3 h-3 text-blue-600" />
+                                  {formatMinutesToText(durationMins)}
+                                </span>
+                                <button
+                                  onClick={() => handleToggleEntityLink('event', evt.id)}
+                                  className="p-1 text-slate-400 hover:text-rose-600 hover:bg-rose-100/60 rounded-md transition-colors cursor-pointer"
+                                  title="Bağlantıyı Kaldır"
+                                >
+                                  <X className="w-3.5 h-3.5" />
+                                </button>
+                              </div>
                             </div>
-                          </div>
-                        ))
+                          );
+                        })
                       )}
                     </div>
                   </div>
@@ -1725,9 +2291,10 @@ export const ProjectsSection: React.FC<Props> = ({
                           setLinkEntityType('drive');
                           setIsLinkModalOpen(true);
                         }}
-                        className="text-[10px] font-extrabold text-purple-600 hover:underline cursor-pointer"
+                        className="w-6 h-6 rounded-full bg-emerald-100 hover:bg-emerald-200 text-emerald-700 flex items-center justify-center transition-colors shrink-0 cursor-pointer"
+                        title="Dosya Bağla"
                       >
-                        + Dosya Bağla
+                        <Plus className="w-3.5 h-3.5" />
                       </button>
                     </div>
 
@@ -1735,24 +2302,42 @@ export const ProjectsSection: React.FC<Props> = ({
                       {linkedDriveFilesList.length === 0 ? (
                         <p className="text-[11px] text-slate-400 italic">Drive dosyası bağlanmadı.</p>
                       ) : (
-                        linkedDriveFilesList.map((file) => (
-                          <div
-                            key={file.id}
-                            className="p-2.5 bg-emerald-50/50 border border-emerald-200/60 rounded-xl flex items-center justify-between text-xs"
-                          >
-                            <span className="font-bold text-slate-900 truncate">{file.name}</span>
-                            {file.webViewLink && (
-                              <a
-                                href={file.webViewLink}
-                                target="_blank"
-                                rel="noreferrer"
-                                className="text-emerald-700 font-bold hover:underline text-[10px] shrink-0 ml-2"
-                              >
-                                Aç
-                              </a>
-                            )}
-                          </div>
-                        ))
+                        linkedDriveFilesList.map((file) => {
+                          const durationMins = getItemTimelogMinutes('drive', file.id);
+                          const fileUrl = file.webViewLink && file.webViewLink !== '#' ? file.webViewLink : `https://drive.google.com/file/d/${file.id}/view`;
+                          return (
+                            <div
+                              key={file.id}
+                              className="p-2.5 bg-emerald-50/50 border border-emerald-200/60 rounded-xl flex items-center justify-between text-xs"
+                            >
+                              <div className="min-w-0 flex-1 pr-2">
+                                <a
+                                  href={fileUrl}
+                                  target="_blank"
+                                  rel="noreferrer"
+                                  className="font-bold text-slate-900 hover:text-emerald-600 truncate flex items-center gap-1 group"
+                                  title="Google Drive'da Aç ↗"
+                                >
+                                  <span className="truncate">{file.name}</span>
+                                  <ExternalLink className="w-3 h-3 text-emerald-600 shrink-0 inline ml-0.5" />
+                                </a>
+                              </div>
+                              <div className="flex items-center gap-1.5 shrink-0">
+                                <span className="text-[10px] font-extrabold text-emerald-700 bg-emerald-100/80 px-1.5 py-0.5 rounded-md flex items-center gap-1">
+                                  <Clock className="w-3 h-3 text-emerald-600" />
+                                  {formatMinutesToText(durationMins)}
+                                </span>
+                                <button
+                                  onClick={() => handleToggleEntityLink('drive', file.id)}
+                                  className="p-1 text-slate-400 hover:text-rose-600 hover:bg-rose-100/60 rounded-md transition-colors cursor-pointer"
+                                  title="Bağlantıyı Kaldır"
+                                >
+                                  <X className="w-3.5 h-3.5" />
+                                </button>
+                              </div>
+                            </div>
+                          );
+                        })
                       )}
                     </div>
                   </div>
@@ -1768,9 +2353,10 @@ export const ProjectsSection: React.FC<Props> = ({
                           setLinkEntityType('contact');
                           setIsLinkModalOpen(true);
                         }}
-                        className="text-[10px] font-extrabold text-purple-600 hover:underline cursor-pointer"
+                        className="w-6 h-6 rounded-full bg-indigo-100 hover:bg-indigo-200 text-indigo-700 flex items-center justify-center transition-colors shrink-0 cursor-pointer"
+                        title="Kişi Bağla"
                       >
-                        + Kişi Bağla
+                        <Plus className="w-3.5 h-3.5" />
                       </button>
                     </div>
 
@@ -1778,15 +2364,43 @@ export const ProjectsSection: React.FC<Props> = ({
                       {linkedContactsList.length === 0 ? (
                         <p className="text-[11px] text-slate-400 italic">Kişi bağlanmadı.</p>
                       ) : (
-                        linkedContactsList.map((c) => (
-                          <div
-                            key={c.resourceName}
-                            className="p-2.5 bg-indigo-50/50 border border-indigo-200/60 rounded-xl flex items-center justify-between text-xs"
-                          >
-                            <span className="font-bold text-indigo-950 truncate">{c.displayName}</span>
-                            <span className="text-[10px] text-slate-500">{c.email || c.phone}</span>
-                          </div>
-                        ))
+                        linkedContactsList.map((c) => {
+                          const durationMins = getItemTimelogMinutes('contact', c.resourceName);
+                          const contactUrl = c.email ? `mailto:${c.email}` : `https://contacts.google.com/search/${encodeURIComponent(c.displayName)}`;
+                          return (
+                            <div
+                              key={c.resourceName}
+                              className="p-2.5 bg-indigo-50/50 border border-indigo-200/60 rounded-xl flex items-center justify-between text-xs"
+                            >
+                              <div className="min-w-0 flex-1 pr-2">
+                                <a
+                                  href={contactUrl}
+                                  target="_blank"
+                                  rel="noreferrer"
+                                  className="font-bold text-indigo-950 hover:text-indigo-600 truncate flex items-center gap-1 group"
+                                  title="Kişiler / E-posta Gönder ↗"
+                                >
+                                  <span className="truncate">{c.displayName}</span>
+                                  <ExternalLink className="w-3 h-3 text-indigo-500 shrink-0 inline ml-0.5" />
+                                </a>
+                                <span className="text-[10px] text-slate-500 block truncate">{c.email || c.phone}</span>
+                              </div>
+                              <div className="flex items-center gap-1.5 shrink-0">
+                                <span className="text-[10px] font-extrabold text-indigo-700 bg-indigo-100/80 px-1.5 py-0.5 rounded-md flex items-center gap-1">
+                                  <Clock className="w-3 h-3 text-indigo-600" />
+                                  {formatMinutesToText(durationMins)}
+                                </span>
+                                <button
+                                  onClick={() => handleToggleEntityLink('contact', c.resourceName)}
+                                  className="p-1 text-slate-400 hover:text-rose-600 hover:bg-rose-100/60 rounded-md transition-colors cursor-pointer"
+                                  title="Bağlantıyı Kaldır"
+                                >
+                                  <X className="w-3.5 h-3.5" />
+                                </button>
+                              </div>
+                            </div>
+                          );
+                        })
                       )}
                     </div>
                   </div>
@@ -1799,6 +2413,767 @@ export const ProjectsSection: React.FC<Props> = ({
           </div>
         );
       })()}
+
+      {/* MODAL 6: ENTITY LINKER MODAL (Google Task, Email, Event, Drive File, Contact) */}
+      {isLinkModalOpen && (
+        <div className="fixed inset-0 z-[100] bg-slate-900/60 backdrop-blur-xs flex items-center justify-center p-4">
+          <div className="bg-white rounded-3xl max-w-lg w-full p-6 shadow-2xl border border-slate-200 space-y-4 animate-in fade-in zoom-in-95 duration-150 flex flex-col max-h-[80vh]">
+            <div className="flex items-center justify-between border-b border-slate-100 pb-3">
+              <h3 className="font-extrabold text-slate-900 text-base">
+                {linkEntityType === 'task' && 'Google Görev Bağla'}
+                {linkEntityType === 'email' && 'E-posta Bağla'}
+                {linkEntityType === 'event' && 'Takvim Etkinliği Bağla'}
+                {linkEntityType === 'drive' && 'Drive Dosyası Bağla'}
+                {linkEntityType === 'contact' && 'Kişi Bağla'}
+              </h3>
+              <button
+                onClick={() => setIsLinkModalOpen(false)}
+                className="text-slate-400 hover:text-slate-600 cursor-pointer"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            {/* Search Input */}
+            <div className="relative">
+              <Search className="w-4 h-4 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2" />
+              <input
+                type="text"
+                value={entitySearch}
+                onChange={(e) => setEntitySearch(e.target.value)}
+                placeholder="Arama yapın..."
+                className="w-full pl-9 pr-3 py-2 text-xs bg-slate-50 border border-slate-200 rounded-xl focus:outline-hidden font-medium text-slate-800"
+              />
+            </div>
+
+            {/* List for Selection */}
+            <div className="flex-1 overflow-y-auto space-y-2 divide-y divide-slate-100">
+              {linkEntityType === 'task' && (
+                <div className="space-y-2">
+                  <div className="text-[11px] font-bold text-purple-800 bg-purple-50 px-3 py-1.5 rounded-xl border border-purple-200/80 flex items-center justify-between">
+                    <span>
+                      {entitySearch.trim()
+                        ? `"${entitySearch}" için Görev Sonuçları`
+                        : 'Google Görevler Listesi'}
+                    </span>
+                    {isSearchingEntities && (
+                      <Loader2 className="w-3.5 h-3.5 animate-spin text-purple-600" />
+                    )}
+                  </div>
+
+                  {isSearchingEntities && remoteGoogleTasks.length === 0 && (
+                    <div className="py-6 text-center text-slate-400 text-xs flex items-center justify-center gap-2">
+                      <Loader2 className="w-4 h-4 animate-spin text-purple-600" />
+                      <span>Google Tasks'da aranıyor...</span>
+                    </div>
+                  )}
+
+                  {!isSearchingEntities && remoteGoogleTasks.length === 0 && (
+                    <p className="py-6 text-center text-slate-400 text-xs italic">
+                      Görev bulunamadı.
+                    </p>
+                  )}
+
+                  {remoteGoogleTasks.map((t) => {
+                    const isLinked = activeProject?.linkedTaskIds?.includes(t.id);
+                    return (
+                      <div
+                        key={t.id}
+                        className={`p-3 text-xs rounded-xl flex items-center justify-between transition-colors ${
+                          isLinked
+                            ? 'bg-purple-50 border border-purple-200 text-purple-900 font-bold'
+                            : 'hover:bg-slate-50 text-slate-700'
+                        }`}
+                      >
+                        <div
+                          className="min-w-0 pr-2 flex-1 cursor-pointer"
+                          onClick={() => handleToggleEntityLink('task', t.id)}
+                        >
+                          <div className="font-bold flex items-center gap-1.5 text-slate-900">
+                            <span
+                              className={`w-2.5 h-2.5 rounded-full shrink-0 ${
+                                t.status === 'completed' ? 'bg-emerald-500' : 'bg-amber-500'
+                              }`}
+                            />
+                            <span className={t.status === 'completed' ? 'line-through text-slate-400' : ''}>
+                              {t.title}
+                            </span>
+                            <span className={`text-[9px] px-1.5 py-0.2 rounded font-medium ${
+                              t.status === 'completed' ? 'bg-emerald-100 text-emerald-700' : 'bg-amber-100 text-amber-700'
+                            }`}>
+                              {t.status === 'completed' ? 'Tamamlandı' : 'Açık'}
+                            </span>
+                          </div>
+                          {t.notes && (
+                            <p className="text-[10px] text-slate-500 truncate mt-0.5 ml-4">
+                              {t.notes}
+                            </p>
+                          )}
+                          {t.due && (
+                            <div className="text-[10px] text-slate-400 mt-0.5 ml-4">
+                              Son Tarih: {t.due.split('T')[0]}
+                            </div>
+                          )}
+                        </div>
+
+                        <div className="flex items-center gap-2 shrink-0">
+                          <button
+                            type="button"
+                            onClick={() => handleToggleEntityLink('task', t.id)}
+                            className={`px-2.5 py-1 rounded-lg text-xs font-bold cursor-pointer transition-colors ${
+                              isLinked
+                                ? 'bg-purple-600 text-white shadow-xs'
+                                : 'bg-slate-100 text-slate-700 hover:bg-slate-200'
+                            }`}
+                          >
+                            {isLinked ? 'Bağlı' : 'Bağla'}
+                          </button>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+
+              {linkEntityType === 'email' && (
+                <div className="space-y-2">
+                  <div className="text-[11px] font-bold text-rose-800 bg-rose-50 px-3 py-1.5 rounded-xl border border-rose-200/80 flex items-center justify-between">
+                    <span>
+                      {entitySearch.trim()
+                        ? `"${entitySearch}" için E-posta Sonuçları`
+                        : 'Son E-postalar (Gmail)'}
+                    </span>
+                    {isSearchingEntities && (
+                      <Loader2 className="w-3.5 h-3.5 animate-spin text-rose-600" />
+                    )}
+                  </div>
+
+                  {isSearchingEntities && remoteEmails.length === 0 && (
+                    <div className="py-6 text-center text-slate-400 text-xs flex items-center justify-center gap-2">
+                      <Loader2 className="w-4 h-4 animate-spin text-rose-600" />
+                      <span>Gmail'de aranıyor...</span>
+                    </div>
+                  )}
+
+                  {!isSearchingEntities && remoteEmails.length === 0 && (
+                    <p className="py-6 text-center text-slate-400 text-xs italic">
+                      E-posta bulunamadı.
+                    </p>
+                  )}
+
+                  {remoteEmails.map((e) => {
+                    const isLinked = activeProject?.linkedEmailIds?.includes(e.id);
+                    return (
+                      <div
+                        key={e.id}
+                        className={`p-3 text-xs rounded-xl flex items-center justify-between transition-colors ${
+                          isLinked
+                            ? 'bg-rose-50 border border-rose-200 text-rose-900 font-bold'
+                            : 'hover:bg-slate-50 text-slate-700'
+                        }`}
+                      >
+                        <div
+                          className="min-w-0 pr-2 flex-1 cursor-pointer"
+                          onClick={() => handleToggleEntityLink('email', e.id)}
+                        >
+                          <div className="font-bold text-slate-900 truncate">{e.subject}</div>
+                          <div className="text-[10px] text-slate-500 truncate mt-0.5">
+                            {e.sender} • {new Date(e.date).toLocaleDateString('tr-TR')}
+                          </div>
+                          {e.snippet && (
+                            <div className="text-[10px] text-slate-400 truncate mt-0.5 italic">
+                              {e.snippet}
+                            </div>
+                          )}
+                        </div>
+
+                        <div className="flex items-center gap-2 shrink-0">
+                          <a
+                            href={`https://mail.google.com/mail/u/0/#inbox/${e.id}`}
+                            target="_blank"
+                            rel="noreferrer"
+                            onClick={(ev) => ev.stopPropagation()}
+                            className="p-1 text-rose-700 hover:bg-rose-100 rounded-md text-[11px] font-bold flex items-center gap-0.5"
+                            title="Gmail'de Aç ↗"
+                          >
+                            <span>Aç</span>
+                            <ExternalLink className="w-3 h-3" />
+                          </a>
+                          <button
+                            type="button"
+                            onClick={() => handleToggleEntityLink('email', e.id)}
+                            className={`px-2.5 py-1 rounded-lg text-xs font-bold cursor-pointer transition-colors ${
+                              isLinked
+                                ? 'bg-rose-600 text-white shadow-xs'
+                                : 'bg-slate-100 text-slate-700 hover:bg-slate-200'
+                            }`}
+                          >
+                            {isLinked ? 'Bağlı' : 'Bağla'}
+                          </button>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+
+              {linkEntityType === 'event' && (
+                <div className="space-y-2">
+                  <div className="text-[11px] font-bold text-blue-800 bg-blue-50 px-3 py-1.5 rounded-xl border border-blue-200/80 flex items-center justify-between">
+                    <span>
+                      {entitySearch.trim()
+                        ? `"${entitySearch}" için Etkinlik Sonuçları`
+                        : 'Yaklaşan Google Takvim Etkinlikleri'}
+                    </span>
+                    {isSearchingEntities && (
+                      <Loader2 className="w-3.5 h-3.5 animate-spin text-blue-600" />
+                    )}
+                  </div>
+
+                  {isSearchingEntities && remoteEvents.length === 0 && (
+                    <div className="py-6 text-center text-slate-400 text-xs flex items-center justify-center gap-2">
+                      <Loader2 className="w-4 h-4 animate-spin text-blue-600" />
+                      <span>Google Takvim'de aranıyor...</span>
+                    </div>
+                  )}
+
+                  {!isSearchingEntities && remoteEvents.length === 0 && (
+                    <p className="py-6 text-center text-slate-400 text-xs italic">
+                      Etkinlik bulunamadı.
+                    </p>
+                  )}
+
+                  {remoteEvents.map((ev) => {
+                    const isLinked = activeProject?.linkedEventIds?.includes(ev.id);
+                    return (
+                      <div
+                        key={ev.id}
+                        className={`p-3 text-xs rounded-xl flex items-center justify-between transition-colors ${
+                          isLinked
+                            ? 'bg-blue-50 border border-blue-200 text-blue-900 font-bold'
+                            : 'hover:bg-slate-50 text-slate-700'
+                        }`}
+                      >
+                        <div
+                          className="min-w-0 pr-2 flex-1 cursor-pointer"
+                          onClick={() => handleToggleEntityLink('event', ev.id)}
+                        >
+                          <div className="font-bold text-slate-900 truncate">{ev.summary}</div>
+                          <div className="text-[10px] text-slate-500 truncate mt-0.5">
+                            {new Date(ev.start).toLocaleString('tr-TR')}
+                            {ev.location ? ` • ${ev.location}` : ''}
+                          </div>
+                        </div>
+
+                        <div className="flex items-center gap-2 shrink-0">
+                          {ev.htmlLink && (
+                            <a
+                              href={ev.htmlLink}
+                              target="_blank"
+                              rel="noreferrer"
+                              onClick={(e) => e.stopPropagation()}
+                              className="p-1 text-blue-700 hover:bg-blue-100 rounded-md text-[11px] font-bold flex items-center gap-0.5"
+                              title="Google Takvim'de Aç ↗"
+                            >
+                              <span>Aç</span>
+                              <ExternalLink className="w-3 h-3" />
+                            </a>
+                          )}
+                          <button
+                            type="button"
+                            onClick={() => handleToggleEntityLink('event', ev.id)}
+                            className={`px-2.5 py-1 rounded-lg text-xs font-bold cursor-pointer transition-colors ${
+                              isLinked
+                                ? 'bg-blue-600 text-white shadow-xs'
+                                : 'bg-slate-100 text-slate-700 hover:bg-slate-200'
+                            }`}
+                          >
+                            {isLinked ? 'Bağlı' : 'Bağla'}
+                          </button>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+
+              {linkEntityType === 'drive' && (
+                <div className="space-y-2">
+                  <div className="text-[11px] font-bold text-emerald-800 bg-emerald-50 px-3 py-1.5 rounded-xl border border-emerald-200/80 flex items-center justify-between">
+                    <span>
+                      {entitySearch.trim()
+                        ? `"${entitySearch}" için Drive Sonuçları`
+                        : 'Son Erişilen 10 Google Drive Dosyası'}
+                    </span>
+                    {isSearchingEntities && (
+                      <Loader2 className="w-3.5 h-3.5 animate-spin text-emerald-600" />
+                    )}
+                  </div>
+
+                  {isSearchingEntities && remoteDriveFiles.length === 0 && (
+                    <div className="py-6 text-center text-slate-400 text-xs flex items-center justify-center gap-2">
+                      <Loader2 className="w-4 h-4 animate-spin text-emerald-600" />
+                      <span>Google Drive'da aranıyor...</span>
+                    </div>
+                  )}
+
+                  {!isSearchingEntities && remoteDriveFiles.length === 0 && (
+                    <p className="py-6 text-center text-slate-400 text-xs italic">
+                      Drive dosyası bulunamadı.
+                    </p>
+                  )}
+
+                  {remoteDriveFiles.map((f) => {
+                    const isLinked = activeProject?.linkedDriveFileIds?.includes(f.id);
+                    const fileUrl =
+                      f.webViewLink && f.webViewLink !== '#'
+                        ? f.webViewLink
+                        : `https://drive.google.com/file/d/${f.id}/view`;
+
+                    return (
+                      <div
+                        key={f.id}
+                        className={`p-3 text-xs rounded-xl flex items-center justify-between transition-colors ${
+                          isLinked
+                            ? 'bg-emerald-50 border border-emerald-200 text-emerald-900 font-bold'
+                            : 'hover:bg-slate-50 text-slate-700'
+                        }`}
+                      >
+                        <div
+                          className="min-w-0 pr-2 flex-1 cursor-pointer"
+                          onClick={() => handleToggleEntityLink('drive', f.id)}
+                        >
+                          <div className="font-bold text-slate-900 truncate">{f.name}</div>
+                          <div className="text-[10px] text-slate-400 flex items-center gap-2 mt-0.5">
+                            <span>
+                              {f.modifiedTime
+                                ? new Date(f.modifiedTime).toLocaleDateString('tr-TR')
+                                : ''}
+                            </span>
+                            {f.mimeType && (
+                              <span className="font-mono text-[9px] bg-slate-100 text-slate-600 px-1.5 py-0.2 rounded">
+                                {f.mimeType.split('.').pop() || 'file'}
+                              </span>
+                            )}
+                          </div>
+                        </div>
+
+                        <div className="flex items-center gap-2 shrink-0">
+                          <a
+                            href={fileUrl}
+                            target="_blank"
+                            rel="noreferrer"
+                            onClick={(e) => e.stopPropagation()}
+                            className="p-1 text-emerald-700 hover:bg-emerald-100 rounded-md text-[11px] font-bold flex items-center gap-0.5"
+                            title="Google Drive'da Aç ↗"
+                          >
+                            <span>Aç</span>
+                            <ExternalLink className="w-3 h-3" />
+                          </a>
+                          <button
+                            type="button"
+                            onClick={() => handleToggleEntityLink('drive', f.id)}
+                            className={`px-2.5 py-1 rounded-lg text-xs font-bold cursor-pointer transition-colors ${
+                              isLinked
+                                ? 'bg-emerald-600 text-white shadow-xs'
+                                : 'bg-slate-100 text-slate-700 hover:bg-slate-200'
+                            }`}
+                          >
+                            {isLinked ? 'Bağlı' : 'Bağla'}
+                          </button>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+
+              {linkEntityType === 'contact' && (
+                <div className="space-y-2">
+                  <div className="text-[11px] font-bold text-indigo-800 bg-indigo-50 px-3 py-1.5 rounded-xl border border-indigo-200/80 flex items-center justify-between">
+                    <span>
+                      {entitySearch.trim()
+                        ? `"${entitySearch}" için Google Contacts Sonuçları`
+                        : 'Google Contacts Listesi'}
+                    </span>
+                    {isSearchingEntities && (
+                      <Loader2 className="w-3.5 h-3.5 animate-spin text-indigo-600" />
+                    )}
+                  </div>
+
+                  {isSearchingEntities && remoteContacts.length === 0 && (
+                    <div className="py-6 text-center text-slate-400 text-xs flex items-center justify-center gap-2">
+                      <Loader2 className="w-4 h-4 animate-spin text-indigo-600" />
+                      <span>Google Contacts'da aranıyor...</span>
+                    </div>
+                  )}
+
+                  {!isSearchingEntities && remoteContacts.length === 0 && (
+                    <p className="py-6 text-center text-slate-400 text-xs italic">
+                      Aramanıza uygun kişi bulunamadı.
+                    </p>
+                  )}
+
+                  {remoteContacts.map((c) => {
+                    const isLinked = activeProject?.linkedContactResourceNames?.includes(
+                      c.resourceName
+                    );
+                    const contactUrl = c.email
+                      ? `mailto:${c.email}`
+                      : `https://contacts.google.com/search/${encodeURIComponent(c.displayName)}`;
+
+                    return (
+                      <div
+                        key={c.resourceName}
+                        className={`p-3 text-xs rounded-xl flex items-center justify-between transition-colors ${
+                          isLinked
+                            ? 'bg-indigo-50 border border-indigo-200 text-indigo-900 font-bold'
+                            : 'hover:bg-slate-50 text-slate-700'
+                        }`}
+                      >
+                        <div
+                          className="min-w-0 pr-2 flex-1 cursor-pointer"
+                          onClick={() => handleToggleEntityLink('contact', c.resourceName)}
+                        >
+                          <div className="font-bold text-slate-900 truncate">{c.displayName}</div>
+                          <div className="text-[10px] text-slate-500 truncate mt-0.5">
+                            {c.email} {c.phone ? `• ${c.phone}` : ''}{' '}
+                            {c.organization ? `(${c.organization})` : ''}
+                          </div>
+                        </div>
+
+                        <div className="flex items-center gap-2 shrink-0">
+                          {c.email && (
+                            <a
+                              href={contactUrl}
+                              target="_blank"
+                              rel="noreferrer"
+                              onClick={(e) => e.stopPropagation()}
+                              className="p-1 text-indigo-700 hover:bg-indigo-100 rounded-md text-[11px] font-bold flex items-center gap-0.5"
+                              title="E-posta Gönder / Kişiler'de Aç"
+                            >
+                              <Mail className="w-3.5 h-3.5" />
+                            </a>
+                          )}
+                          <button
+                            type="button"
+                            onClick={() => handleToggleEntityLink('contact', c.resourceName)}
+                            className={`px-2.5 py-1 rounded-lg text-xs font-bold cursor-pointer transition-colors ${
+                              isLinked
+                                ? 'bg-indigo-600 text-white shadow-xs'
+                                : 'bg-slate-100 text-slate-700 hover:bg-slate-200'
+                            }`}
+                          >
+                            {isLinked ? 'Bağlı' : 'Bağla'}
+                          </button>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
+
+            <div className="pt-2 border-t border-slate-100 flex justify-end">
+              <button
+                onClick={() => setIsLinkModalOpen(false)}
+                className="px-5 py-2 bg-slate-900 text-white text-xs font-bold rounded-xl cursor-pointer"
+              >
+                Tamam
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* MODAL 7: ADD MANUAL TIMELOG MODAL */}
+      {isAddTimelogModalOpen && detailTask && activeProject && (
+        <div className="fixed inset-0 z-[110] bg-slate-900/60 backdrop-blur-xs flex items-center justify-center p-4">
+          <div className="bg-white rounded-3xl max-w-lg w-full p-6 shadow-2xl border border-slate-200 space-y-4 animate-in fade-in zoom-in-95 duration-150">
+            <div className="flex items-center justify-between border-b border-slate-100 pb-3">
+              <div className="flex items-center gap-2">
+                <div className="p-2 bg-purple-100 text-purple-700 rounded-xl">
+                  <Clock className="w-5 h-5" />
+                </div>
+                <div>
+                  <h3 className="font-black text-slate-900 text-sm">
+                    Manuel Zaman Kaydı Ekle
+                  </h3>
+                  <p className="text-[11px] text-slate-500">
+                    "{detailTask.title}" kartına özel zaman kaydı girin
+                  </p>
+                </div>
+              </div>
+              <button
+                onClick={() => setIsAddTimelogModalOpen(false)}
+                className="p-1.5 text-slate-400 hover:text-slate-700 hover:bg-slate-100 rounded-xl transition-colors cursor-pointer"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            <form
+              onSubmit={(e) =>
+                handleSaveManualTimelog(
+                  e,
+                  detailTask.id,
+                  detailTask.title,
+                  activeProject.id,
+                  activeProject.name
+                )
+              }
+              className="space-y-4"
+            >
+              {/* Description */}
+              <div>
+                <label className="block text-xs font-black text-slate-700 mb-1">
+                  Açıklama / Yapılan İş
+                </label>
+                <input
+                  type="text"
+                  required
+                  value={manualDescription}
+                  onChange={(e) => setManualDescription(e.target.value)}
+                  placeholder="Örn: Tasarım incelemesi yapıldı ve revizyonlar girildi"
+                  className="w-full px-3.5 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-xs font-medium text-slate-900 focus:outline-hidden focus:border-purple-500"
+                />
+              </div>
+
+              {/* Start & End Times */}
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <div>
+                  <label className="block text-xs font-black text-slate-700 mb-1">
+                    Başlangıç Zamanı
+                  </label>
+                  <input
+                    type="datetime-local"
+                    value={manualStartTime}
+                    onChange={(e) => {
+                      setManualStartTime(e.target.value);
+                      handleCalculateManualDuration(e.target.value, manualEndTime);
+                    }}
+                    className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl text-xs font-bold text-slate-800 focus:outline-hidden cursor-pointer"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-xs font-black text-slate-700 mb-1">
+                    Bitiş Zamanı
+                  </label>
+                  <input
+                    type="datetime-local"
+                    value={manualEndTime}
+                    onChange={(e) => {
+                      setManualEndTime(e.target.value);
+                      handleCalculateManualDuration(manualStartTime, e.target.value);
+                    }}
+                    className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl text-xs font-bold text-slate-800 focus:outline-hidden cursor-pointer"
+                  />
+                </div>
+              </div>
+
+              {/* Duration Minutes */}
+              <div>
+                <label className="block text-xs font-black text-slate-700 mb-1">
+                  Süre (Dakika)
+                </label>
+                <div className="flex items-center gap-2">
+                  <input
+                    type="number"
+                    min="1"
+                    value={manualDurationMinutes}
+                    onChange={(e) => setManualDurationMinutes(Number(e.target.value))}
+                    className="w-32 px-3.5 py-2 bg-slate-50 border border-slate-200 rounded-xl text-xs font-black text-slate-900 focus:outline-hidden"
+                  />
+                  <span className="text-xs font-bold text-purple-700 bg-purple-50 px-3 py-2 rounded-xl border border-purple-200">
+                    = {formatMinutesToText(manualDurationMinutes)}
+                  </span>
+                </div>
+              </div>
+
+              {/* Associated Service / Link (Optional) */}
+              <div>
+                <label className="block text-xs font-black text-slate-700 mb-1">
+                  İlişkili Servis / Öğe (İsteğe Bağlı)
+                </label>
+                <div className="grid grid-cols-2 gap-2">
+                  <select
+                    value={manualLinkType}
+                    onChange={(e) => {
+                      setManualLinkType(e.target.value);
+                      setManualLinkId('');
+                      setManualLinkTitle('');
+                    }}
+                    className="px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl text-xs font-bold text-slate-800 focus:outline-hidden cursor-pointer"
+                  >
+                    <option value="">İlişkili Öğesiz (Sadece Kart)</option>
+                    <option value="calendar">Google Takvim Etkinliği</option>
+                    <option value="gmail">Gmail E-postası</option>
+                    <option value="drive">Drive Dosyası</option>
+                    <option value="tasks">Google Görevi</option>
+                  </select>
+
+                  {manualLinkType === 'tasks' && (
+                    <select
+                      value={manualLinkId}
+                      onChange={(e) => {
+                        const sel = googleTasks.find((t) => t.id === e.target.value);
+                        setManualLinkId(e.target.value);
+                        setManualLinkTitle(sel?.title || '');
+                      }}
+                      className="px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl text-xs font-bold text-slate-800 focus:outline-hidden cursor-pointer"
+                    >
+                      <option value="">Görev Seçin...</option>
+                      {googleTasks.map((t) => (
+                        <option key={t.id} value={t.id}>
+                          {t.title}
+                        </option>
+                      ))}
+                    </select>
+                  )}
+
+                  {manualLinkType === 'gmail' && (
+                    <select
+                      value={manualLinkId}
+                      onChange={(e) => {
+                        const sel = emails.find((m) => m.id === e.target.value);
+                        setManualLinkId(e.target.value);
+                        setManualLinkTitle(sel?.subject || '');
+                      }}
+                      className="px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl text-xs font-bold text-slate-800 focus:outline-hidden cursor-pointer"
+                    >
+                      <option value="">E-posta Seçin...</option>
+                      {emails.map((m) => (
+                        <option key={m.id} value={m.id}>
+                          {m.subject}
+                        </option>
+                      ))}
+                    </select>
+                  )}
+
+                  {manualLinkType === 'calendar' && (
+                    <select
+                      value={manualLinkId}
+                      onChange={(e) => {
+                        const sel = events.find((ev) => ev.id === e.target.value);
+                        setManualLinkId(e.target.value);
+                        setManualLinkTitle(sel?.summary || '');
+                      }}
+                      className="px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl text-xs font-bold text-slate-800 focus:outline-hidden cursor-pointer"
+                    >
+                      <option value="">Etkinlik Seçin...</option>
+                      {events.map((ev) => (
+                        <option key={ev.id} value={ev.id}>
+                          {ev.summary}
+                        </option>
+                      ))}
+                    </select>
+                  )}
+
+                  {manualLinkType === 'drive' && (
+                    <select
+                      value={manualLinkId}
+                      onChange={(e) => {
+                        const sel = driveFiles.find((f) => f.id === e.target.value);
+                        setManualLinkId(e.target.value);
+                        setManualLinkTitle(sel?.name || '');
+                      }}
+                      className="px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl text-xs font-bold text-slate-800 focus:outline-hidden cursor-pointer"
+                    >
+                      <option value="">Dosya Seçin...</option>
+                      {driveFiles.map((f) => (
+                        <option key={f.id} value={f.id}>
+                          {f.name}
+                        </option>
+                      ))}
+                    </select>
+                  )}
+                </div>
+              </div>
+
+              {/* Tags */}
+              <div>
+                <label className="block text-xs font-black text-slate-700 mb-1">
+                  Etiketler
+                </label>
+                <div className="flex items-center gap-2 mb-2">
+                  <input
+                    type="text"
+                    value={manualTagInput}
+                    onChange={(e) => setManualTagInput(e.target.value)}
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter') {
+                        e.preventDefault();
+                        if (manualTagInput.trim() && !manualTags.includes(manualTagInput.trim())) {
+                          setManualTags([...manualTags, manualTagInput.trim()]);
+                          setManualTagInput('');
+                        }
+                      }
+                    }}
+                    placeholder="Etiket yazıp Enter'a basın..."
+                    className="flex-1 px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl text-xs font-medium text-slate-800 focus:outline-hidden"
+                  />
+                  <button
+                    type="button"
+                    onClick={() => {
+                      if (manualTagInput.trim() && !manualTags.includes(manualTagInput.trim())) {
+                        setManualTags([...manualTags, manualTagInput.trim()]);
+                        setManualTagInput('');
+                      }
+                    }}
+                    className="px-3 py-2 bg-slate-200 hover:bg-slate-300 text-slate-800 text-xs font-bold rounded-xl cursor-pointer"
+                  >
+                    Ekle
+                  </button>
+                </div>
+
+                {manualTags.length > 0 && (
+                  <div className="flex flex-wrap gap-1.5">
+                    {manualTags.map((t) => (
+                      <span
+                        key={t}
+                        className="px-2 py-0.5 bg-purple-100 text-purple-900 text-xs font-bold rounded-lg flex items-center gap-1"
+                      >
+                        #{t}
+                        <button
+                          type="button"
+                          onClick={() => setManualTags(manualTags.filter((x) => x !== t))}
+                          className="hover:text-rose-600 cursor-pointer"
+                        >
+                          <X className="w-3 h-3" />
+                        </button>
+                      </span>
+                    ))}
+                  </div>
+                )}
+              </div>
+
+              {/* Submit / Cancel Buttons */}
+              <div className="pt-3 border-t border-slate-100 flex items-center justify-end gap-2">
+                <button
+                  type="button"
+                  onClick={() => setIsAddTimelogModalOpen(false)}
+                  className="px-4 py-2 bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-extrabold rounded-xl cursor-pointer"
+                >
+                  Vazgeç
+                </button>
+                <button
+                  type="submit"
+                  disabled={isSavingTimelog}
+                  className="px-5 py-2 bg-purple-600 hover:bg-purple-700 text-white text-xs font-black rounded-xl shadow-xs cursor-pointer flex items-center gap-1.5"
+                >
+                  {isSavingTimelog ? (
+                    <Loader2 className="w-4 h-4 animate-spin" />
+                  ) : (
+                    <Save className="w-4 h-4" />
+                  )}
+                  <span>Zaman Kaydını Kaydet</span>
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
     </div>
   );
 };

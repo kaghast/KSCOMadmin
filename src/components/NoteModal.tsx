@@ -17,8 +17,12 @@ import {
   Check,
   Link,
   ChevronDown,
+  ChevronUp,
   Compass,
   Pencil,
+  CheckCircle2,
+  HardDrive,
+  Users,
 } from 'lucide-react';
 import ReactMarkdown from 'react-markdown';
 import L from 'leaflet';
@@ -28,9 +32,13 @@ import {
   NoteLocation,
   EmailItem,
   CalendarEvent,
+  DriveFile,
+  TaskItem,
   LinkedContact,
   LinkedEmail,
   LinkedEvent,
+  LinkedDriveFile,
+  LinkedTask,
   Project,
   ProjectTask,
 } from '../types';
@@ -54,6 +62,8 @@ interface Props {
     contacts?: LinkedContact[];
     linkedEmails?: LinkedEmail[];
     linkedEvents?: LinkedEvent[];
+    linkedDriveFiles?: LinkedDriveFile[];
+    linkedTasks?: LinkedTask[];
     tags: string[];
     location?: NoteLocation | null;
     date: string;
@@ -94,19 +104,23 @@ export const NoteModal: React.FC<Props> = ({
   const [selectedTags, setSelectedTags] = useState<string[]>([]);
   const [linkedEmails, setLinkedEmails] = useState<LinkedEmail[]>([]);
   const [linkedEvents, setLinkedEvents] = useState<LinkedEvent[]>([]);
+  const [linkedDriveFiles, setLinkedDriveFiles] = useState<LinkedDriveFile[]>([]);
+  const [linkedTasks, setLinkedTasks] = useState<LinkedTask[]>([]);
 
-  // Autocomplete Inputs & Dropdown Toggles
-  const [contactSearch, setContactSearch] = useState('');
-  const [isContactDropdownOpen, setIsContactDropdownOpen] = useState(false);
+  // Workspace Accordion & Realtime Search State
+  const [openAccordion, setOpenAccordion] = useState<'tasks' | 'emails' | 'events' | 'drive' | 'contacts' | null>('tasks');
+  const [wsSearch, setWsSearch] = useState('');
+  const [isWsSearching, setIsWsSearching] = useState(false);
 
+  const [wsRemoteTasks, setWsRemoteTasks] = useState<TaskItem[]>([]);
+  const [wsRemoteEmails, setWsRemoteEmails] = useState<EmailItem[]>([]);
+  const [wsRemoteEvents, setWsRemoteEvents] = useState<CalendarEvent[]>([]);
+  const [wsRemoteDriveFiles, setWsRemoteDriveFiles] = useState<DriveFile[]>([]);
+  const [wsRemoteContacts, setWsRemoteContacts] = useState<ContactItem[]>([]);
+
+  // Autocomplete Inputs & Dropdown Toggles for Tags
   const [tagInput, setTagInput] = useState('');
   const [isTagDropdownOpen, setIsTagDropdownOpen] = useState(false);
-
-  const [emailSearch, setEmailSearch] = useState('');
-  const [isEmailDropdownOpen, setIsEmailDropdownOpen] = useState(false);
-
-  const [eventSearch, setEventSearch] = useState('');
-  const [isEventDropdownOpen, setIsEventDropdownOpen] = useState(false);
 
   // Content Modes: Edit (Markdown), Preview (Markdown), Drawing (Canvas)
   const [activeTab, setActiveTab] = useState<'edit' | 'preview' | 'drawing'>('edit');
@@ -165,6 +179,8 @@ export const NoteModal: React.FC<Props> = ({
       setSelectedTags(note.tags || []);
       setLinkedEmails(note.linkedEmails || []);
       setLinkedEvents(note.linkedEvents || []);
+      setLinkedDriveFiles(note.linkedDriveFiles || []);
+      setLinkedTasks(note.linkedTasks || []);
     } else {
       setTitle('');
       setContent('');
@@ -176,10 +192,67 @@ export const NoteModal: React.FC<Props> = ({
       setSelectedTags([]);
       setLinkedEmails([]);
       setLinkedEvents([]);
+      setLinkedDriveFiles([]);
+      setLinkedTasks([]);
     }
   }, [note, isOpen]);
 
-  // Leaflet Map Initialization & Updates inside Modal
+  // Realtime Search for Workspace Accordion
+  useEffect(() => {
+    if (!isOpen || !openAccordion) return;
+
+    const timer = setTimeout(() => {
+      setIsWsSearching(true);
+      const q = encodeURIComponent(wsSearch.trim());
+
+      if (openAccordion === 'tasks') {
+        fetch(`/api/tasks?search=${q}`)
+          .then((res) => res.json())
+          .then((data) => {
+            if (data.tasks && Array.isArray(data.tasks)) setWsRemoteTasks(data.tasks);
+          })
+          .catch((err) => console.error('Tasks fetch error:', err))
+          .finally(() => setIsWsSearching(false));
+      } else if (openAccordion === 'emails') {
+        fetch(`/api/gmail/messages?search=${q}`)
+          .then((res) => res.json())
+          .then((data) => {
+            if (data.messages && Array.isArray(data.messages)) setWsRemoteEmails(data.messages);
+          })
+          .catch((err) => console.error('Emails fetch error:', err))
+          .finally(() => setIsWsSearching(false));
+      } else if (openAccordion === 'events') {
+        fetch(`/api/calendar/events?search=${q}`)
+          .then((res) => res.json())
+          .then((data) => {
+            if (data.events && Array.isArray(data.events)) setWsRemoteEvents(data.events);
+          })
+          .catch((err) => console.error('Events fetch error:', err))
+          .finally(() => setIsWsSearching(false));
+      } else if (openAccordion === 'drive') {
+        const queryParam = wsSearch.trim() ? `search=${q}&limit=30` : `limit=10`;
+        fetch(`/api/drive/files?${queryParam}`)
+          .then((res) => res.json())
+          .then((data) => {
+            if (data.files && Array.isArray(data.files)) setWsRemoteDriveFiles(data.files);
+          })
+          .catch((err) => console.error('Drive fetch error:', err))
+          .finally(() => setIsWsSearching(false));
+      } else if (openAccordion === 'contacts') {
+        fetch(`/api/contacts?search=${q}`)
+          .then((res) => res.json())
+          .then((data) => {
+            if (data.contacts && Array.isArray(data.contacts)) setWsRemoteContacts(data.contacts);
+          })
+          .catch((err) => console.error('Contacts fetch error:', err))
+          .finally(() => setIsWsSearching(false));
+      }
+    }, 300);
+
+    return () => clearTimeout(timer);
+  }, [isOpen, openAccordion, wsSearch]);
+
+  // Leaflet Map Initialization & Updates
   useEffect(() => {
     if (!isOpen || !mapContainerRef.current) return;
 
@@ -364,25 +437,6 @@ export const NoteModal: React.FC<Props> = ({
 
   if (!isOpen) return null;
 
-  // Contact Autocomplete Helpers
-  const filteredContacts = contacts.filter(
-    (c) =>
-      c.displayName.toLowerCase().includes(contactSearch.toLowerCase()) ||
-      (c.organization && c.organization.toLowerCase().includes(contactSearch.toLowerCase()))
-  );
-
-  const handleToggleContact = (c: ContactItem) => {
-    const exists = selectedContacts.some((item) => item.resourceName === c.resourceName);
-    if (exists) {
-      setSelectedContacts(selectedContacts.filter((item) => item.resourceName !== c.resourceName));
-    } else {
-      setSelectedContacts([
-        ...selectedContacts,
-        { resourceName: c.resourceName, displayName: c.displayName },
-      ]);
-    }
-  };
-
   // Tag Autocomplete Helpers
   const filteredExistingTags = allExistingTags.filter(
     (t) => t.toLowerCase().includes(tagInput.toLowerCase()) && !selectedTags.includes(t)
@@ -401,40 +455,63 @@ export const NoteModal: React.FC<Props> = ({
     setSelectedTags(selectedTags.filter((t) => t !== tagToRemove));
   };
 
-  // Email Autocomplete Helpers
-  const filteredEmails = emails.filter(
-    (e) =>
-      e.subject.toLowerCase().includes(emailSearch.toLowerCase()) ||
-      e.sender.toLowerCase().includes(emailSearch.toLowerCase())
-  );
-
-  const handleToggleEmail = (eItem: EmailItem) => {
-    const exists = linkedEmails.some((item) => item.id === eItem.id);
+  // Workspace Accordion Link Toggles
+  const handleToggleTaskLink = (task: TaskItem) => {
+    const exists = linkedTasks.some((t) => t.id === task.id);
     if (exists) {
-      setLinkedEmails(linkedEmails.filter((item) => item.id !== eItem.id));
+      setLinkedTasks(linkedTasks.filter((t) => t.id !== task.id));
     } else {
-      setLinkedEmails([
-        ...linkedEmails,
-        { id: eItem.id, subject: eItem.subject, sender: eItem.sender, date: eItem.date },
+      setLinkedTasks([
+        ...linkedTasks,
+        { id: task.id, title: task.title, status: task.status, due: task.due },
       ]);
     }
   };
 
-  // Calendar Event Autocomplete Helpers
-  const filteredEvents = events.filter(
-    (ev) =>
-      ev.summary.toLowerCase().includes(eventSearch.toLowerCase()) ||
-      (ev.description && ev.description.toLowerCase().includes(eventSearch.toLowerCase()))
-  );
-
-  const handleToggleEvent = (ev: CalendarEvent) => {
-    const exists = linkedEvents.some((item) => item.id === ev.id);
+  const handleToggleEmailLink = (em: EmailItem) => {
+    const exists = linkedEmails.some((i) => i.id === em.id);
     if (exists) {
-      setLinkedEvents(linkedEvents.filter((item) => item.id !== ev.id));
+      setLinkedEmails(linkedEmails.filter((i) => i.id !== em.id));
+    } else {
+      setLinkedEmails([
+        ...linkedEmails,
+        { id: em.id, subject: em.subject, sender: em.sender, date: em.date },
+      ]);
+    }
+  };
+
+  const handleToggleEventLink = (ev: CalendarEvent) => {
+    const exists = linkedEvents.some((i) => i.id === ev.id);
+    if (exists) {
+      setLinkedEvents(linkedEvents.filter((i) => i.id !== ev.id));
     } else {
       setLinkedEvents([
         ...linkedEvents,
         { id: ev.id, summary: ev.summary, start: ev.start },
+      ]);
+    }
+  };
+
+  const handleToggleDriveLink = (df: DriveFile) => {
+    const exists = linkedDriveFiles.some((i) => i.id === df.id);
+    if (exists) {
+      setLinkedDriveFiles(linkedDriveFiles.filter((i) => i.id !== df.id));
+    } else {
+      setLinkedDriveFiles([
+        ...linkedDriveFiles,
+        { id: df.id, name: df.name, webViewLink: df.webViewLink, mimeType: df.mimeType },
+      ]);
+    }
+  };
+
+  const handleToggleContactLink = (c: ContactItem) => {
+    const exists = selectedContacts.some((i) => i.resourceName === c.resourceName);
+    if (exists) {
+      setSelectedContacts(selectedContacts.filter((i) => i.resourceName !== c.resourceName));
+    } else {
+      setSelectedContacts([
+        ...selectedContacts,
+        { resourceName: c.resourceName, displayName: c.displayName },
       ]);
     }
   };
@@ -462,7 +539,6 @@ export const NoteModal: React.FC<Props> = ({
     try {
       let finalContent = content;
 
-      // Merge drawing image into content if drawing exists
       if (drawingDataUrl) {
         if (finalContent.includes('![Çizim Notu](')) {
           finalContent = finalContent.replace(
@@ -481,6 +557,8 @@ export const NoteModal: React.FC<Props> = ({
         contacts: selectedContacts,
         linkedEmails,
         linkedEvents,
+        linkedDriveFiles,
+        linkedTasks,
         tags: selectedTags,
         location: location
           ? {
@@ -499,6 +577,13 @@ export const NoteModal: React.FC<Props> = ({
     }
   };
 
+  const totalWorkspaceLinks =
+    linkedTasks.length +
+    linkedEmails.length +
+    linkedEvents.length +
+    linkedDriveFiles.length +
+    selectedContacts.length;
+
   return (
     <div className="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-xs flex items-center justify-center p-2 sm:p-4">
       <div className="bg-white rounded-3xl max-w-6xl w-full h-[88vh] max-h-[820px] shadow-2xl border border-slate-200 overflow-hidden flex flex-col animate-in fade-in zoom-in-95 duration-150">
@@ -513,7 +598,7 @@ export const NoteModal: React.FC<Props> = ({
                 {note ? 'Notu Düzenle' : 'Yeni Not Oluştur'}
               </h3>
               <p className="text-[11px] text-slate-500">
-                Gelişmiş not editörü: Metin / Çizim modu, mekan arama & anlık konum haritası, ilişkili kişiler ve mailler.
+                Gelişmiş not editörü: Metin / Çizim modu, lokasyon seçimi ve Google Workspace bağlama.
               </p>
             </div>
           </div>
@@ -561,24 +646,31 @@ export const NoteModal: React.FC<Props> = ({
               </div>
 
               <div>
-                <label className="block text-[11px] font-bold text-slate-700 mb-1">İlişkili Kanban Kartı</label>
+                <label className="block text-[11px] font-bold text-slate-700 mb-1">İlişkili Kanban Kartı veya Proje</label>
                 <select
                   value={selectedProjectId}
                   onChange={(e) => setSelectedProjectId(e.target.value)}
                   className="w-full px-2.5 py-1.5 text-xs bg-slate-50 border border-slate-200 rounded-xl focus:outline-hidden focus:ring-2 focus:ring-indigo-500/20 font-semibold text-slate-800"
                 >
-                  <option value="">Kart Yok (Genel Not)</option>
-                  {projectTasks && projectTasks.length > 0
-                    ? projectTasks.map((t) => (
+                  <option value="">İlişki Yok (Genel Not)</option>
+                  {projectTasks && projectTasks.length > 0 && (
+                    <optgroup label="Kanban Kartları">
+                      {projectTasks.map((t) => (
                         <option key={t.id} value={t.id}>
-                          {t.title}
-                        </option>
-                      ))
-                    : projects.map((p) => (
-                        <option key={p.id} value={p.id}>
-                          {p.name}
+                          📋 {t.title}
                         </option>
                       ))}
+                    </optgroup>
+                  )}
+                  {projects && projects.length > 0 && (
+                    <optgroup label="Projeler">
+                      {projects.map((p) => (
+                        <option key={p.id} value={p.id}>
+                          📁 {p.name}
+                        </option>
+                      ))}
+                    </optgroup>
+                  )}
                 </select>
               </div>
             </div>
@@ -674,344 +766,685 @@ export const NoteModal: React.FC<Props> = ({
             </div>
           </div>
 
-          {/* BÖLÜM 2: SAĞ METADATA & HARİTA PANELSİ - Fits cleanly without scrolling */}
-          <div className="w-full md:w-[42%] bg-slate-50/60 p-4 space-y-3 flex flex-col justify-between overflow-y-auto">
-            {/* 1. EMBEDDED HARİTA SEÇİMİ (Mekan Arama Autocomplete + GPS Position) */}
-            <div className="bg-white border border-slate-200 rounded-2xl p-2.5 space-y-2 shadow-2xs shrink-0">
-              <div className="flex items-center justify-between">
-                <span className="text-xs font-bold text-slate-800 flex items-center gap-1.5">
-                  <MapPin className="w-3.5 h-3.5 text-indigo-600" />
-                  Harita & Lokasyon Seçimi
-                </span>
-                {location && (
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setLocation(null);
-                      setLocationName('');
-                    }}
-                    className="text-[10px] font-bold text-rose-600 hover:underline cursor-pointer"
-                  >
-                    Kaldır
-                  </button>
-                )}
-              </div>
+          {/* BÖLÜM 2: SAĞ METADATA & WORKSPACE ACCORDION PANELSİ */}
+          <div className="w-full md:w-[42%] bg-slate-50/60 p-3.5 space-y-3 flex flex-col overflow-y-auto">
+            {/* ÜST BÖLÜM: ETİKETLER & LOKASYON SEÇİMİ */}
+            <div className="space-y-2.5 shrink-0">
+              {/* 1. ÇOKLU ETİKET SEÇİMİ */}
+              <div className="bg-white border border-slate-200 rounded-2xl p-2.5 space-y-1.5 shadow-2xs">
+                <label className="block text-xs font-bold text-slate-800 flex items-center gap-1.5">
+                  <Tag className="w-3.5 h-3.5 text-amber-600" />
+                  Etiketler
+                </label>
 
-              {/* Place Search Autocomplete & Current GPS Button */}
-              <div className="flex items-center gap-1.5 relative z-20">
-                <div className="relative flex-1">
-                  <Search className="w-3.5 h-3.5 text-slate-400 absolute left-2.5 top-1/2 -translate-y-1/2" />
-                  <input
-                    type="text"
-                    value={placeQuery}
-                    onChange={(e) => handleSearchPlaces(e.target.value)}
-                    placeholder="Mekan veya Adres Ara..."
-                    className="w-full pl-8 pr-2 py-1.5 text-xs bg-slate-50 border border-slate-200 rounded-xl focus:outline-hidden focus:ring-2 focus:ring-indigo-500/20 text-slate-800"
-                  />
-                  {isSearchingPlace && (
-                    <Loader2 className="w-3.5 h-3.5 text-indigo-600 animate-spin absolute right-2 top-1/2 -translate-y-1/2" />
-                  )}
-
-                  {/* Autocomplete Dropdown */}
-                  {showPlaceDropdown && placeResults.length > 0 && (
-                    <div className="absolute top-full left-0 right-0 mt-1 bg-white border border-slate-200 rounded-xl shadow-xl max-h-40 overflow-y-auto z-30 divide-y divide-slate-100">
-                      {placeResults.map((p) => (
-                        <div
-                          key={p.place_id}
-                          onClick={() => handleSelectPlace(p)}
-                          className="p-2 text-xs hover:bg-indigo-50 cursor-pointer flex items-start gap-1.5"
-                        >
-                          <MapPin className="w-3.5 h-3.5 text-indigo-600 shrink-0 mt-0.5" />
-                          <div className="min-w-0">
-                            <div className="font-bold text-slate-900 truncate">
-                              {p.display_name.split(',')[0]}
-                            </div>
-                            <div className="text-[10px] text-slate-400 truncate">
-                              {p.display_name}
-                            </div>
-                          </div>
-                        </div>
-                      ))}
-                    </div>
-                  )}
-                </div>
-
-                <button
-                  type="button"
-                  onClick={handleGetCurrentPosition}
-                  disabled={isLocating}
-                  className="px-2.5 py-1.5 bg-indigo-600 hover:bg-indigo-700 text-white text-[11px] font-bold rounded-xl shadow-2xs flex items-center gap-1 transition-all cursor-pointer shrink-0 disabled:opacity-50"
-                  title="Mevcut GPS Konumumu Getir"
-                >
-                  {isLocating ? (
-                    <Loader2 className="w-3.5 h-3.5 animate-spin" />
-                  ) : (
-                    <Compass className="w-3.5 h-3.5" />
-                  )}
-                  <span className="hidden sm:inline">Konum Al</span>
-                </button>
-              </div>
-
-              {/* Location Name Input */}
-              <input
-                type="text"
-                value={locationName}
-                onChange={(e) => setLocationName(e.target.value)}
-                placeholder="Lokasyon Adı (Örn: Kadıköy Ofis)"
-                className="w-full px-2.5 py-1 text-xs bg-slate-50 border border-slate-200 rounded-xl focus:outline-hidden text-slate-800 font-medium"
-              />
-
-              {/* Compact Leaflet Map Box */}
-              <div className="h-28 w-full rounded-xl overflow-hidden border border-slate-200 relative bg-slate-100 shadow-inner">
-                <div ref={mapContainerRef} className="w-full h-full z-0" />
-              </div>
-            </div>
-
-            {/* 2. ÇOKLU KİŞİ SEÇİMİ (AUTO-COMPLETE) */}
-            <div className="bg-white border border-slate-200 rounded-2xl p-2.5 space-y-1.5 shadow-2xs shrink-0">
-              <label className="block text-xs font-bold text-slate-800 flex items-center gap-1.5">
-                <User className="w-3.5 h-3.5 text-emerald-600" />
-                İlişkili Kişiler
-              </label>
-
-              {/* Selected Contacts Pills */}
-              <div className="flex flex-wrap gap-1 max-h-16 overflow-y-auto">
-                {selectedContacts.map((c) => (
-                  <span
-                    key={c.resourceName}
-                    className="px-2 py-0.5 bg-emerald-50 text-emerald-800 border border-emerald-200 rounded-lg text-[11px] font-semibold flex items-center gap-1 shadow-2xs"
-                  >
-                    <span>{c.displayName}</span>
-                    <button
-                      type="button"
-                      onClick={() =>
-                        setSelectedContacts(selectedContacts.filter((item) => item.resourceName !== c.resourceName))
-                      }
-                      className="hover:text-emerald-950 cursor-pointer"
-                    >
-                      <X className="w-3 h-3" />
-                    </button>
-                  </span>
-                ))}
-              </div>
-
-              {/* Contact Autocomplete Input */}
-              <div className="relative">
-                <Search className="w-3 h-3 text-slate-400 absolute left-2.5 top-1/2 -translate-y-1/2" />
-                <input
-                  type="text"
-                  value={contactSearch}
-                  onChange={(e) => {
-                    setContactSearch(e.target.value);
-                    setIsContactDropdownOpen(true);
-                  }}
-                  onFocus={() => setIsContactDropdownOpen(true)}
-                  placeholder="Kişi ara..."
-                  className="w-full pl-7 pr-2 py-1 text-xs bg-slate-50 border border-slate-200 rounded-xl focus:outline-hidden text-slate-800"
-                />
-
-                {isContactDropdownOpen && filteredContacts.length > 0 && (
-                  <div className="absolute top-full left-0 right-0 mt-1 bg-white border border-slate-200 rounded-xl shadow-xl max-h-32 overflow-y-auto z-20 divide-y divide-slate-100">
-                    {filteredContacts.map((c) => {
-                      const isSelected = selectedContacts.some((sc) => sc.resourceName === c.resourceName);
-                      return (
-                        <div
-                          key={c.resourceName}
-                          onClick={() => {
-                            handleToggleContact(c);
-                            setIsContactDropdownOpen(false);
-                            setContactSearch('');
-                          }}
-                          className={`px-2.5 py-1.5 text-xs cursor-pointer flex items-center justify-between hover:bg-slate-50 ${
-                            isSelected ? 'bg-emerald-50 text-emerald-900 font-semibold' : 'text-slate-700'
-                          }`}
-                        >
-                          <div className="truncate font-semibold">{c.displayName}</div>
-                          {isSelected && <Check className="w-3 h-3 text-emerald-600" />}
-                        </div>
-                      );
-                    })}
-                  </div>
-                )}
-              </div>
-            </div>
-
-            {/* 3. ÇOKLU ETİKET SEÇİMİ (AUTO-COMPLETE) */}
-            <div className="bg-white border border-slate-200 rounded-2xl p-2.5 space-y-1.5 shadow-2xs shrink-0">
-              <label className="block text-xs font-bold text-slate-800 flex items-center gap-1.5">
-                <Tag className="w-3.5 h-3.5 text-amber-600" />
-                Etiketler
-              </label>
-
-              {/* Tag Pills */}
-              <div className="flex flex-wrap gap-1 max-h-14 overflow-y-auto">
-                {selectedTags.map((tag) => (
-                  <span
-                    key={tag}
-                    className="px-2 py-0.5 bg-amber-50 text-amber-900 border border-amber-200 rounded-lg text-[11px] font-semibold flex items-center gap-1"
-                  >
-                    <span>#{tag}</span>
-                    <button
-                      type="button"
-                      onClick={() => handleRemoveTag(tag)}
-                      className="hover:text-amber-950 cursor-pointer"
-                    >
-                      <X className="w-3 h-3" />
-                    </button>
-                  </span>
-                ))}
-              </div>
-
-              {/* Tag Input */}
-              <div className="relative">
-                <div className="flex gap-1">
-                  <input
-                    type="text"
-                    value={tagInput}
-                    onChange={(e) => {
-                      setTagInput(e.target.value);
-                      setIsTagDropdownOpen(true);
-                    }}
-                    onFocus={() => setIsTagDropdownOpen(true)}
-                    onKeyDown={(e) => {
-                      if (e.key === 'Enter') {
-                        e.preventDefault();
-                        handleAddTag(tagInput);
-                      }
-                    }}
-                    placeholder="Etiket yazın veya seçin..."
-                    className="flex-1 px-2.5 py-1 text-xs bg-slate-50 border border-slate-200 rounded-xl focus:outline-hidden text-slate-800"
-                  />
-                  <button
-                    type="button"
-                    onClick={() => handleAddTag(tagInput)}
-                    className="px-2.5 py-1 bg-amber-500 hover:bg-amber-600 text-white text-xs font-bold rounded-xl transition-colors cursor-pointer shrink-0"
-                  >
-                    Ekle
-                  </button>
-                </div>
-
-                {isTagDropdownOpen && filteredExistingTags.length > 0 && (
-                  <div className="absolute top-full left-0 right-0 mt-1 bg-white border border-slate-200 rounded-xl shadow-xl max-h-28 overflow-y-auto z-20 divide-y divide-slate-100">
-                    {filteredExistingTags.map((t) => (
-                      <div
-                        key={t}
-                        onClick={() => handleAddTag(t)}
-                        className="px-2.5 py-1.5 text-xs hover:bg-slate-50 cursor-pointer font-medium text-slate-700"
+                {selectedTags.length > 0 && (
+                  <div className="flex flex-wrap gap-1 max-h-14 overflow-y-auto">
+                    {selectedTags.map((tag) => (
+                      <span
+                        key={tag}
+                        className="px-2 py-0.5 bg-amber-50 text-amber-900 border border-amber-200 rounded-lg text-[11px] font-semibold flex items-center gap-1"
                       >
-                        #{t}
-                      </div>
+                        <span>#{tag}</span>
+                        <button
+                          type="button"
+                          onClick={() => handleRemoveTag(tag)}
+                          className="hover:text-amber-950 cursor-pointer"
+                        >
+                          <X className="w-3 h-3" />
+                        </button>
+                      </span>
                     ))}
                   </div>
                 )}
-              </div>
-            </div>
 
-            {/* 4. İLİŞKİLİ ÖGELER: MAİL LİNKLEME & ETKİNLİK LİNKLEME */}
-            <div className="bg-white border border-slate-200 rounded-2xl p-2.5 space-y-2 shadow-2xs shrink-0">
-              <span className="text-xs font-bold text-slate-800 flex items-center gap-1.5">
-                <Link className="w-3.5 h-3.5 text-indigo-600" />
-                İlişkili Mailler & Etkinlikler
-              </span>
-
-              {/* Selected Links Compact List */}
-              {(linkedEmails.length > 0 || linkedEvents.length > 0) && (
-                <div className="space-y-1 max-h-20 overflow-y-auto">
-                  {linkedEmails.map((em) => (
-                    <div
-                      key={em.id}
-                      className="px-2 py-0.5 bg-rose-50 border border-rose-200 rounded-lg text-[10px] flex items-center justify-between gap-1"
-                    >
-                      <span className="font-bold text-slate-800 truncate">📧 {em.subject}</span>
-                      <button
-                        type="button"
-                        onClick={() => setLinkedEmails(linkedEmails.filter((i) => i.id !== em.id))}
-                        className="text-rose-600 hover:text-rose-800 cursor-pointer"
-                      >
-                        <X className="w-3 h-3" />
-                      </button>
-                    </div>
-                  ))}
-                  {linkedEvents.map((ev) => (
-                    <div
-                      key={ev.id}
-                      className="px-2 py-0.5 bg-blue-50 border border-blue-200 rounded-lg text-[10px] flex items-center justify-between gap-1"
-                    >
-                      <span className="font-bold text-slate-800 truncate">📅 {ev.summary}</span>
-                      <button
-                        type="button"
-                        onClick={() => setLinkedEvents(linkedEvents.filter((i) => i.id !== ev.id))}
-                        className="text-blue-600 hover:text-blue-800 cursor-pointer"
-                      >
-                        <X className="w-3 h-3" />
-                      </button>
-                    </div>
-                  ))}
-                </div>
-              )}
-
-              {/* Quick Select Autocomplete Inputs */}
-              <div className="grid grid-cols-2 gap-1.5">
-                {/* Mail Autocomplete */}
                 <div className="relative">
-                  <input
-                    type="text"
-                    value={emailSearch}
-                    onChange={(e) => {
-                      setEmailSearch(e.target.value);
-                      setIsEmailDropdownOpen(true);
-                    }}
-                    onFocus={() => setIsEmailDropdownOpen(true)}
-                    placeholder="Mail ara..."
-                    className="w-full px-2 py-1 text-[11px] bg-slate-50 border border-slate-200 rounded-xl focus:outline-hidden text-slate-800"
-                  />
-                  {isEmailDropdownOpen && filteredEmails.length > 0 && (
-                    <div className="absolute top-full left-0 right-0 mt-1 bg-white border border-slate-200 rounded-xl shadow-xl max-h-32 overflow-y-auto z-20 divide-y divide-slate-100">
-                      {filteredEmails.map((em) => (
+                  <div className="flex gap-1">
+                    <input
+                      type="text"
+                      value={tagInput}
+                      onChange={(e) => {
+                        setTagInput(e.target.value);
+                        setIsTagDropdownOpen(true);
+                      }}
+                      onFocus={() => setIsTagDropdownOpen(true)}
+                      onKeyDown={(e) => {
+                        if (e.key === 'Enter') {
+                          e.preventDefault();
+                          handleAddTag(tagInput);
+                        }
+                      }}
+                      placeholder="Etiket yazın veya seçin..."
+                      className="flex-1 px-2.5 py-1 text-xs bg-slate-50 border border-slate-200 rounded-xl focus:outline-hidden text-slate-800"
+                    />
+                    <button
+                      type="button"
+                      onClick={() => handleAddTag(tagInput)}
+                      className="px-2.5 py-1 bg-amber-500 hover:bg-amber-600 text-white text-xs font-bold rounded-xl transition-colors cursor-pointer shrink-0"
+                    >
+                      Ekle
+                    </button>
+                  </div>
+
+                  {isTagDropdownOpen && filteredExistingTags.length > 0 && (
+                    <div className="absolute top-full left-0 right-0 mt-1 bg-white border border-slate-200 rounded-xl shadow-xl max-h-28 overflow-y-auto z-20 divide-y divide-slate-100">
+                      {filteredExistingTags.map((t) => (
                         <div
-                          key={em.id}
-                          onClick={() => {
-                            handleToggleEmail(em);
-                            setIsEmailDropdownOpen(false);
-                            setEmailSearch('');
-                          }}
-                          className="px-2 py-1.5 text-[11px] cursor-pointer hover:bg-slate-50 truncate font-semibold"
+                          key={t}
+                          onClick={() => handleAddTag(t)}
+                          className="px-2.5 py-1.5 text-xs hover:bg-slate-50 cursor-pointer font-medium text-slate-700"
                         >
-                          {em.subject}
+                          #{t}
                         </div>
                       ))}
                     </div>
                   )}
                 </div>
+              </div>
 
-                {/* Event Autocomplete */}
-                <div className="relative">
-                  <input
-                    type="text"
-                    value={eventSearch}
-                    onChange={(e) => {
-                      setEventSearch(e.target.value);
-                      setIsEventDropdownOpen(true);
-                    }}
-                    onFocus={() => setIsEventDropdownOpen(true)}
-                    placeholder="Etkinlik ara..."
-                    className="w-full px-2 py-1 text-[11px] bg-slate-50 border border-slate-200 rounded-xl focus:outline-hidden text-slate-800"
-                  />
-                  {isEventDropdownOpen && filteredEvents.length > 0 && (
-                    <div className="absolute top-full left-0 right-0 mt-1 bg-white border border-slate-200 rounded-xl shadow-xl max-h-32 overflow-y-auto z-20 divide-y divide-slate-100">
-                      {filteredEvents.map((ev) => (
-                        <div
-                          key={ev.id}
-                          onClick={() => {
-                            handleToggleEvent(ev);
-                            setIsEventDropdownOpen(false);
-                            setEventSearch('');
-                          }}
-                          className="px-2 py-1.5 text-[11px] cursor-pointer hover:bg-slate-50 truncate font-semibold"
-                        >
-                          {ev.summary}
+              {/* 2. LOKASYON & HARİTA SEÇİMİ */}
+              <div className="bg-white border border-slate-200 rounded-2xl p-2.5 space-y-2 shadow-2xs">
+                <div className="flex items-center justify-between">
+                  <span className="text-xs font-bold text-slate-800 flex items-center gap-1.5">
+                    <MapPin className="w-3.5 h-3.5 text-indigo-600" />
+                    Harita & Lokasyon Seçimi
+                  </span>
+                  {location && (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setLocation(null);
+                        setLocationName('');
+                      }}
+                      className="text-[10px] font-bold text-rose-600 hover:underline cursor-pointer"
+                    >
+                      Kaldır
+                    </button>
+                  )}
+                </div>
+
+                <div className="flex items-center gap-1.5 relative z-10">
+                  <div className="relative flex-1">
+                    <Search className="w-3.5 h-3.5 text-slate-400 absolute left-2.5 top-1/2 -translate-y-1/2" />
+                    <input
+                      type="text"
+                      value={placeQuery}
+                      onChange={(e) => handleSearchPlaces(e.target.value)}
+                      placeholder="Mekan veya Adres Ara..."
+                      className="w-full pl-8 pr-2 py-1.5 text-xs bg-slate-50 border border-slate-200 rounded-xl focus:outline-hidden focus:ring-2 focus:ring-indigo-500/20 text-slate-800"
+                    />
+                    {isSearchingPlace && (
+                      <Loader2 className="w-3.5 h-3.5 text-indigo-600 animate-spin absolute right-2 top-1/2 -translate-y-1/2" />
+                    )}
+
+                    {showPlaceDropdown && placeResults.length > 0 && (
+                      <div className="absolute top-full left-0 right-0 mt-1 bg-white border border-slate-200 rounded-xl shadow-xl max-h-40 overflow-y-auto z-30 divide-y divide-slate-100">
+                        {placeResults.map((p) => (
+                          <div
+                            key={p.place_id}
+                            onClick={() => handleSelectPlace(p)}
+                            className="p-2 text-xs hover:bg-indigo-50 cursor-pointer flex items-start gap-1.5"
+                          >
+                            <MapPin className="w-3.5 h-3.5 text-indigo-600 shrink-0 mt-0.5" />
+                            <div className="min-w-0">
+                              <div className="font-bold text-slate-900 truncate">
+                                {p.display_name.split(',')[0]}
+                              </div>
+                              <div className="text-[10px] text-slate-400 truncate">
+                                {p.display_name}
+                              </div>
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+
+                  <button
+                    type="button"
+                    onClick={handleGetCurrentPosition}
+                    disabled={isLocating}
+                    className="px-2.5 py-1.5 bg-indigo-600 hover:bg-indigo-700 text-white text-[11px] font-bold rounded-xl shadow-2xs flex items-center gap-1 transition-all cursor-pointer shrink-0 disabled:opacity-50"
+                    title="Mevcut GPS Konumumu Getir"
+                  >
+                    {isLocating ? (
+                      <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                    ) : (
+                      <Compass className="w-3.5 h-3.5" />
+                    )}
+                    <span className="hidden sm:inline">Konum Al</span>
+                  </button>
+                </div>
+
+                <input
+                  type="text"
+                  value={locationName}
+                  onChange={(e) => setLocationName(e.target.value)}
+                  placeholder="Lokasyon Adı (Örn: Kadıköy Ofis)"
+                  className="w-full px-2.5 py-1 text-xs bg-slate-50 border border-slate-200 rounded-xl focus:outline-hidden text-slate-800 font-medium"
+                />
+
+                <div className="h-24 w-full rounded-xl overflow-hidden border border-slate-200 relative bg-slate-100 shadow-inner">
+                  <div ref={mapContainerRef} className="w-full h-full z-0" />
+                </div>
+              </div>
+            </div>
+
+            {/* ALT BÖLÜM: ACCORDION: BAĞLANAN ÖĞELER (WORKSPACE) */}
+            <div className="flex-1 flex flex-col min-h-0 bg-white border border-slate-200 rounded-2xl p-3 shadow-2xs">
+              <div className="flex items-center justify-between pb-2 border-b border-slate-100 mb-2 shrink-0">
+                <span className="text-xs font-extrabold text-slate-800 flex items-center gap-1.5">
+                  <Link className="w-4 h-4 text-indigo-600" />
+                  Bağlanan Öğeler (Workspace)
+                </span>
+                <span className="text-[10px] font-bold text-indigo-700 bg-indigo-50 border border-indigo-100 px-2 py-0.5 rounded-full">
+                  {totalWorkspaceLinks} Bağlantı
+                </span>
+              </div>
+
+              {/* Accordion List */}
+              <div className="space-y-2 overflow-y-auto pr-1 flex-1 min-h-0">
+                {/* 1. GOOGLE TASKS ACCORDION */}
+                <div className="border border-slate-200 rounded-xl overflow-hidden bg-slate-50/50">
+                  <div
+                    onClick={() => setOpenAccordion(openAccordion === 'tasks' ? null : 'tasks')}
+                    className="p-2 bg-white flex items-center justify-between cursor-pointer hover:bg-slate-50 transition-colors"
+                  >
+                    <div className="flex items-center gap-2">
+                      <CheckCircle2 className="w-4 h-4 text-purple-600" />
+                      <span className="text-xs font-bold text-slate-800">
+                        Google Görevler ({linkedTasks.length})
+                      </span>
+                    </div>
+                    <div className="flex items-center gap-1.5">
+                      <button
+                        type="button"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          setOpenAccordion('tasks');
+                          setWsSearch('');
+                        }}
+                        className="w-6 h-6 rounded-full bg-purple-100 hover:bg-purple-200 text-purple-700 flex items-center justify-center transition-colors shrink-0 cursor-pointer shadow-2xs"
+                        title="Yeni Görev Bağla"
+                      >
+                        <Plus className="w-3.5 h-3.5" />
+                      </button>
+                      {openAccordion === 'tasks' ? (
+                        <ChevronUp className="w-4 h-4 text-slate-400" />
+                      ) : (
+                        <ChevronDown className="w-4 h-4 text-slate-400" />
+                      )}
+                    </div>
+                  </div>
+
+                  {openAccordion === 'tasks' && (
+                    <div className="p-2.5 border-t border-slate-200 bg-white space-y-2">
+                      {linkedTasks.length > 0 && (
+                        <div className="space-y-1">
+                          <div className="text-[10px] font-bold text-purple-700 uppercase tracking-wider">Bağlı Görevler</div>
+                          {linkedTasks.map((t) => (
+                            <div
+                              key={t.id}
+                              className="px-2 py-1 bg-purple-50 border border-purple-200 rounded-lg text-xs flex items-center justify-between gap-1.5"
+                            >
+                              <div className="flex items-center gap-1.5 min-w-0">
+                                <CheckCircle2 className="w-3.5 h-3.5 text-purple-600 shrink-0" />
+                                <span className="font-semibold text-slate-800 truncate">{t.title}</span>
+                              </div>
+                              <button
+                                type="button"
+                                onClick={() => setLinkedTasks(linkedTasks.filter((item) => item.id !== t.id))}
+                                className="text-purple-600 hover:text-purple-900 cursor-pointer shrink-0"
+                              >
+                                <X className="w-3.5 h-3.5" />
+                              </button>
+                            </div>
+                          ))}
                         </div>
-                      ))}
+                      )}
+
+                      <div className="relative">
+                        <Search className="w-3.5 h-3.5 text-slate-400 absolute left-2.5 top-1/2 -translate-y-1/2" />
+                        <input
+                          type="text"
+                          value={openAccordion === 'tasks' ? wsSearch : ''}
+                          onChange={(e) => setWsSearch(e.target.value)}
+                          placeholder="Realtime Google Görevler ara..."
+                          className="w-full pl-8 pr-7 py-1 text-xs bg-slate-50 border border-slate-200 rounded-xl focus:outline-hidden text-slate-800"
+                        />
+                        {isWsSearching && (
+                          <Loader2 className="w-3.5 h-3.5 text-purple-600 animate-spin absolute right-2.5 top-1/2 -translate-y-1/2" />
+                        )}
+                      </div>
+
+                      {wsRemoteTasks.length > 0 && (
+                        <div className="max-h-36 overflow-y-auto space-y-1 divide-y divide-slate-100 border border-slate-100 rounded-xl p-1 bg-slate-50/50">
+                          {wsRemoteTasks.map((task) => {
+                            const isLinked = linkedTasks.some((t) => t.id === task.id);
+                            return (
+                              <div
+                                key={task.id}
+                                onClick={() => handleToggleTaskLink(task)}
+                                className={`p-1.5 text-xs rounded-lg cursor-pointer flex items-center justify-between transition-colors ${
+                                  isLinked ? 'bg-purple-100/70 text-purple-900 font-bold' : 'hover:bg-purple-50 text-slate-700 font-medium'
+                                }`}
+                              >
+                                <span className="truncate">{task.title}</span>
+                                {isLinked ? (
+                                  <Check className="w-3.5 h-3.5 text-purple-700 shrink-0 ml-1" />
+                                ) : (
+                                  <Plus className="w-3.5 h-3.5 text-slate-400 shrink-0 ml-1" />
+                                )}
+                              </div>
+                            );
+                          })}
+                        </div>
+                      )}
+                    </div>
+                  )}
+                </div>
+
+                {/* 2. E-POSTALAR ACCORDION */}
+                <div className="border border-slate-200 rounded-xl overflow-hidden bg-slate-50/50">
+                  <div
+                    onClick={() => setOpenAccordion(openAccordion === 'emails' ? null : 'emails')}
+                    className="p-2 bg-white flex items-center justify-between cursor-pointer hover:bg-slate-50 transition-colors"
+                  >
+                    <div className="flex items-center gap-2">
+                      <Mail className="w-4 h-4 text-rose-500" />
+                      <span className="text-xs font-bold text-slate-800">
+                        E-postalar ({linkedEmails.length})
+                      </span>
+                    </div>
+                    <div className="flex items-center gap-1.5">
+                      <button
+                        type="button"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          setOpenAccordion('emails');
+                          setWsSearch('');
+                        }}
+                        className="w-6 h-6 rounded-full bg-rose-100 hover:bg-rose-200 text-rose-700 flex items-center justify-center transition-colors shrink-0 cursor-pointer shadow-2xs"
+                        title="Yeni E-posta Bağla"
+                      >
+                        <Plus className="w-3.5 h-3.5" />
+                      </button>
+                      {openAccordion === 'emails' ? (
+                        <ChevronUp className="w-4 h-4 text-slate-400" />
+                      ) : (
+                        <ChevronDown className="w-4 h-4 text-slate-400" />
+                      )}
+                    </div>
+                  </div>
+
+                  {openAccordion === 'emails' && (
+                    <div className="p-2.5 border-t border-slate-200 bg-white space-y-2">
+                      {linkedEmails.length > 0 && (
+                        <div className="space-y-1">
+                          <div className="text-[10px] font-bold text-rose-700 uppercase tracking-wider">Bağlı E-postalar</div>
+                          {linkedEmails.map((em) => (
+                            <div
+                              key={em.id}
+                              className="px-2 py-1 bg-rose-50 border border-rose-200 rounded-lg text-xs flex items-center justify-between gap-1.5"
+                            >
+                              <div className="flex items-center gap-1.5 min-w-0">
+                                <Mail className="w-3.5 h-3.5 text-rose-500 shrink-0" />
+                                <span className="font-semibold text-slate-800 truncate">{em.subject}</span>
+                              </div>
+                              <button
+                                type="button"
+                                onClick={() => setLinkedEmails(linkedEmails.filter((item) => item.id !== em.id))}
+                                className="text-rose-600 hover:text-rose-900 cursor-pointer shrink-0"
+                              >
+                                <X className="w-3.5 h-3.5" />
+                              </button>
+                            </div>
+                          ))}
+                        </div>
+                      )}
+
+                      <div className="relative">
+                        <Search className="w-3.5 h-3.5 text-slate-400 absolute left-2.5 top-1/2 -translate-y-1/2" />
+                        <input
+                          type="text"
+                          value={openAccordion === 'emails' ? wsSearch : ''}
+                          onChange={(e) => setWsSearch(e.target.value)}
+                          placeholder="Realtime Gmail e-postası ara..."
+                          className="w-full pl-8 pr-7 py-1 text-xs bg-slate-50 border border-slate-200 rounded-xl focus:outline-hidden text-slate-800"
+                        />
+                        {isWsSearching && (
+                          <Loader2 className="w-3.5 h-3.5 text-rose-600 animate-spin absolute right-2.5 top-1/2 -translate-y-1/2" />
+                        )}
+                      </div>
+
+                      {wsRemoteEmails.length > 0 && (
+                        <div className="max-h-36 overflow-y-auto space-y-1 divide-y divide-slate-100 border border-slate-100 rounded-xl p-1 bg-slate-50/50">
+                          {wsRemoteEmails.map((em) => {
+                            const isLinked = linkedEmails.some((i) => i.id === em.id);
+                            return (
+                              <div
+                                key={em.id}
+                                onClick={() => handleToggleEmailLink(em)}
+                                className={`p-1.5 text-xs rounded-lg cursor-pointer flex items-center justify-between transition-colors ${
+                                  isLinked ? 'bg-rose-100/70 text-rose-900 font-bold' : 'hover:bg-rose-50 text-slate-700 font-medium'
+                                }`}
+                              >
+                                <div className="min-w-0">
+                                  <div className="truncate font-semibold">{em.subject}</div>
+                                  <div className="text-[10px] text-slate-400 truncate">{em.sender}</div>
+                                </div>
+                                {isLinked ? (
+                                  <Check className="w-3.5 h-3.5 text-rose-700 shrink-0 ml-1" />
+                                ) : (
+                                  <Plus className="w-3.5 h-3.5 text-slate-400 shrink-0 ml-1" />
+                                )}
+                              </div>
+                            );
+                          })}
+                        </div>
+                      )}
+                    </div>
+                  )}
+                </div>
+
+                {/* 3. TAKVİM ETKİNLİKLERİ ACCORDION */}
+                <div className="border border-slate-200 rounded-xl overflow-hidden bg-slate-50/50">
+                  <div
+                    onClick={() => setOpenAccordion(openAccordion === 'events' ? null : 'events')}
+                    className="p-2 bg-white flex items-center justify-between cursor-pointer hover:bg-slate-50 transition-colors"
+                  >
+                    <div className="flex items-center gap-2">
+                      <CalendarIcon className="w-4 h-4 text-blue-500" />
+                      <span className="text-xs font-bold text-slate-800">
+                        Takvim Etkinlikleri ({linkedEvents.length})
+                      </span>
+                    </div>
+                    <div className="flex items-center gap-1.5">
+                      <button
+                        type="button"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          setOpenAccordion('events');
+                          setWsSearch('');
+                        }}
+                        className="w-6 h-6 rounded-full bg-blue-100 hover:bg-blue-200 text-blue-700 flex items-center justify-center transition-colors shrink-0 cursor-pointer shadow-2xs"
+                        title="Yeni Etkinlik Bağla"
+                      >
+                        <Plus className="w-3.5 h-3.5" />
+                      </button>
+                      {openAccordion === 'events' ? (
+                        <ChevronUp className="w-4 h-4 text-slate-400" />
+                      ) : (
+                        <ChevronDown className="w-4 h-4 text-slate-400" />
+                      )}
+                    </div>
+                  </div>
+
+                  {openAccordion === 'events' && (
+                    <div className="p-2.5 border-t border-slate-200 bg-white space-y-2">
+                      {linkedEvents.length > 0 && (
+                        <div className="space-y-1">
+                          <div className="text-[10px] font-bold text-blue-700 uppercase tracking-wider">Bağlı Etkinlikler</div>
+                          {linkedEvents.map((ev) => (
+                            <div
+                              key={ev.id}
+                              className="px-2 py-1 bg-blue-50 border border-blue-200 rounded-lg text-xs flex items-center justify-between gap-1.5"
+                            >
+                              <div className="flex items-center gap-1.5 min-w-0">
+                                <CalendarIcon className="w-3.5 h-3.5 text-blue-500 shrink-0" />
+                                <span className="font-semibold text-slate-800 truncate">{ev.summary}</span>
+                              </div>
+                              <button
+                                type="button"
+                                onClick={() => setLinkedEvents(linkedEvents.filter((item) => item.id !== ev.id))}
+                                className="text-blue-600 hover:text-blue-900 cursor-pointer shrink-0"
+                              >
+                                <X className="w-3.5 h-3.5" />
+                              </button>
+                            </div>
+                          ))}
+                        </div>
+                      )}
+
+                      <div className="relative">
+                        <Search className="w-3.5 h-3.5 text-slate-400 absolute left-2.5 top-1/2 -translate-y-1/2" />
+                        <input
+                          type="text"
+                          value={openAccordion === 'events' ? wsSearch : ''}
+                          onChange={(e) => setWsSearch(e.target.value)}
+                          placeholder="Realtime Takvim Etkinliği ara..."
+                          className="w-full pl-8 pr-7 py-1 text-xs bg-slate-50 border border-slate-200 rounded-xl focus:outline-hidden text-slate-800"
+                        />
+                        {isWsSearching && (
+                          <Loader2 className="w-3.5 h-3.5 text-blue-600 animate-spin absolute right-2.5 top-1/2 -translate-y-1/2" />
+                        )}
+                      </div>
+
+                      {wsRemoteEvents.length > 0 && (
+                        <div className="max-h-36 overflow-y-auto space-y-1 divide-y divide-slate-100 border border-slate-100 rounded-xl p-1 bg-slate-50/50">
+                          {wsRemoteEvents.map((ev) => {
+                            const isLinked = linkedEvents.some((i) => i.id === ev.id);
+                            return (
+                              <div
+                                key={ev.id}
+                                onClick={() => handleToggleEventLink(ev)}
+                                className={`p-1.5 text-xs rounded-lg cursor-pointer flex items-center justify-between transition-colors ${
+                                  isLinked ? 'bg-blue-100/70 text-blue-900 font-bold' : 'hover:bg-blue-50 text-slate-700 font-medium'
+                                }`}
+                              >
+                                <span className="truncate">{ev.summary}</span>
+                                {isLinked ? (
+                                  <Check className="w-3.5 h-3.5 text-blue-700 shrink-0 ml-1" />
+                                ) : (
+                                  <Plus className="w-3.5 h-3.5 text-slate-400 shrink-0 ml-1" />
+                                )}
+                              </div>
+                            );
+                          })}
+                        </div>
+                      )}
+                    </div>
+                  )}
+                </div>
+
+                {/* 4. DRIVE DOSYALARI ACCORDION */}
+                <div className="border border-slate-200 rounded-xl overflow-hidden bg-slate-50/50">
+                  <div
+                    onClick={() => setOpenAccordion(openAccordion === 'drive' ? null : 'drive')}
+                    className="p-2 bg-white flex items-center justify-between cursor-pointer hover:bg-slate-50 transition-colors"
+                  >
+                    <div className="flex items-center gap-2">
+                      <HardDrive className="w-4 h-4 text-emerald-500" />
+                      <span className="text-xs font-bold text-slate-800">
+                        Drive Dosyaları ({linkedDriveFiles.length})
+                      </span>
+                    </div>
+                    <div className="flex items-center gap-1.5">
+                      <button
+                        type="button"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          setOpenAccordion('drive');
+                          setWsSearch('');
+                        }}
+                        className="w-6 h-6 rounded-full bg-emerald-100 hover:bg-emerald-200 text-emerald-700 flex items-center justify-center transition-colors shrink-0 cursor-pointer shadow-2xs"
+                        title="Yeni Dosya Bağla"
+                      >
+                        <Plus className="w-3.5 h-3.5" />
+                      </button>
+                      {openAccordion === 'drive' ? (
+                        <ChevronUp className="w-4 h-4 text-slate-400" />
+                      ) : (
+                        <ChevronDown className="w-4 h-4 text-slate-400" />
+                      )}
+                    </div>
+                  </div>
+
+                  {openAccordion === 'drive' && (
+                    <div className="p-2.5 border-t border-slate-200 bg-white space-y-2">
+                      {linkedDriveFiles.length > 0 && (
+                        <div className="space-y-1">
+                          <div className="text-[10px] font-bold text-emerald-700 uppercase tracking-wider">Bağlı Drive Dosyaları</div>
+                          {linkedDriveFiles.map((df) => (
+                            <div
+                              key={df.id}
+                              className="px-2 py-1 bg-emerald-50 border border-emerald-200 rounded-lg text-xs flex items-center justify-between gap-1.5"
+                            >
+                              <div className="flex items-center gap-1.5 min-w-0">
+                                <HardDrive className="w-3.5 h-3.5 text-emerald-500 shrink-0" />
+                                <span className="font-semibold text-slate-800 truncate">{df.name}</span>
+                              </div>
+                              <button
+                                type="button"
+                                onClick={() => setLinkedDriveFiles(linkedDriveFiles.filter((item) => item.id !== df.id))}
+                                className="text-emerald-600 hover:text-emerald-900 cursor-pointer shrink-0"
+                              >
+                                <X className="w-3.5 h-3.5" />
+                              </button>
+                            </div>
+                          ))}
+                        </div>
+                      )}
+
+                      <div className="relative">
+                        <Search className="w-3.5 h-3.5 text-slate-400 absolute left-2.5 top-1/2 -translate-y-1/2" />
+                        <input
+                          type="text"
+                          value={openAccordion === 'drive' ? wsSearch : ''}
+                          onChange={(e) => setWsSearch(e.target.value)}
+                          placeholder="Realtime Drive dosyası ara..."
+                          className="w-full pl-8 pr-7 py-1 text-xs bg-slate-50 border border-slate-200 rounded-xl focus:outline-hidden text-slate-800"
+                        />
+                        {isWsSearching && (
+                          <Loader2 className="w-3.5 h-3.5 text-emerald-600 animate-spin absolute right-2.5 top-1/2 -translate-y-1/2" />
+                        )}
+                      </div>
+
+                      {wsRemoteDriveFiles.length > 0 && (
+                        <div className="max-h-36 overflow-y-auto space-y-1 divide-y divide-slate-100 border border-slate-100 rounded-xl p-1 bg-slate-50/50">
+                          {wsRemoteDriveFiles.map((df) => {
+                            const isLinked = linkedDriveFiles.some((i) => i.id === df.id);
+                            return (
+                              <div
+                                key={df.id}
+                                onClick={() => handleToggleDriveLink(df)}
+                                className={`p-1.5 text-xs rounded-lg cursor-pointer flex items-center justify-between transition-colors ${
+                                  isLinked ? 'bg-emerald-100/70 text-emerald-900 font-bold' : 'hover:bg-emerald-50 text-slate-700 font-medium'
+                                }`}
+                              >
+                                <span className="truncate">{df.name}</span>
+                                {isLinked ? (
+                                  <Check className="w-3.5 h-3.5 text-emerald-700 shrink-0 ml-1" />
+                                ) : (
+                                  <Plus className="w-3.5 h-3.5 text-slate-400 shrink-0 ml-1" />
+                                )}
+                              </div>
+                            );
+                          })}
+                        </div>
+                      )}
+                    </div>
+                  )}
+                </div>
+
+                {/* 5. KİŞİLER ACCORDION */}
+                <div className="border border-slate-200 rounded-xl overflow-hidden bg-slate-50/50">
+                  <div
+                    onClick={() => setOpenAccordion(openAccordion === 'contacts' ? null : 'contacts')}
+                    className="p-2 bg-white flex items-center justify-between cursor-pointer hover:bg-slate-50 transition-colors"
+                  >
+                    <div className="flex items-center gap-2">
+                      <Users className="w-4 h-4 text-indigo-500" />
+                      <span className="text-xs font-bold text-slate-800">
+                        Kişiler ({selectedContacts.length})
+                      </span>
+                    </div>
+                    <div className="flex items-center gap-1.5">
+                      <button
+                        type="button"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          setOpenAccordion('contacts');
+                          setWsSearch('');
+                        }}
+                        className="w-6 h-6 rounded-full bg-indigo-100 hover:bg-indigo-200 text-indigo-700 flex items-center justify-center transition-colors shrink-0 cursor-pointer shadow-2xs"
+                        title="Yeni Kişi Bağla"
+                      >
+                        <Plus className="w-3.5 h-3.5" />
+                      </button>
+                      {openAccordion === 'contacts' ? (
+                        <ChevronUp className="w-4 h-4 text-slate-400" />
+                      ) : (
+                        <ChevronDown className="w-4 h-4 text-slate-400" />
+                      )}
+                    </div>
+                  </div>
+
+                  {openAccordion === 'contacts' && (
+                    <div className="p-2.5 border-t border-slate-200 bg-white space-y-2">
+                      {selectedContacts.length > 0 && (
+                        <div className="space-y-1">
+                          <div className="text-[10px] font-bold text-indigo-700 uppercase tracking-wider">Bağlı Kişiler</div>
+                          {selectedContacts.map((c) => (
+                            <div
+                              key={c.resourceName}
+                              className="px-2 py-1 bg-indigo-50 border border-indigo-200 rounded-lg text-xs flex items-center justify-between gap-1.5"
+                            >
+                              <div className="flex items-center gap-1.5 min-w-0">
+                                <User className="w-3.5 h-3.5 text-indigo-500 shrink-0" />
+                                <span className="font-semibold text-slate-800 truncate">{c.displayName}</span>
+                              </div>
+                              <button
+                                type="button"
+                                onClick={() => setSelectedContacts(selectedContacts.filter((item) => item.resourceName !== c.resourceName))}
+                                className="text-indigo-600 hover:text-indigo-900 cursor-pointer shrink-0"
+                              >
+                                <X className="w-3.5 h-3.5" />
+                              </button>
+                            </div>
+                          ))}
+                        </div>
+                      )}
+
+                      <div className="relative">
+                        <Search className="w-3.5 h-3.5 text-slate-400 absolute left-2.5 top-1/2 -translate-y-1/2" />
+                        <input
+                          type="text"
+                          value={openAccordion === 'contacts' ? wsSearch : ''}
+                          onChange={(e) => setWsSearch(e.target.value)}
+                          placeholder="Realtime kişi ara..."
+                          className="w-full pl-8 pr-7 py-1 text-xs bg-slate-50 border border-slate-200 rounded-xl focus:outline-hidden text-slate-800"
+                        />
+                        {isWsSearching && (
+                          <Loader2 className="w-3.5 h-3.5 text-indigo-600 animate-spin absolute right-2.5 top-1/2 -translate-y-1/2" />
+                        )}
+                      </div>
+
+                      {wsRemoteContacts.length > 0 && (
+                        <div className="max-h-36 overflow-y-auto space-y-1 divide-y divide-slate-100 border border-slate-100 rounded-xl p-1 bg-slate-50/50">
+                          {wsRemoteContacts.map((c) => {
+                            const isLinked = selectedContacts.some((i) => i.resourceName === c.resourceName);
+                            return (
+                              <div
+                                key={c.resourceName}
+                                onClick={() => handleToggleContactLink(c)}
+                                className={`p-1.5 text-xs rounded-lg cursor-pointer flex items-center justify-between transition-colors ${
+                                  isLinked ? 'bg-indigo-100/70 text-indigo-900 font-bold' : 'hover:bg-indigo-50 text-slate-700 font-medium'
+                                }`}
+                              >
+                                <div className="min-w-0">
+                                  <div className="truncate font-semibold">{c.displayName}</div>
+                                  {c.email && <div className="text-[10px] text-slate-400 truncate">{c.email}</div>}
+                                </div>
+                                {isLinked ? (
+                                  <Check className="w-3.5 h-3.5 text-indigo-700 shrink-0 ml-1" />
+                                ) : (
+                                  <Plus className="w-3.5 h-3.5 text-slate-400 shrink-0 ml-1" />
+                                )}
+                              </div>
+                            );
+                          })}
+                        </div>
+                      )}
                     </div>
                   )}
                 </div>
@@ -1026,7 +1459,7 @@ export const NoteModal: React.FC<Props> = ({
         {/* Modal Footer */}
         <div className="px-5 py-3 border-t border-slate-100 bg-slate-50 flex items-center justify-between shrink-0">
           <div className="text-[11px] text-slate-500 font-medium">
-            {selectedContacts.length} kişi, {selectedTags.length} etiket, {linkedEmails.length} mail, {linkedEvents.length} etkinlik.
+            {selectedTags.length} etiket, {totalWorkspaceLinks} workspace bağlantısı ({linkedTasks.length} görev, {linkedEmails.length} mail, {linkedEvents.length} etkinlik, {linkedDriveFiles.length} dosya, {selectedContacts.length} kişi).
           </div>
 
           <div className="flex items-center gap-2">

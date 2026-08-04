@@ -58,7 +58,7 @@ const OAUTH_SCOPES = [
   'https://www.googleapis.com/auth/gmail.readonly',
   'https://www.googleapis.com/auth/gmail.send',
   'https://www.googleapis.com/auth/calendar',
-  'https://www.googleapis.com/auth/drive.file',
+  'https://www.googleapis.com/auth/drive',
   'https://www.googleapis.com/auth/contacts',
   'https://www.googleapis.com/auth/tasks',
   'https://www.googleapis.com/auth/userinfo.email',
@@ -286,17 +286,21 @@ app.post('/api/auth/logout', (req, res) => {
 
 app.get('/api/gmail/messages', async (req, res) => {
   const type = (req.query.type as string) || 'inbox'; // 'inbox' or 'starred'
+  const search = req.query.search as string | undefined;
   const authClient = getAuthenticatedClient(req);
 
   if (authClient) {
     try {
       const gmail = google.gmail({ version: 'v1', auth: authClient });
-      const query = type === 'starred' ? 'is:starred' : 'label:INBOX';
+      let query = type === 'starred' ? 'is:starred' : 'label:INBOX';
+      if (search && search.trim()) {
+        query = `${query} ${search.trim()}`;
+      }
 
       const response = await gmail.users.messages.list({
         userId: 'me',
         q: query,
-        maxResults: 15,
+        maxResults: 25,
       });
 
       const messages = response.data.messages || [];
@@ -353,6 +357,16 @@ app.get('/api/gmail/messages', async (req, res) => {
     filtered = demoState.emails.filter((e) => e.isStarred);
   } else {
     filtered = demoState.emails.filter((e) => e.labels.includes('INBOX'));
+  }
+
+  if (search && search.trim()) {
+    const s = search.trim().toLowerCase();
+    filtered = filtered.filter(
+      (e) =>
+        e.subject.toLowerCase().includes(s) ||
+        e.sender.toLowerCase().includes(s) ||
+        e.snippet.toLowerCase().includes(s)
+    );
   }
 
   res.json({ messages: filtered, demoMode: true });
@@ -448,18 +462,26 @@ app.post('/api/gmail/toggle-star', async (req, res) => {
 // ================= CALENDAR ROUTES =================
 
 app.get('/api/calendar/events', async (req, res) => {
+  const { search } = req.query;
   const authClient = getAuthenticatedClient(req);
 
   if (authClient) {
     try {
       const calendar = google.calendar({ version: 'v3', auth: authClient });
-      const response = await calendar.events.list({
+      const listParams: any = {
         calendarId: 'primary',
-        timeMin: new Date().toISOString(),
-        maxResults: 15,
+        maxResults: 30,
         singleEvents: true,
-        orderBy: 'startTime',
-      });
+      };
+
+      if (search && typeof search === 'string' && search.trim()) {
+        listParams.q = search.trim();
+      } else {
+        listParams.timeMin = new Date().toISOString();
+        listParams.orderBy = 'startTime';
+      }
+
+      const response = await calendar.events.list(listParams);
 
       const events = (response.data.items || []).map((evt) => ({
         id: evt.id!,
@@ -478,7 +500,18 @@ app.get('/api/calendar/events', async (req, res) => {
     }
   }
 
-  res.json({ events: demoState.events, demoMode: true });
+  let events = demoState.events || [];
+  if (search && typeof search === 'string' && search.trim()) {
+    const s = search.trim().toLowerCase();
+    events = events.filter(
+      (e) =>
+        e.summary.toLowerCase().includes(s) ||
+        (e.description && e.description.toLowerCase().includes(s)) ||
+        (e.location && e.location.toLowerCase().includes(s))
+    );
+  }
+
+  res.json({ events, demoMode: true });
 });
 
 app.post('/api/calendar/events', async (req, res) => {
@@ -572,8 +605,10 @@ app.get('/api/drive/starred', async (req, res) => {
 });
 
 app.get('/api/drive/files', async (req, res) => {
-  const { folderId, search, starredOnly } = req.query;
+  const { folderId, search, starredOnly, limit } = req.query;
   const authClient = getAuthenticatedClient(req);
+
+  const maxCount = limit ? Math.min(100, Math.max(1, parseInt(limit as string) || 100)) : 100;
 
   if (authClient) {
     try {
@@ -595,7 +630,7 @@ app.get('/api/drive/files', async (req, res) => {
       const response = await drive.files.list({
         q: qStr,
         fields: 'files(id, name, mimeType, webViewLink, iconLink, thumbnailLink, modifiedTime, size, starred, parents)',
-        pageSize: 100,
+        pageSize: maxCount,
         orderBy: 'modifiedTime desc',
       });
 
@@ -833,6 +868,7 @@ app.post('/api/drive/create', async (req, res) => {
 // ================= TASKS ROUTES =================
 
 app.get('/api/tasks', async (req, res) => {
+  const { search } = req.query;
   const authClient = getAuthenticatedClient(req);
 
   if (authClient) {
@@ -842,9 +878,10 @@ app.get('/api/tasks', async (req, res) => {
         tasklist: '@default',
         showCompleted: true,
         showHidden: true,
+        maxResults: 100,
       });
 
-      const tasks = (response.data.items || []).map((t, idx) => ({
+      let tasks = (response.data.items || []).map((t, idx) => ({
         id: t.id!,
         title: t.title || 'Başlıksız Görev',
         notes: t.notes || '',
@@ -853,6 +890,13 @@ app.get('/api/tasks', async (req, res) => {
         priority: (idx % 3 === 0 ? 'high' : idx % 3 === 1 ? 'medium' : 'low') as TaskPriority,
         updatedAt: t.updated || new Date().toISOString(),
       }));
+
+      if (search && typeof search === 'string' && search.trim()) {
+        const s = search.trim().toLowerCase();
+        tasks = tasks.filter(
+          (t) => t.title.toLowerCase().includes(s) || t.notes.toLowerCase().includes(s)
+        );
+      }
 
       return res.json({ tasks, demoMode: false });
     } catch (err: any) {
@@ -869,6 +913,14 @@ app.get('/api/tasks', async (req, res) => {
         demoMode: false,
       });
     }
+  }
+
+  let tasks = demoState.tasks || [];
+  if (search && typeof search === 'string' && search.trim()) {
+    const s = search.trim().toLowerCase();
+    tasks = tasks.filter(
+      (t) => t.title.toLowerCase().includes(s) || t.notes.toLowerCase().includes(s)
+    );
   }
 
   res.json({ tasks: demoState.tasks, demoMode: true });
@@ -1002,19 +1054,41 @@ app.delete('/api/tasks/:id', async (req, res) => {
 // ================= CONTACTS ROUTES =================
 
 app.get('/api/contacts', async (req, res) => {
+  const { search } = req.query;
   const authClient = getAuthenticatedClient(req);
 
   if (authClient) {
     try {
       const people = google.people({ version: 'v1', auth: authClient });
-      const response = await people.people.connections.list({
-        resourceName: 'people/me',
-        personFields: 'names,emailAddresses,phoneNumbers,organizations,photos',
-        pageSize: 100,
-      });
+      let connections: any[] = [];
 
-      const connections = response.data.connections || [];
-      const contacts = connections.map((person) => {
+      if (search && typeof search === 'string' && search.trim()) {
+        try {
+          const searchRes = await people.people.searchContacts({
+            query: search.trim(),
+            readMask: 'names,emailAddresses,phoneNumbers,organizations,photos',
+            pageSize: 50,
+          });
+          connections = (searchRes.data.results || []).map((r) => r.person).filter(Boolean);
+        } catch (searchErr) {
+          console.warn('searchContacts failed, falling back to connections list:', searchErr);
+          const response = await people.people.connections.list({
+            resourceName: 'people/me',
+            personFields: 'names,emailAddresses,phoneNumbers,organizations,photos',
+            pageSize: 1000,
+          });
+          connections = response.data.connections || [];
+        }
+      } else {
+        const response = await people.people.connections.list({
+          resourceName: 'people/me',
+          personFields: 'names,emailAddresses,phoneNumbers,organizations,photos',
+          pageSize: 1000,
+        });
+        connections = response.data.connections || [];
+      }
+
+      let contacts = connections.map((person) => {
         const nameObj = person.names?.[0] || {};
         const emailObj = person.emailAddresses?.[0] || {};
         const phoneObj = person.phoneNumbers?.[0] || {};
@@ -1035,13 +1109,36 @@ app.get('/api/contacts', async (req, res) => {
         };
       });
 
+      if (search && typeof search === 'string' && search.trim()) {
+        const q = search.trim().toLowerCase();
+        contacts = contacts.filter(
+          (c) =>
+            c.displayName.toLowerCase().includes(q) ||
+            c.email.toLowerCase().includes(q) ||
+            c.phone.toLowerCase().includes(q) ||
+            c.organization.toLowerCase().includes(q)
+        );
+      }
+
       return res.json({ contacts, demoMode: false });
     } catch (err) {
       console.error('Contacts API Error:', err);
     }
   }
 
-  res.json({ contacts: demoState.contacts, demoMode: true });
+  let contacts = demoState.contacts || [];
+  if (search && typeof search === 'string' && search.trim()) {
+    const q = search.trim().toLowerCase();
+    contacts = contacts.filter(
+      (c) =>
+        c.displayName.toLowerCase().includes(q) ||
+        c.email.toLowerCase().includes(q) ||
+        c.phone.toLowerCase().includes(q) ||
+        c.organization.toLowerCase().includes(q)
+    );
+  }
+
+  res.json({ contacts, demoMode: true });
 });
 
 app.post('/api/contacts', async (req, res) => {
@@ -1204,7 +1301,7 @@ app.get('/api/notes', async (req, res) => {
 
 app.post('/api/notes', async (req, res) => {
   await getAdminSpaceDb();
-  const { title, content, contactResourceName, contactDisplayName, contacts, linkedEmails, linkedEvents, tags, location, date, pinned, projectId } = req.body;
+  const { title, content, contactResourceName, contactDisplayName, contacts, linkedEmails, linkedEvents, linkedDriveFiles, linkedTasks, tags, location, date, pinned, projectId } = req.body;
 
   let savedLocation = location;
   if (location && location.lat && location.lng) {
@@ -1233,6 +1330,8 @@ app.post('/api/notes', async (req, res) => {
     contacts: Array.isArray(contacts) ? contacts : [],
     linkedEmails: Array.isArray(linkedEmails) ? linkedEmails : [],
     linkedEvents: Array.isArray(linkedEvents) ? linkedEvents : [],
+    linkedDriveFiles: Array.isArray(linkedDriveFiles) ? linkedDriveFiles : [],
+    linkedTasks: Array.isArray(linkedTasks) ? linkedTasks : [],
     tags: Array.isArray(tags) ? tags : [],
     location: savedLocation || null,
     date: date || new Date().toISOString().split('T')[0],
@@ -1255,7 +1354,7 @@ app.post('/api/notes', async (req, res) => {
 app.put('/api/notes/:id', async (req, res) => {
   await getAdminSpaceDb();
   const { id } = req.params;
-  const { title, content, contactResourceName, contactDisplayName, contacts, linkedEmails, linkedEvents, tags, location, date, pinned, projectId } = req.body;
+  const { title, content, contactResourceName, contactDisplayName, contacts, linkedEmails, linkedEvents, linkedDriveFiles, linkedTasks, tags, location, date, pinned, projectId } = req.body;
 
   const notes = getAllNotesFromDb();
   const existingNote = notes.find((n) => n.id === id);
@@ -1288,6 +1387,8 @@ app.put('/api/notes/:id', async (req, res) => {
     contacts: contacts !== undefined ? (Array.isArray(contacts) ? contacts : []) : existingNote.contacts,
     linkedEmails: linkedEmails !== undefined ? (Array.isArray(linkedEmails) ? linkedEmails : []) : existingNote.linkedEmails,
     linkedEvents: linkedEvents !== undefined ? (Array.isArray(linkedEvents) ? linkedEvents : []) : existingNote.linkedEvents,
+    linkedDriveFiles: linkedDriveFiles !== undefined ? (Array.isArray(linkedDriveFiles) ? linkedDriveFiles : []) : existingNote.linkedDriveFiles,
+    linkedTasks: linkedTasks !== undefined ? (Array.isArray(linkedTasks) ? linkedTasks : []) : existingNote.linkedTasks,
     tags: Array.isArray(tags) ? tags : existingNote.tags,
     location: savedLocation,
     date: date !== undefined ? date : existingNote.date,
