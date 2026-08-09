@@ -98,12 +98,31 @@ export function ensureTablesExist(db: Database) {
   try { db.run("ALTER TABLE timelogs ADD COLUMN linkId TEXT"); } catch {}
   try { db.run("ALTER TABLE timelogs ADD COLUMN linkTitle TEXT"); } catch {}
 
+  db.run(`
+    CREATE TABLE IF NOT EXISTS note_types (
+      id TEXT PRIMARY KEY,
+      name TEXT NOT NULL,
+      isSystem INTEGER NOT NULL DEFAULT 0,
+      icon TEXT,
+      color TEXT,
+      fields TEXT,
+      createdAt TEXT
+    );
+  `);
+
   try { db.run("ALTER TABLE notes ADD COLUMN contacts TEXT"); } catch {}
   try { db.run("ALTER TABLE notes ADD COLUMN linkedEmails TEXT"); } catch {}
   try { db.run("ALTER TABLE notes ADD COLUMN linkedEvents TEXT"); } catch {}
   try { db.run("ALTER TABLE notes ADD COLUMN linkedDriveFiles TEXT"); } catch {}
   try { db.run("ALTER TABLE notes ADD COLUMN linkedTasks TEXT"); } catch {}
   try { db.run("ALTER TABLE notes ADD COLUMN projectId TEXT"); } catch {}
+  try { db.run("ALTER TABLE notes ADD COLUMN noteType TEXT"); } catch {}
+  try { db.run("ALTER TABLE notes ADD COLUMN startTime TEXT"); } catch {}
+  try { db.run("ALTER TABLE notes ADD COLUMN endTime TEXT"); } catch {}
+  try { db.run("ALTER TABLE notes ADD COLUMN durationMinutes INTEGER"); } catch {}
+  try { db.run("ALTER TABLE notes ADD COLUMN customFields TEXT"); } catch {}
+  try { db.run("ALTER TABLE notes ADD COLUMN cardId TEXT"); } catch {}
+  try { db.run("ALTER TABLE notes ADD COLUMN cardTitle TEXT"); } catch {}
   try { db.run("ALTER TABLE projects ADD COLUMN linkedTaskIds TEXT"); } catch {}
 
   try { db.run("ALTER TABLE project_tasks ADD COLUMN linkedEmailIds TEXT"); } catch {}
@@ -173,8 +192,70 @@ export async function getAdminSpaceDb(): Promise<Database> {
     console.error('Error cleaning dummy data from SQLite:', err);
   }
 
+  // Migrate any existing timelogs to notes as 'timelog' noteType
+  migrateTimelogsToNotes(dbInstance);
+
   saveDbToDisk();
   return dbInstance;
+}
+
+export function migrateTimelogsToNotes(db: Database) {
+  try {
+    const timelogRows = db.exec("SELECT * FROM timelogs");
+    if (timelogRows.length > 0 && timelogRows[0].values.length > 0) {
+      const cols = timelogRows[0].columns;
+      const values = timelogRows[0].values;
+
+      values.forEach((row) => {
+        const item: any = {};
+        cols.forEach((col, idx) => {
+          item[col] = row[idx];
+        });
+
+        if (!item.id) return;
+
+        // Check if note already exists with this ID
+        const stmt = db.prepare("SELECT id FROM notes WHERE id = ?");
+        stmt.bind([item.id]);
+        const exists = stmt.step();
+        stmt.free();
+
+        if (!exists) {
+          const title = item.cardTitle || item.eventSummary || 'Zaman Kaydı';
+          const content = item.description || '';
+          const projectId = item.projectId || item.cardId || '';
+          const cardId = item.cardId || '';
+          const cardTitle = item.cardTitle || '';
+          const tags = typeof item.tags === 'string' ? item.tags : JSON.stringify(item.tags || []);
+          const date = item.startTime ? String(item.startTime).split('T')[0] : (item.createdAt ? String(item.createdAt).split('T')[0] : new Date().toISOString().split('T')[0]);
+
+          db.run(
+            `INSERT INTO notes (
+              id, title, content, noteType, startTime, endTime, durationMinutes, projectId, cardId, cardTitle, tags, date, createdAt, updatedAt
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+            [
+              item.id,
+              title,
+              content,
+              'timelog',
+              item.startTime || '',
+              item.endTime || '',
+              item.durationMinutes || 0,
+              projectId,
+              cardId,
+              cardTitle,
+              tags,
+              date,
+              item.createdAt || new Date().toISOString(),
+              new Date().toISOString()
+            ]
+          );
+        }
+      });
+    }
+  } catch (err) {
+    console.error('Migration timelogs error:', err);
+  }
 }
 
 // Persist SQLite DB to ./adminspace/adminspace.sqlite and backup data.json
@@ -248,6 +329,71 @@ export function saveLocationToDb(loc: { id: string; name: string; lat: number; l
   saveDbToDisk();
 }
 
+export function getSystemNoteTypes() {
+  return [
+    { id: 'note', name: 'Düz Not', isSystem: true, icon: 'FileText', color: 'bg-slate-500', fields: [] },
+    { id: 'timelog', name: 'Timelog', isSystem: true, icon: 'Clock', color: 'bg-blue-500', fields: [] },
+  ];
+}
+
+export function getAllNoteTypesFromDb(): any[] {
+  if (!dbInstance) return getSystemNoteTypes();
+  try {
+    const stmt = dbInstance.prepare('SELECT * FROM note_types ORDER BY isSystem DESC, createdAt ASC');
+    const customTypes: any[] = [];
+    while (stmt.step()) {
+      const row = stmt.getAsObject();
+      let fields = [];
+      try { fields = row.fields ? JSON.parse(String(row.fields)) : []; } catch {}
+      customTypes.push({
+        id: String(row.id),
+        name: String(row.name),
+        isSystem: Number(row.isSystem) === 1,
+        icon: row.icon ? String(row.icon) : undefined,
+        color: row.color ? String(row.color) : undefined,
+        fields,
+      });
+    }
+    stmt.free();
+
+    const systemTypes = getSystemNoteTypes();
+    const typeMap = new Map<string, any>();
+    systemTypes.forEach((sys) => typeMap.set(sys.id, sys));
+    customTypes.forEach((ct) => typeMap.set(ct.id, ct));
+
+    return Array.from(typeMap.values());
+  } catch (err) {
+    console.error('Error getting note types from SQLite:', err);
+    return getSystemNoteTypes();
+  }
+}
+
+export function saveNoteTypeToDb(typeData: any) {
+  if (!dbInstance) return;
+  const fieldsJson = JSON.stringify(typeData.fields || []);
+  dbInstance.run(
+    `INSERT OR REPLACE INTO note_types (id, name, isSystem, icon, color, fields, createdAt)
+     VALUES (?, ?, ?, ?, ?, ?, ?)`,
+    [
+      typeData.id,
+      typeData.name,
+      typeData.isSystem ? 1 : 0,
+      typeData.icon || 'FileText',
+      typeData.color || 'bg-indigo-500',
+      fieldsJson,
+      typeData.createdAt || new Date().toISOString(),
+    ]
+  );
+  saveDbToDisk();
+}
+
+export function deleteNoteTypeFromDb(id: string) {
+  if (!dbInstance) return;
+  if (id === 'note' || id === 'timelog') return; // Cannot delete built-in system types
+  dbInstance.run('DELETE FROM note_types WHERE id = ? AND isSystem = 0', [id]);
+  saveDbToDisk();
+}
+
 export function getAllNotesFromDb() {
   if (!dbInstance) return [];
   try {
@@ -300,6 +446,13 @@ export function getAllNotesFromDb() {
         linkedTasks = [];
       }
 
+      let customFields: Record<string, any> = {};
+      try {
+        customFields = row.customFields ? JSON.parse(String(row.customFields)) : {};
+      } catch {
+        customFields = {};
+      }
+
       const locId = row.locationId ? String(row.locationId) : null;
       const locationObj = locId ? locMap.get(locId) || null : null;
 
@@ -307,6 +460,11 @@ export function getAllNotesFromDb() {
         id: String(row.id),
         title: String(row.title),
         content: String(row.content || ''),
+        noteType: row.noteType ? String(row.noteType) : 'note',
+        startTime: row.startTime ? String(row.startTime) : undefined,
+        endTime: row.endTime ? String(row.endTime) : undefined,
+        durationMinutes: row.durationMinutes !== null && row.durationMinutes !== undefined ? Number(row.durationMinutes) : undefined,
+        customFields,
         contactResourceName: row.contactResourceName ? String(row.contactResourceName) : '',
         contactDisplayName: row.contactDisplayName ? String(row.contactDisplayName) : '',
         contacts: contactsList,
@@ -321,6 +479,8 @@ export function getAllNotesFromDb() {
         updatedAt: String(row.updatedAt),
         pinned: Number(row.pinned) === 1,
         projectId: row.projectId ? String(row.projectId) : undefined,
+        cardId: row.cardId ? String(row.cardId) : undefined,
+        cardTitle: row.cardTitle ? String(row.cardTitle) : undefined,
       });
     }
     stmt.free();
@@ -345,15 +505,21 @@ export function saveNoteToDb(note: any) {
   const linkedEventsJson = JSON.stringify(note.linkedEvents || []);
   const linkedDriveFilesJson = JSON.stringify(note.linkedDriveFiles || []);
   const linkedTasksJson = JSON.stringify(note.linkedTasks || []);
+  const customFieldsJson = JSON.stringify(note.customFields || {});
 
   dbInstance.run(
     `INSERT OR REPLACE INTO notes 
-     (id, title, content, contactResourceName, contactDisplayName, contacts, linkedEmails, linkedEvents, linkedDriveFiles, linkedTasks, tags, locationId, date, createdAt, updatedAt, pinned, projectId)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+     (id, title, content, noteType, startTime, endTime, durationMinutes, customFields, contactResourceName, contactDisplayName, contacts, linkedEmails, linkedEvents, linkedDriveFiles, linkedTasks, tags, locationId, date, createdAt, updatedAt, pinned, projectId, cardId, cardTitle)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     [
       note.id,
       note.title,
       note.content || '',
+      note.noteType || 'note',
+      note.startTime || null,
+      note.endTime || null,
+      note.durationMinutes !== undefined && note.durationMinutes !== null ? Number(note.durationMinutes) : null,
+      customFieldsJson,
       note.contactResourceName || '',
       note.contactDisplayName || '',
       contactsJson,
@@ -368,6 +534,8 @@ export function saveNoteToDb(note: any) {
       note.updatedAt || new Date().toISOString(),
       note.pinned ? 1 : 0,
       note.projectId || null,
+      note.cardId || null,
+      note.cardTitle || null,
     ]
   );
 

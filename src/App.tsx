@@ -12,6 +12,7 @@ import {
   Project,
   ProjectTask,
   TimeLog,
+  NoteType,
 } from './types';
 import { Navbar } from './components/Navbar';
 import { Sidebar, NavTab } from './components/Sidebar';
@@ -34,12 +35,94 @@ import { MapPickerModal } from './components/MapPickerModal';
 import { TimeManagementApp } from './components/TimeManagementApp';
 import { SettingsSection } from './components/SettingsSection';
 import { LoginGate } from './components/LoginGate';
+import { createTaskSlug } from './utils/slug';
 import { Sparkles, ShieldCheck, Zap, RefreshCw, AlertCircle, HardDrive, Cloud } from 'lucide-react';
+
+// URL Routing Helpers
+const tabToPath = (tab: NavTab): string => {
+  switch (tab) {
+    case 'dashboard': return '/';
+    case 'projects': return '/projects';
+    case 'notes': return '/notes';
+    case 'time': return '/time';
+    case 'settings': return '/settings';
+    case 'gmail': return '/gmail';
+    case 'calendar': return '/calendar';
+    case 'drive': return '/drive';
+    case 'tasks': return '/tasks';
+    case 'contacts': return '/contacts';
+    default: return '/';
+  }
+};
+
+const pathToTab = (pathname: string): NavTab => {
+  if (pathname.startsWith('/projects')) return 'projects';
+  if (pathname.startsWith('/notes')) return 'notes';
+  if (pathname.startsWith('/time')) return 'time';
+  if (pathname.startsWith('/settings')) return 'settings';
+  if (pathname.startsWith('/gmail')) return 'gmail';
+  if (pathname.startsWith('/calendar')) return 'calendar';
+  if (pathname.startsWith('/drive')) return 'drive';
+  if (pathname.startsWith('/tasks')) return 'tasks';
+  if (pathname.startsWith('/contacts')) return 'contacts';
+  return 'dashboard';
+};
+
+const getTaskSlugFromUrl = (): string | null => {
+  const pathname = window.location.pathname;
+  const searchParams = new URLSearchParams(window.location.search);
+  if (searchParams.get('task')) {
+    return searchParams.get('task');
+  }
+  const match = pathname.match(/^\/projects\/task\/([^/]+)/);
+  if (match && match[1]) {
+    return decodeURIComponent(match[1]);
+  }
+  return null;
+};
 
 export default function App() {
   const [activeScreen, setActiveScreen] = useState<'workspace' | 'timeManagement'>('workspace');
-  const [sidebarTab, setSidebarTab] = useState<NavTab>('notes'); // Default to Notes tab as requested
+  const [sidebarTab, setSidebarTab] = useState<NavTab>(() => pathToTab(window.location.pathname));
+  const [initialTaskIdOrSlug, setInitialTaskIdOrSlug] = useState<string | null>(() => getTaskSlugFromUrl());
   const [isSidebarCollapsed, setIsSidebarCollapsed] = useState(false);
+  const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
+
+  const handleTabChange = (tab: NavTab) => {
+    setSidebarTab(tab);
+    setInitialTaskIdOrSlug(null);
+    setIsMobileMenuOpen(false);
+    const path = tabToPath(tab);
+    if (window.location.pathname !== path) {
+      window.history.pushState({}, '', path);
+    }
+  };
+
+  const handleSelectTaskSlug = (task: ProjectTask | null) => {
+    if (task) {
+      const slug = createTaskSlug(task);
+      const newPath = `/projects/task/${slug}`;
+      if (window.location.pathname !== newPath) {
+        window.history.pushState({}, '', newPath);
+      }
+    } else {
+      if (window.location.pathname !== '/projects') {
+        window.history.pushState({}, '', '/projects');
+      }
+    }
+  };
+
+  useEffect(() => {
+    const handlePopState = () => {
+      const currentTab = pathToTab(window.location.pathname);
+      const currentTaskSlug = getTaskSlugFromUrl();
+      setSidebarTab(currentTab);
+      setInitialTaskIdOrSlug(currentTaskSlug);
+    };
+
+    window.addEventListener('popstate', handlePopState);
+    return () => window.removeEventListener('popstate', handlePopState);
+  }, []);
 
   // Settings State: Theme & Language
   const [theme, setTheme] = useState<'light' | 'dark'>(() => {
@@ -81,6 +164,10 @@ export default function App() {
   const [projects, setProjects] = useState<Project[]>([]);
   const [projectTasks, setProjectTasks] = useState<ProjectTask[]>([]);
   const [timeLogs, setTimeLogs] = useState<TimeLog[]>([]);
+  const [noteTypes, setNoteTypes] = useState<NoteType[]>([
+    { id: 'note', name: 'Düz Not', isSystem: true },
+    { id: 'timelog', name: 'Timelog', isSystem: true },
+  ]);
 
   // Loading States
   const [isLoadingGmail, setIsLoadingGmail] = useState(false);
@@ -275,7 +362,7 @@ export default function App() {
   const fetchDrive = async () => {
     setIsLoadingDrive(true);
     try {
-      const res = await fetch('/api/drive/starred');
+      const res = await fetch('/api/drive/files?limit=100');
       if (res.ok && res.headers.get('content-type')?.includes('application/json')) {
         const data = await res.json();
         if (data.files) setDriveFiles(data.files);
@@ -360,6 +447,74 @@ export default function App() {
       // Silent error handling
     }
   };
+
+  const fetchNoteTypes = async () => {
+    try {
+      const res = await fetch('/api/note-types');
+      if (res.ok && res.headers.get('content-type')?.includes('application/json')) {
+        const data = await res.json();
+        if (Array.isArray(data)) {
+          setNoteTypes(data);
+        } else if (data && Array.isArray(data.noteTypes)) {
+          setNoteTypes(data.noteTypes);
+        }
+      }
+    } catch {
+      // Silent error handling
+    }
+  };
+
+  const handleSaveNoteType = async (typeData: NoteType) => {
+    try {
+      const res = await fetch('/api/note-types', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(typeData),
+      });
+      if (res.ok) {
+        await fetchNoteTypes();
+      } else {
+        setNoteTypes((prev) => {
+          const exists = prev.some((t) => t.id === typeData.id);
+          if (exists) {
+            return prev.map((t) => (t.id === typeData.id ? typeData : t));
+          }
+          return [...prev, typeData];
+        });
+      }
+    } catch (err) {
+      console.error('Save Note Type Error:', err);
+      setNoteTypes((prev) => {
+        const exists = prev.some((t) => t.id === typeData.id);
+        if (exists) {
+          return prev.map((t) => (t.id === typeData.id ? typeData : t));
+        }
+        return [...prev, typeData];
+      });
+    }
+  };
+
+  const handleDeleteNoteType = async (id: string) => {
+    try {
+      const res = await fetch(`/api/note-types/${id}`, {
+        method: 'DELETE',
+      });
+      if (res.ok) {
+        await fetchNoteTypes();
+      } else {
+        setNoteTypes((prev) => prev.filter((t) => t.id !== id));
+      }
+    } catch (err) {
+      console.error('Delete Note Type Error:', err);
+      setNoteTypes((prev) => prev.filter((t) => t.id !== id));
+    }
+  };
+
+  useEffect(() => {
+    fetchNotes();
+    fetchProjects();
+    fetchNoteTypes();
+  }, []);
 
   // Combined tags across notes and timelogs
   const allTags = useMemo(() => {
@@ -720,6 +875,11 @@ export default function App() {
     id?: string;
     title: string;
     content: string;
+    noteType?: string;
+    startTime?: string;
+    endTime?: string;
+    durationMinutes?: number;
+    customFields?: Record<string, any>;
     contactResourceName?: string;
     contactDisplayName?: string;
     contacts?: any[];
@@ -731,6 +891,8 @@ export default function App() {
     location?: NoteLocation | null;
     date: string;
     projectId?: string;
+    cardId?: string;
+    cardTitle?: string;
   }) => {
     if (data.id) {
       await fetch(`/api/notes/${data.id}`, {
@@ -784,6 +946,8 @@ export default function App() {
         authStatus={authStatus}
         onLogin={handleLogin}
         onLogout={handleLogout}
+        isMobileMenuOpen={isMobileMenuOpen}
+        onToggleMobileMenu={() => setIsMobileMenuOpen(!isMobileMenuOpen)}
       />
 
       {/* Main Flex Layout with Left Sidenav */}
@@ -791,17 +955,19 @@ export default function App() {
         {/* Left Sidenav */}
         <Sidebar
           activeTab={sidebarTab}
-          onTabChange={setSidebarTab}
+          onTabChange={handleTabChange}
           isCollapsed={isSidebarCollapsed}
           onToggleCollapse={() => setIsSidebarCollapsed(!isSidebarCollapsed)}
           notesCount={notes.length}
           language={language}
+          isMobileOpen={isMobileMenuOpen}
+          onCloseMobile={() => setIsMobileMenuOpen(false)}
         />
 
         {/* Right Main Content Panel */}
-        <main className="flex-1 overflow-y-auto p-4 sm:p-6 lg:p-8 space-y-6">
-          {/* Auth Status & Google Drive Sync Banner */}
-          {!authStatus.isAuthenticated ? (
+        <main className="flex-1 overflow-y-auto p-3 sm:p-6 lg:p-8 space-y-4 sm:space-y-6 min-w-0">
+          {/* Auth Status Banner (shown only when not authenticated) */}
+          {!authStatus.isAuthenticated && (
             <div className="bg-gradient-to-r from-amber-500/10 via-amber-500/5 to-amber-500/10 border border-amber-200/80 rounded-2xl p-4 flex flex-wrap items-center justify-between gap-4 shadow-2xs">
               <div className="flex items-center gap-3">
                 <div className="p-2 bg-amber-100 text-amber-700 rounded-xl">
@@ -809,10 +975,10 @@ export default function App() {
                 </div>
                 <div>
                   <h3 className="text-xs font-bold text-amber-900">
-                    SQLite Veritabanı ve Google Drive Senkronizasyonu
+                    Google Hesabı ile Otomatik Senkronizasyon
                   </h3>
                   <p className="text-[11px] text-amber-700/90">
-                    Notlarınız ve verileriniz SQLite veritabanında saklanır. Google Drive hesabınızla giriş yaparak <code className="font-bold text-amber-900">adminspace</code> klasöründe otomatik senkronize edebilirsiniz.
+                    Notlarınız ve verileriniz otomatik senkronize edilir. Google Drive hesabınızla giriş yaparak verilerinizi bulutta bulabilirsiniz.
                   </p>
                 </div>
               </div>
@@ -823,62 +989,6 @@ export default function App() {
               >
                 <Zap className="w-4 h-4 fill-white" /> Canlı Google Hesabı ile Giriş Yap
               </button>
-            </div>
-          ) : (
-            <div className="bg-slate-900 text-white rounded-2xl p-4 shadow-sm border border-slate-800 space-y-2">
-              <div className="flex flex-wrap items-center justify-between gap-4">
-                <div className="flex items-center gap-3">
-                  <div className="p-2.5 bg-indigo-500/20 text-indigo-400 rounded-xl border border-indigo-500/30">
-                    <HardDrive className="w-5 h-5" />
-                  </div>
-                  <div>
-                    <div className="flex items-center gap-2">
-                      <h3 className="text-xs font-bold text-slate-100">
-                        Google Drive Senkronizasyonu (SQLite Veritabanı & Notlar)
-                      </h3>
-                      <span className="px-2 py-0.5 bg-emerald-500/20 text-emerald-400 text-[10px] font-semibold rounded-full border border-emerald-500/30">
-                        Senkronize (adminspace)
-                      </span>
-                    </div>
-                    <p className="text-[11px] text-slate-400 mt-0.5">
-                      SQLite veritabanı (<code className="text-indigo-300 font-mono">adminspace.sqlite</code>), notlar ve JSON yedekleri Google Drive'daki <code className="text-indigo-300 font-mono">adminspace</code> klasörünüzde saklanır ve ortamlar arasında senkronize edilir.
-                    </p>
-                  </div>
-                </div>
-
-                <div className="flex items-center gap-2 shrink-0">
-                  <button
-                    onClick={handleRestoreFromDrive}
-                    disabled={isSyncingDrive}
-                    className="px-3.5 py-2 bg-slate-800 hover:bg-slate-700 text-slate-200 hover:text-white text-xs font-semibold rounded-xl border border-slate-700 flex items-center gap-2 transition-all cursor-pointer disabled:opacity-50"
-                    title="Google Drive'daki adminspace klasöründen veritabanını indirip SQLite'a yükler"
-                  >
-                    <RefreshCw className={`w-3.5 h-3.5 ${isSyncingDrive ? 'animate-spin' : ''}`} />
-                    Drive'dan Yükle
-                  </button>
-                  <button
-                    onClick={handleSyncToDrive}
-                    disabled={isSyncingDrive}
-                    className="px-3.5 py-2 bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-semibold rounded-xl shadow-xs flex items-center gap-2 transition-all cursor-pointer disabled:opacity-50"
-                    title="Yerel SQLite veritabanı ve notları Google Drive'a kaydeder"
-                  >
-                    <Cloud className="w-3.5 h-3.5" />
-                    Drive'a Kaydet
-                  </button>
-                </div>
-              </div>
-
-              {driveSyncMessage && (
-                <div className="pt-2 border-t border-slate-800 text-xs text-indigo-300 flex items-center justify-between">
-                  <span>{driveSyncMessage}</span>
-                  <button
-                    onClick={() => setDriveSyncMessage(null)}
-                    className="text-slate-400 hover:text-white text-[10px] underline ml-2 cursor-pointer"
-                  >
-                    Kapat
-                  </button>
-                </div>
-              )}
             </div>
           )}
 
@@ -891,6 +1001,7 @@ export default function App() {
               events={calendarEvents}
               locations={locations}
               timeLogs={timeLogs}
+              noteTypes={noteTypes}
               onAddNote={() => {
                 setEditingNote(null);
                 setSelectedLocationFromMap(null);
@@ -1003,6 +1114,9 @@ export default function App() {
               emails={emails}
               driveFiles={driveFiles}
               language={language}
+              onSelectCard={(cardId, cardTitle) => {
+                setSidebarTab('projects');
+              }}
             />
           )}
 
@@ -1045,6 +1159,8 @@ export default function App() {
               <DriveFileManager
                 projects={projects}
                 projectTasks={projectTasks}
+                notes={notes}
+                onRefreshNotes={fetchNotes}
                 onToggleLinkToProject={handleToggleLinkToProject}
                 onAddDriveDoc={() => setIsAddDriveOpen(true)}
                 isAuthenticated={authStatus.isAuthenticated}
@@ -1099,6 +1215,7 @@ export default function App() {
               events={calendarEvents}
               driveFiles={driveFiles}
               contacts={contacts}
+              noteTypes={noteTypes}
               onUpdateProject={handleUpdateProject}
               onCreateProject={handleCreateProject}
               onDeleteProject={handleDeleteProject}
@@ -1111,6 +1228,8 @@ export default function App() {
                 setIsNoteModalOpen(true);
               }}
               language={language}
+              initialTaskIdOrSlug={initialTaskIdOrSlug}
+              onSelectTaskSlug={handleSelectTaskSlug}
             />
           )}
 
@@ -1121,6 +1240,9 @@ export default function App() {
               onThemeChange={setTheme}
               language={language}
               onLanguageChange={setLanguage}
+              noteTypes={noteTypes}
+              onSaveNoteType={handleSaveNoteType}
+              onDeleteNoteType={handleDeleteNoteType}
             />
           )}
         </main>
@@ -1175,6 +1297,7 @@ export default function App() {
         projects={projects}
         projectTasks={projectTasks}
         allExistingTags={allTags}
+        noteTypes={noteTypes}
         onClose={() => {
           setIsNoteModalOpen(false);
           setEditingNote(null);

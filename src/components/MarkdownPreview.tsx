@@ -45,13 +45,19 @@ export const MarkdownPreview: React.FC<MarkdownPreviewProps> = ({
         urlTransform={(url) => url}
         components={{
           a: ({ href, children, ...props }) => {
+            let finalHref = href;
+            if (finalHref && /^www\./i.test(finalHref)) {
+              finalHref = `https://${finalHref}`;
+            }
             return (
               <a
-                href={href}
+                href={finalHref}
                 target="_blank"
                 rel="noopener noreferrer"
                 className="text-blue-600 hover:text-blue-800 underline font-medium cursor-pointer break-all"
-                onClick={(e) => e.stopPropagation()}
+                onClick={(e) => {
+                  e.stopPropagation();
+                }}
                 {...props}
               >
                 {children}

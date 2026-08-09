@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { MarkdownPreview } from './MarkdownPreview';
+import { createTaskSlug } from '../utils/slug';
 import {
   FolderKanban,
   Plus,
@@ -41,6 +42,7 @@ import {
   ContactItem,
   TaskItem,
   TimeLog,
+  NoteType,
 } from '../types';
 
 interface Props {
@@ -52,6 +54,7 @@ interface Props {
   events: CalendarEvent[];
   driveFiles: DriveFile[];
   contacts: ContactItem[];
+  noteTypes?: NoteType[];
   onUpdateProject: (project: Project) => Promise<void>;
   onCreateProject: (projectData: Partial<Project>) => Promise<void>;
   onDeleteProject: (projectId: string) => Promise<void>;
@@ -60,6 +63,8 @@ interface Props {
   onDeleteTask: (taskId: string) => Promise<void>;
   onOpenNoteModal: (note?: NoteItem) => void;
   language?: 'tr' | 'en';
+  initialTaskIdOrSlug?: string | null;
+  onSelectTaskSlug?: (task: ProjectTask | null) => void;
 }
 
 export const ProjectsSection: React.FC<Props> = ({
@@ -71,6 +76,10 @@ export const ProjectsSection: React.FC<Props> = ({
   events,
   driveFiles,
   contacts,
+  noteTypes = [
+    { id: 'note', name: 'Düz Not', isSystem: true },
+    { id: 'timelog', name: 'Timelog', isSystem: true },
+  ],
   onUpdateProject,
   onCreateProject,
   onDeleteProject,
@@ -79,6 +88,8 @@ export const ProjectsSection: React.FC<Props> = ({
   onDeleteTask,
   onOpenNoteModal,
   language = 'tr',
+  initialTaskIdOrSlug,
+  onSelectTaskSlug,
 }) => {
   const [selectedProjectId, setSelectedProjectId] = useState<string>(
     projects[0]?.id || ''
@@ -105,6 +116,46 @@ export const ProjectsSection: React.FC<Props> = ({
   const [editingTask, setEditingTask] = useState<ProjectTask | null>(null);
   const [detailTask, setDetailTask] = useState<ProjectTask | null>(null);
 
+  // Sync setDetailTask with external URL routing callback
+  const handleSetDetailTask = (t: ProjectTask | null) => {
+    setDetailTask(t);
+    if (onSelectTaskSlug) {
+      onSelectTaskSlug(t);
+    }
+  };
+
+  // Automatically fetch Drive files on mount to ensure metadata is present for linked files
+  useEffect(() => {
+    fetch('/api/drive/files?limit=100')
+      .then((res) => res.json())
+      .then((data) => {
+        if (data.files && Array.isArray(data.files)) {
+          setRemoteDriveFiles(data.files);
+        }
+      })
+      .catch(() => {});
+  }, []);
+
+  // Sync initialTaskIdOrSlug from URL to set detailTask on page load or URL change
+  useEffect(() => {
+    if (initialTaskIdOrSlug && tasks && tasks.length > 0) {
+      const param = initialTaskIdOrSlug.trim();
+      const found = tasks.find((t) => {
+        if (t.id === param) return true;
+        const slug = createTaskSlug(t);
+        if (slug === param) return true;
+        if (param.endsWith(`-${t.id}`) || param.endsWith(t.id) || param.includes(t.id)) return true;
+        return false;
+      });
+      if (found) {
+        setDetailTask(found);
+        if (found.projectId) {
+          setSelectedProjectId(found.projectId);
+        }
+      }
+    }
+  }, [initialTaskIdOrSlug, tasks]);
+
   // Detail View Title & Description Editing State
   const [isEditingTitle, setIsEditingTitle] = useState(false);
   const [editTitleText, setEditTitleText] = useState('');
@@ -112,6 +163,7 @@ export const ProjectsSection: React.FC<Props> = ({
   const [editDescriptionText, setEditDescriptionText] = useState('');
 
   // Note Filtering & Sorting State in Card Detail View
+  const [noteTypeFilter, setNoteTypeFilter] = useState<string>('all');
   const [noteTagFilter, setNoteTagFilter] = useState<string>('all');
   const [noteSortOrder, setNoteSortOrder] = useState<'newest' | 'oldest' | 'title'>('newest');
 
@@ -528,7 +580,14 @@ export const ProjectsSection: React.FC<Props> = ({
   );
 
   const linkedDriveFilesList = combinedDriveIds
-    .map((id) => allDriveFilesMap.get(id))
+    .map((id) => allDriveFilesMap.get(id) || {
+      id,
+      name: 'Google Drive Dosyası',
+      mimeType: 'application/vnd.google-apps.document',
+      webViewLink: id.startsWith('http') ? id : `https://drive.google.com/file/d/${id}/view`,
+      modifiedTime: new Date().toISOString(),
+      isFolder: false,
+    })
     .filter(Boolean) as DriveFile[];
 
   const allContactsMap = new Map<string, ContactItem>();
@@ -957,7 +1016,7 @@ export const ProjectsSection: React.FC<Props> = ({
                               setDraggedTaskId(null);
                               setDragOverColId(null);
                             }}
-                            onClick={() => setDetailTask(task)}
+                            onClick={() => handleSetDetailTask(task)}
                             className={`bg-white rounded-2xl p-4 border border-slate-200 shadow-xs hover:shadow-md transition-all group space-y-2.5 cursor-grab active:cursor-grabbing hover:border-purple-300 ${
                               draggedTaskId === task.id ? 'opacity-40 scale-95' : ''
                             }`}
@@ -971,7 +1030,7 @@ export const ProjectsSection: React.FC<Props> = ({
                                 <button
                                   onClick={(e) => {
                                     e.stopPropagation();
-                                    setDetailTask(task);
+                                    handleSetDetailTask(task);
                                   }}
                                   className="p-1 text-slate-400 hover:text-purple-600 cursor-pointer"
                                   title="Detaylar"
@@ -1409,26 +1468,73 @@ export const ProjectsSection: React.FC<Props> = ({
       {detailTask && activeProject && (() => {
         const countdown = detailTask.dueDate ? getCountdown(detailTask.dueDate) : null;
 
-        // Notes specific to this card
+        // Notes specific to this card (check projectId, cardId, cardTitle, linkedTasks)
         const cardNotes = notes.filter((n) => {
-          if (n.projectId === detailTask.id) return true;
+          if (n.projectId === detailTask.id || n.cardId === detailTask.id) return true;
+          if (n.cardTitle && detailTask.title && n.cardTitle.toLowerCase() === detailTask.title.toLowerCase()) return true;
+          if (n.linkedTasks?.some((t: any) => t.id === detailTask.id || (t.title && detailTask.title && t.title.toLowerCase() === detailTask.title.toLowerCase()))) return true;
           return false;
         });
+
+        // Extract all card timelogs
+        const cardTimelogs = timeLogs.filter((log) => {
+          if (log.cardId && log.cardId === detailTask.id) return true;
+          if (log.projectId && log.projectId === detailTask.id) return true;
+          if (log.cardTitle && detailTask.title && log.cardTitle.toLowerCase() === detailTask.title.toLowerCase()) return true;
+          if (log.linkId === detailTask.id || log.entityId === detailTask.id) return true;
+          return false;
+        });
+
+        // Convert cardTimelogs to note-compatible objects
+        const convertedTimelogs = cardTimelogs.map((tl) => ({
+          id: tl.id,
+          title: tl.cardTitle || tl.eventSummary || (tl.description ? tl.description.slice(0, 40) : 'Timelog Kaydı'),
+          content: tl.description || '',
+          noteType: 'timelog',
+          startTime: tl.startTime || '',
+          endTime: tl.endTime || '',
+          durationMinutes: tl.durationMinutes || 0,
+          tags: tl.tags || [],
+          date: tl.startTime ? tl.startTime.split('T')[0] : (tl.createdAt ? tl.createdAt.split('T')[0] : ''),
+          createdAt: tl.createdAt || tl.startTime || new Date().toISOString(),
+          updatedAt: tl.createdAt || new Date().toISOString(),
+          projectId: tl.projectId || detailTask.id,
+          cardId: tl.cardId || detailTask.id,
+          cardTitle: tl.cardTitle || detailTask.title,
+          customFields: {},
+        }));
+
+        const existingNoteIds = new Set(cardNotes.map((n) => n.id));
+        const extraTimelogNotes = convertedTimelogs.filter((tn) => !existingNoteIds.has(tn.id));
+
+        const allCardDisplayNotes = [...cardNotes, ...extraTimelogNotes];
 
         // Extract note tags across card notes and all system notes
         const allNoteTags = Array.from(
           new Set(
             [
-              ...cardNotes.flatMap((n) => n.tags || []),
+              ...allCardDisplayNotes.flatMap((n) => n.tags || []),
               ...notes.flatMap((n) => n.tags || []),
             ].filter((t) => t && typeof t === 'string' && t.trim())
           )
         );
 
-        // Filter notes by tag
-        let filteredNotes = cardNotes.filter((n) => {
-          if (noteTagFilter === 'all') return true;
-          return n.tags?.includes(noteTagFilter);
+        // Filter notes by noteType and tag
+        let filteredNotes = allCardDisplayNotes.filter((n) => {
+          if (noteTypeFilter !== 'all') {
+            const currentType = n.noteType || (n.durationMinutes && n.durationMinutes > 0 ? 'timelog' : 'note');
+            if (noteTypeFilter === 'timelog') {
+              if (currentType !== 'timelog' && (!n.durationMinutes || n.durationMinutes <= 0)) {
+                return false;
+              }
+            } else {
+              if (currentType !== noteTypeFilter) return false;
+            }
+          }
+          if (noteTagFilter !== 'all') {
+            if (!n.tags?.includes(noteTagFilter)) return false;
+          }
+          return true;
         });
 
         // Sort notes
@@ -1445,24 +1551,25 @@ export const ProjectsSection: React.FC<Props> = ({
           return 0;
         });
 
-        // Extract all card timelogs
-        const cardTimelogs = timeLogs.filter((log) => {
-          if (log.cardId && log.cardId === detailTask.id) return true;
-          if (log.projectId && log.projectId === detailTask.id) return true;
-          if (log.cardTitle && detailTask.title && log.cardTitle.toLowerCase() === detailTask.title.toLowerCase()) return true;
-          if (log.linkId === detailTask.id || log.entityId === detailTask.id) return true;
-          return false;
-        });
+        // Timelog notes and combined stats
+        const timelogNotes = cardNotes.filter((n) => n.noteType === 'timelog' || (n.durationMinutes && n.durationMinutes > 0));
+        
+        const combinedTimeItems = [
+          ...timelogNotes.map(n => ({
+            durationMinutes: n.durationMinutes || 0,
+            dateStr: n.startTime ? n.startTime.split('T')[0] : n.date || '',
+          })),
+          ...cardTimelogs.map(l => ({
+            durationMinutes: l.durationMinutes || 0,
+            dateStr: l.startTime ? l.startTime.split('T')[0] : l.createdAt ? l.createdAt.split('T')[0] : '',
+          }))
+        ];
 
-        // Calculate stats for cardTimelogs
-        const cardTotalMinutes = cardTimelogs.reduce((sum, l) => sum + (l.durationMinutes || 0), 0);
-        const cardUniqueDays = new Set(
-          cardTimelogs
-            .map((l) => (l.startTime ? l.startTime.split('T')[0] : l.createdAt ? l.createdAt.split('T')[0] : ''))
-            .filter(Boolean)
-        );
+        // Calculate stats for card time items
+        const cardTotalMinutes = combinedTimeItems.reduce((sum, l) => sum + l.durationMinutes, 0);
+        const cardUniqueDays = new Set(combinedTimeItems.map(l => l.dateStr).filter(Boolean));
         const cardDaysCount = Math.max(1, cardUniqueDays.size);
-        const cardDailyAvgMinutes = cardTimelogs.length > 0 ? Math.round(cardTotalMinutes / cardDaysCount) : 0;
+        const cardDailyAvgMinutes = combinedTimeItems.length > 0 ? Math.round(cardTotalMinutes / cardDaysCount) : 0;
 
         // All available tags from notes and timelogs
         const allTimelogTags = Array.from(
@@ -1566,7 +1673,14 @@ export const ProjectsSection: React.FC<Props> = ({
         );
 
         const cardLinkedDriveFilesList = cardDriveIds
-          .map((id) => allDriveFilesMap.get(id))
+          .map((id) => allDriveFilesMap.get(id) || {
+            id,
+            name: 'Google Drive Dosyası',
+            mimeType: 'application/vnd.google-apps.document',
+            webViewLink: id.startsWith('http') ? id : `https://drive.google.com/file/d/${id}/view`,
+            modifiedTime: new Date().toISOString(),
+            isFolder: false,
+          })
           .filter(Boolean) as DriveFile[];
 
         const cardContactIds = Array.from(
@@ -1586,7 +1700,7 @@ export const ProjectsSection: React.FC<Props> = ({
             <div className="bg-white border-b border-slate-200 px-6 py-3.5 flex items-center justify-between gap-4 shrink-0 shadow-2xs">
               <div className="flex items-center gap-3 min-w-0">
                 <button
-                  onClick={() => setDetailTask(null)}
+                  onClick={() => handleSetDetailTask(null)}
                   className="px-3.5 py-1.5 bg-slate-100 hover:bg-slate-200 text-slate-800 rounded-xl text-xs font-black flex items-center gap-1.5 transition-colors cursor-pointer shrink-0"
                 >
                   <ChevronLeft className="w-4 h-4" />
@@ -1604,7 +1718,7 @@ export const ProjectsSection: React.FC<Props> = ({
                   onClick={async () => {
                     if (window.confirm('Bu kartı silmek istediğinizden emin misiniz?')) {
                       await onDeleteTask(detailTask.id);
-                      setDetailTask(null);
+                      handleSetDetailTask(null);
                     }
                   }}
                   className="px-3.5 py-1.5 bg-rose-50 hover:bg-rose-100 text-rose-700 border border-rose-200 rounded-xl text-xs font-extrabold flex items-center gap-1.5 transition-colors cursor-pointer"
@@ -1614,7 +1728,7 @@ export const ProjectsSection: React.FC<Props> = ({
                   <span>Kartı Sil</span>
                 </button>
                 <button
-                  onClick={() => setDetailTask(null)}
+                  onClick={() => handleSetDetailTask(null)}
                   className="p-1.5 text-slate-400 hover:text-slate-700 hover:bg-slate-100 rounded-xl transition-colors cursor-pointer"
                 >
                   <X className="w-5 h-5" />
@@ -1789,9 +1903,21 @@ export const ProjectsSection: React.FC<Props> = ({
                       <FileText className="w-4 h-4 text-purple-600" /> Açıklama & Detaylar
                     </h3>
                     {!isEditingDescription && (
-                      <span className="text-[10px] text-slate-400 font-bold">
-                        (Çift tıklayarak düzenleyin)
-                      </span>
+                      <div className="flex items-center gap-2">
+                        <span className="text-[10px] text-slate-400 font-bold hidden sm:inline">
+                          (Çift tıklayarak düzenleyin)
+                        </span>
+                        <button
+                          onClick={() => {
+                            setEditDescriptionText(detailTask.description || '');
+                            setIsEditingDescription(true);
+                          }}
+                          className="px-2.5 py-1 bg-purple-50 hover:bg-purple-100 text-purple-700 text-xs font-bold rounded-lg border border-purple-200 transition-colors cursor-pointer flex items-center gap-1"
+                        >
+                          <Edit2 className="w-3 h-3" />
+                          <span>Düzenle</span>
+                        </button>
+                      </div>
                     )}
                   </div>
 
@@ -1830,336 +1956,208 @@ export const ProjectsSection: React.FC<Props> = ({
                         setEditDescriptionText(detailTask.description || '');
                         setIsEditingDescription(true);
                       }}
-                      className="text-xs text-slate-800 leading-relaxed bg-slate-50 hover:bg-purple-50/40 p-4 rounded-2xl border border-slate-200 hover:border-purple-300 font-medium whitespace-pre-wrap cursor-pointer transition-all min-h-[80px]"
+                      className="bg-slate-50 hover:bg-purple-50/40 p-4 rounded-2xl border border-slate-200 hover:border-purple-300 font-medium cursor-pointer transition-all min-h-[80px]"
                     >
                       {detailTask.description ? (
-                        detailTask.description
+                        <MarkdownPreview content={detailTask.description} className="text-xs text-slate-800 leading-relaxed" />
                       ) : (
-                        <span className="text-slate-400 italic">
-                          Açıklama girilmemiş. Çift tıklayarak açıklama yazabilirsiniz.
+                        <span className="text-slate-400 italic text-xs">
+                          Açıklama girilmemiş. Çift tıklayarak veya düzenle butonuna basarak açıklama yazabilirsiniz.
                         </span>
                       )}
                     </div>
                   )}
                 </div>
 
-                {/* 2-TAB CONTAINER: NOTLAR & ZAMANLAR */}
+                {/* UNIFIED NOTES SECTION */}
                 <div className="bg-white rounded-3xl border border-slate-200 shadow-xs overflow-hidden">
-                  {/* Tab Navigation Header */}
-                  <div className="flex items-center border-b border-slate-200 bg-slate-50/80 p-2 gap-2">
-                    <button
-                      onClick={() => setDetailActiveTab('notes')}
-                      className={`flex-1 py-2.5 px-4 rounded-2xl text-xs font-black flex items-center justify-center gap-2 transition-all cursor-pointer ${
-                        detailActiveTab === 'notes'
-                          ? 'bg-white text-amber-900 shadow-xs border border-slate-200'
-                          : 'text-slate-500 hover:text-slate-900 hover:bg-slate-100/60'
-                      }`}
-                    >
-                      <FileText className="w-4 h-4 text-amber-500" />
-                      <span>Notlar ({filteredNotes.length})</span>
-                    </button>
+                  <div className="p-5 border-b border-slate-100 flex flex-wrap items-center justify-between gap-3 bg-slate-50/60">
+                    <div className="flex items-center gap-2.5">
+                      <div className="p-2 bg-amber-100 text-amber-800 rounded-2xl">
+                        <FileText className="w-5 h-5 text-amber-600" />
+                      </div>
+                      <div>
+                        <h3 className="text-sm font-black text-slate-900">
+                          Kart Notları ({filteredNotes.length})
+                        </h3>
+                        <p className="text-[11px] text-slate-500">
+                          Bu kart ile ilişkili notlar ve zaman kayıtları
+                        </p>
+                      </div>
+                    </div>
 
                     <button
-                      onClick={() => setDetailActiveTab('timelogs')}
-                      className={`flex-1 py-2.5 px-4 rounded-2xl text-xs font-black flex items-center justify-center gap-2 transition-all cursor-pointer ${
-                        detailActiveTab === 'timelogs'
-                          ? 'bg-white text-purple-900 shadow-xs border border-slate-200'
-                          : 'text-slate-500 hover:text-slate-900 hover:bg-slate-100/60'
-                      }`}
+                      onClick={() =>
+                        onOpenNoteModal({
+                          id: '',
+                          title: '',
+                          content: '',
+                          tags: [],
+                          projectId: detailTask.id,
+                          cardId: detailTask.id,
+                          cardTitle: detailTask.title,
+                          noteType: noteTypeFilter !== 'all' ? noteTypeFilter : 'note',
+                          date: new Date().toISOString().split('T')[0],
+                          createdAt: new Date().toISOString(),
+                          updatedAt: new Date().toISOString(),
+                        } as any)
+                      }
+                      className="px-3.5 py-2 bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-extrabold rounded-xl shadow-xs flex items-center gap-1.5 cursor-pointer transition-colors"
                     >
-                      <Clock className="w-4 h-4 text-purple-600" />
-                      <span>Zamanlar ({cardTimelogs.length})</span>
+                      <Plus className="w-4 h-4" />
+                      <span>Yeni Not Ekle</span>
                     </button>
                   </div>
 
-                  <div className="p-6">
-                    {detailActiveTab === 'notes' ? (
-                      /* --- TAB 1: NOTLAR --- */
-                      <div className="space-y-4">
-                        <div className="flex flex-wrap items-center justify-between gap-3 border-b border-slate-100 pb-3">
-                          <div className="flex items-center gap-2">
-                            <div className="p-2 bg-amber-100 text-amber-700 rounded-xl">
-                              <FileText className="w-4 h-4" />
-                            </div>
-                            <div>
-                              <h3 className="text-sm font-black text-slate-900">
-                                Notlar ({filteredNotes.length})
-                              </h3>
-                              <p className="text-[11px] text-slate-500">
-                                Bu projeye veya karta eklenen notlar
-                              </p>
-                            </div>
-                          </div>
-
-                          {/* Filter & Sort Controls */}
-                          <div className="flex flex-wrap items-center gap-2">
-                            {/* Tag Filter */}
-                            <div className="flex items-center gap-1 bg-slate-50 border border-slate-200 rounded-xl px-2.5 py-1">
-                              <Tag className="w-3 h-3 text-amber-600 shrink-0" />
-                              <select
-                                value={noteTagFilter}
-                                onChange={(e) => setNoteTagFilter(e.target.value)}
-                                className="bg-transparent text-xs font-bold text-slate-800 focus:outline-hidden cursor-pointer"
-                              >
-                                <option value="all">Tüm Etiketler</option>
-                                {allNoteTags.map((tag) => (
-                                  <option key={tag} value={tag}>
-                                    #{tag}
-                                  </option>
-                                ))}
-                              </select>
-                            </div>
-
-                            {/* Sort Order */}
-                            <div className="flex items-center gap-1 bg-slate-50 border border-slate-200 rounded-xl px-2.5 py-1">
-                              <span className="text-[10px] font-extrabold text-slate-400">Sırala:</span>
-                              <select
-                                value={noteSortOrder}
-                                onChange={(e) =>
-                                  setNoteSortOrder(
-                                    e.target.value as 'newest' | 'oldest' | 'title'
-                                  )
-                                }
-                                className="bg-transparent text-xs font-bold text-slate-800 focus:outline-hidden cursor-pointer"
-                              >
-                                <option value="newest">En Yeni</option>
-                                <option value="oldest">En Eski</option>
-                                <option value="title">Başlık (A-Z)</option>
-                              </select>
-                            </div>
-
-                            {/* New Note Button */}
-                            <button
-                              onClick={() =>
-                                onOpenNoteModal({
-                                  id: '',
-                                  title: '',
-                                  content: '',
-                                  tags: [],
-                                  projectId: detailTask.id,
-                                  date: new Date().toISOString().split('T')[0],
-                                  createdAt: new Date().toISOString(),
-                                  updatedAt: new Date().toISOString(),
-                                })
-                              }
-                              className="px-3 py-1.5 bg-amber-500 hover:bg-amber-600 text-white text-xs font-extrabold rounded-xl shadow-2xs flex items-center gap-1 cursor-pointer transition-colors"
-                            >
-                              <Plus className="w-3.5 h-3.5" />
-                              <span>Yeni Not Ekle</span>
-                            </button>
-                          </div>
+                  <div className="p-5 space-y-4">
+                    {/* Filter Toolbar */}
+                    <div className="flex flex-wrap items-center justify-between gap-2.5 p-3 bg-slate-50 border border-slate-200 rounded-2xl">
+                      <div className="flex flex-wrap items-center gap-2 flex-1">
+                        {/* Note Type Filter */}
+                        <div className="flex items-center gap-1.5 bg-white border border-slate-200 rounded-xl px-2.5 py-1.5 shadow-2xs">
+                          <Filter className="w-3.5 h-3.5 text-indigo-600 shrink-0" />
+                          <span className="text-[10px] font-extrabold text-slate-400">Not Türü:</span>
+                          <select
+                            value={noteTypeFilter}
+                            onChange={(e) => setNoteTypeFilter(e.target.value)}
+                            className="bg-transparent text-xs font-bold text-slate-800 focus:outline-hidden cursor-pointer"
+                          >
+                            <option value="all">Tüm Not Türleri</option>
+                            <option value="note">Düz Not</option>
+                            <option value="timelog">Timelog (Zaman)</option>
+                            {noteTypes.filter(nt => !nt.isSystem).map((nt) => (
+                              <option key={nt.id} value={nt.id}>
+                                {nt.name}
+                              </option>
+                            ))}
+                          </select>
                         </div>
 
-                        {/* Notes Cards Container */}
-                        <div className="space-y-3">
-                          {filteredNotes.length === 0 ? (
-                            <div className="p-8 text-center border-2 border-dashed border-slate-200 rounded-2xl text-slate-400 text-xs italic">
-                              {noteTagFilter !== 'all'
-                                ? `"#${noteTagFilter}" etiketine sahip not bulunamadı.`
-                                : 'Henüz not eklenmemiş.'}
-                            </div>
-                          ) : (
-                            filteredNotes.map((note) => (
-                              <div
-                                key={note.id}
-                                className="p-4 bg-amber-50/40 hover:bg-amber-50/80 border border-amber-200/80 rounded-2xl transition-all space-y-2 group"
-                              >
-                                <div className="flex items-start justify-between gap-2">
+                        {/* Tag Filter */}
+                        <div className="flex items-center gap-1.5 bg-white border border-slate-200 rounded-xl px-2.5 py-1.5 shadow-2xs">
+                          <Tag className="w-3.5 h-3.5 text-amber-600 shrink-0" />
+                          <select
+                            value={noteTagFilter}
+                            onChange={(e) => setNoteTagFilter(e.target.value)}
+                            className="bg-transparent text-xs font-bold text-slate-800 focus:outline-hidden cursor-pointer"
+                          >
+                            <option value="all">Tüm Etiketler</option>
+                            {allNoteTags.map((tag) => (
+                              <option key={tag} value={tag}>
+                                #{tag}
+                              </option>
+                            ))}
+                          </select>
+                        </div>
+                      </div>
+
+                      {/* Sort Order */}
+                      <div className="flex items-center gap-1.5 bg-white border border-slate-200 rounded-xl px-2.5 py-1.5 shadow-2xs">
+                        <span className="text-[10px] font-extrabold text-slate-400">Sırala:</span>
+                        <select
+                          value={noteSortOrder}
+                          onChange={(e) => setNoteSortOrder(e.target.value as 'newest' | 'oldest' | 'title')}
+                          className="bg-transparent text-xs font-bold text-slate-800 focus:outline-hidden cursor-pointer"
+                        >
+                          <option value="newest">En Yeni</option>
+                          <option value="oldest">En Eski</option>
+                          <option value="title">Başlık (A-Z)</option>
+                        </select>
+                      </div>
+                    </div>
+
+                    {/* Notes List Cards */}
+                    <div className="space-y-3">
+                      {filteredNotes.length === 0 ? (
+                        <div className="p-8 text-center border-2 border-dashed border-slate-200 rounded-2xl text-slate-400 text-xs italic">
+                          {noteTypeFilter !== 'all' || noteTagFilter !== 'all'
+                            ? 'Seçilen filtrelere uygun not bulunamadı.'
+                            : 'Bu karta ait henüz eklenmiş not yok. "Yeni Not Ekle" butonu ile ekleyebilirsiniz.'}
+                        </div>
+                      ) : (
+                        filteredNotes.map((note) => {
+                          const isTimelog = note.noteType === 'timelog' || (note.durationMinutes && note.durationMinutes > 0);
+                          const ntObj = noteTypes.find(t => t.id === note.noteType);
+
+                          return (
+                            <div
+                              key={note.id}
+                              className={`p-4 rounded-2xl border transition-all space-y-2.5 ${
+                                isTimelog
+                                  ? 'bg-purple-50/40 hover:bg-purple-50/80 border-purple-200/80'
+                                  : 'bg-amber-50/40 hover:bg-amber-50/80 border-amber-200/80'
+                              }`}
+                            >
+                              <div className="flex items-start justify-between gap-2">
+                                <div className="flex items-center gap-2 flex-wrap">
+                                  <span
+                                    className={`px-2 py-0.5 text-[10px] font-extrabold rounded-md flex items-center gap-1 ${
+                                      isTimelog
+                                        ? 'bg-purple-100 text-purple-900 border border-purple-200'
+                                        : 'bg-amber-100 text-amber-900 border border-amber-200'
+                                    }`}
+                                  >
+                                    {isTimelog ? <Clock className="w-3 h-3 text-purple-600" /> : <FileText className="w-3 h-3 text-amber-600" />}
+                                    <span>{ntObj ? ntObj.name : note.noteType === 'timelog' ? 'Timelog' : 'Düz Not'}</span>
+                                  </span>
+
+                                  {note.durationMinutes && note.durationMinutes > 0 && (
+                                    <span className="px-2 py-0.5 bg-purple-600 text-white text-[10px] font-extrabold rounded-md shadow-2xs flex items-center gap-1">
+                                      <Clock className="w-3 h-3" />
+                                      {formatMinutesToText(note.durationMinutes)}
+                                    </span>
+                                  )}
+
                                   <h4 className="font-extrabold text-slate-900 text-xs leading-snug">
                                     {note.title || 'Başlıksız Not'}
                                   </h4>
-                                  <button
-                                    onClick={() => onOpenNoteModal(note)}
-                                    className="px-2.5 py-1 bg-amber-200/60 hover:bg-amber-200 text-amber-900 text-[10px] font-extrabold rounded-lg transition-colors cursor-pointer shrink-0"
-                                  >
-                                    Görüntüle & Düzenle
-                                  </button>
                                 </div>
 
-                                <div className="text-xs text-slate-700 bg-white/80 p-3 rounded-xl border border-amber-100">
-                                  <MarkdownPreview content={note.content} imgMaxHeight="max-h-60" />
-                                </div>
+                                <button
+                                  onClick={() => onOpenNoteModal(note)}
+                                  className="px-2.5 py-1 bg-white hover:bg-slate-100 text-slate-800 text-[10px] font-extrabold rounded-lg border border-slate-200 transition-colors cursor-pointer shrink-0 shadow-2xs"
+                                >
+                                  Görüntüle & Düzenle
+                                </button>
+                              </div>
 
-                                <div className="flex items-center justify-between pt-1 border-t border-amber-200/40 text-[10px] text-slate-400">
-                                  <div className="flex items-center gap-1.5 flex-wrap">
-                                    {note.tags?.map((t) => (
-                                      <span
-                                        key={t}
-                                        className="px-2 py-0.5 bg-amber-200/60 text-amber-900 font-bold rounded-md"
-                                      >
-                                        #{t}
+                              {/* Render Custom Fields if present */}
+                              {note.customFields && Object.keys(note.customFields).length > 0 && (
+                                <div className="flex flex-wrap gap-1.5 p-2 bg-white/90 rounded-xl border border-slate-200/70 text-[11px]">
+                                  {Object.entries(note.customFields).map(([k, v]) => {
+                                    const fDef = ntObj?.fields?.find(f => f.id === k);
+                                    const label = fDef ? fDef.name : k;
+                                    return (
+                                      <span key={k} className="px-2 py-0.5 bg-indigo-50 text-indigo-900 border border-indigo-200 rounded-md font-bold">
+                                        {label}: <span className="font-extrabold">{String(v)}</span>
                                       </span>
-                                    ))}
-                                  </div>
-                                  <span>{note.date}</span>
+                                    );
+                                  })}
                                 </div>
+                              )}
+
+                              <div className="text-xs text-slate-700 bg-white/80 p-3 rounded-xl border border-slate-200/60">
+                                <MarkdownPreview content={note.content} imgMaxHeight="max-h-60" />
                               </div>
-                            ))
-                          )}
-                        </div>
-                      </div>
-                    ) : (
-                      /* --- TAB 2: ZAMANLAR --- */
-                      <div className="space-y-4">
-                        {/* Top Summary Stats Banner */}
-                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 p-4 bg-gradient-to-br from-purple-900 via-indigo-900 to-slate-900 text-white rounded-2xl shadow-xs">
-                          <div className="flex items-center gap-3">
-                            <div className="p-2.5 bg-white/10 rounded-xl backdrop-blur-xs">
-                              <Clock className="w-5 h-5 text-purple-300" />
-                            </div>
-                            <div>
-                              <div className="text-[10px] font-extrabold text-purple-200 uppercase tracking-wider">
-                                Kart'la İlişkili Toplam Zaman
-                              </div>
-                              <div className="text-lg font-black text-white">
-                                {formatMinutesToText(cardTotalMinutes)}
-                              </div>
-                            </div>
-                          </div>
 
-                          <div className="flex items-center gap-3 border-t sm:border-t-0 sm:border-l border-white/10 pt-3 sm:pt-0 sm:pl-4">
-                            <div className="p-2.5 bg-white/10 rounded-xl backdrop-blur-xs">
-                              <BarChart3 className="w-5 h-5 text-indigo-300" />
-                            </div>
-                            <div>
-                              <div className="text-[10px] font-extrabold text-indigo-200 uppercase tracking-wider">
-                                Günlük Ortalama Süre
-                              </div>
-                              <div className="text-lg font-black text-white">
-                                {formatMinutesToText(cardDailyAvgMinutes)}
-                                <span className="text-[11px] font-normal text-purple-200 ml-1.5">
-                                  / gün ({cardUniqueDays.size} aktif gün)
-                                </span>
-                              </div>
-                            </div>
-                          </div>
-                        </div>
-
-                        {/* Filter & Search Toolbar */}
-                        <div className="flex flex-wrap items-center justify-between gap-2 pt-1 pb-2 border-b border-slate-100">
-                          <div className="flex flex-wrap items-center gap-2 flex-1">
-                            {/* Search Input */}
-                            <div className="relative min-w-[150px] flex-1">
-                              <Search className="w-3.5 h-3.5 text-slate-400 absolute left-2.5 top-1/2 -translate-y-1/2" />
-                              <input
-                                type="text"
-                                value={timelogSearch}
-                                onChange={(e) => setTimelogSearch(e.target.value)}
-                                placeholder="Zaman kaydı ara..."
-                                className="w-full pl-8 pr-2.5 py-1.5 bg-slate-50 border border-slate-200 rounded-xl text-xs font-medium text-slate-800 focus:outline-hidden focus:bg-white"
-                              />
-                            </div>
-
-                            {/* Service Filter */}
-                            <div className="flex items-center gap-1 bg-slate-50 border border-slate-200 rounded-xl px-2.5 py-1.5">
-                              <Filter className="w-3 h-3 text-purple-600 shrink-0" />
-                              <select
-                                value={timelogServiceFilter}
-                                onChange={(e) => setTimelogServiceFilter(e.target.value)}
-                                className="bg-transparent text-xs font-bold text-slate-800 focus:outline-hidden cursor-pointer"
-                              >
-                                <option value="all">Tüm Servisler</option>
-                                <option value="calendar">Google Takvim</option>
-                                <option value="gmail">Gmail</option>
-                                <option value="drive">Google Drive</option>
-                                <option value="tasks">Google Görevler</option>
-                                <option value="card_only">Sadece Kart</option>
-                              </select>
-                            </div>
-
-                            {/* Tag Filter */}
-                            <div className="flex items-center gap-1 bg-slate-50 border border-slate-200 rounded-xl px-2.5 py-1.5">
-                              <Tag className="w-3 h-3 text-purple-600 shrink-0" />
-                              <select
-                                value={timelogTagFilter}
-                                onChange={(e) => setTimelogTagFilter(e.target.value)}
-                                className="bg-transparent text-xs font-bold text-slate-800 focus:outline-hidden cursor-pointer"
-                              >
-                                <option value="all">Tüm Etiketler</option>
-                                {allTimelogTags.map((tag) => (
-                                  <option key={tag} value={tag}>
-                                    #{tag}
-                                  </option>
-                                ))}
-                              </select>
-                            </div>
-                          </div>
-
-                          {/* Add Manual Timelog Button */}
-                          <button
-                            onClick={handleOpenAddTimelogModal}
-                            className="px-3.5 py-1.5 bg-purple-600 hover:bg-purple-700 text-white text-xs font-extrabold rounded-xl shadow-2xs flex items-center gap-1.5 cursor-pointer transition-colors shrink-0"
-                          >
-                            <Plus className="w-3.5 h-3.5" />
-                            <span>Manuel Kayıt Ekle</span>
-                          </button>
-                        </div>
-
-                        {/* Timelogs List Cards */}
-                        <div className="space-y-2.5">
-                          {filteredCardTimelogs.length === 0 ? (
-                            <div className="p-8 text-center border-2 border-dashed border-slate-200 rounded-2xl text-slate-400 text-xs italic">
-                              {timelogSearch || timelogServiceFilter !== 'all' || timelogTagFilter !== 'all'
-                                ? 'Filtrelere uygun zaman kaydı bulunamadı.'
-                                : 'Bu karta ait henüz zaman kaydı yok. "Manuel Kayıt Ekle" butonu ile zaman kaydı ekleyebilirsiniz.'}
-                            </div>
-                          ) : (
-                            filteredCardTimelogs.map((log) => (
-                              <div
-                                key={log.id}
-                                className="p-3.5 bg-purple-50/30 hover:bg-purple-50/70 border border-purple-200/60 rounded-2xl transition-all flex flex-col sm:flex-row sm:items-center justify-between gap-3"
-                              >
-                                <div className="space-y-1 min-w-0 flex-1">
-                                  <div className="flex items-center gap-2 flex-wrap">
-                                    <span className="text-xs font-bold text-slate-900">
-                                      {log.description || 'Açıklamasız Kayıt'}
+                              <div className="flex items-center justify-between pt-1 border-t border-slate-200/40 text-[10px] text-slate-400">
+                                <div className="flex items-center gap-1.5 flex-wrap">
+                                  {note.tags?.map((t) => (
+                                    <span
+                                      key={t}
+                                      className="px-2 py-0.5 bg-slate-200/70 text-slate-800 font-bold rounded-md"
+                                    >
+                                      #{t}
                                     </span>
-                                    {log.linkType && (
-                                      <span className="px-2 py-0.5 bg-purple-100 text-purple-800 text-[10px] font-black rounded-md flex items-center gap-1">
-                                        {log.linkType === 'calendar' && <Calendar className="w-3 h-3 text-blue-600" />}
-                                        {log.linkType === 'gmail' && <Mail className="w-3 h-3 text-rose-600" />}
-                                        {log.linkType === 'drive' && <HardDrive className="w-3 h-3 text-emerald-600" />}
-                                        {log.linkType === 'tasks' && <CheckCircle2 className="w-3 h-3 text-purple-600" />}
-                                        <span>{log.linkTitle || log.linkType}</span>
-                                      </span>
-                                    )}
-                                  </div>
-
-                                  <div className="flex items-center gap-3 text-[10px] text-slate-500 flex-wrap">
-                                    <span>
-                                      📅 {log.startTime ? new Date(log.startTime).toLocaleString('tr-TR', { dateStyle: 'short', timeStyle: 'short' }) : 'Belirtilmedi'}
-                                    </span>
-                                    {log.tags && log.tags.length > 0 && (
-                                      <div className="flex items-center gap-1">
-                                        {log.tags.map((t) => (
-                                          <span key={t} className="px-1.5 py-0.2 bg-slate-200/70 text-slate-700 font-bold rounded-md">
-                                            #{t}
-                                          </span>
-                                        ))}
-                                      </div>
-                                    )}
-                                  </div>
+                                  ))}
                                 </div>
-
-                                <div className="flex items-center gap-2 shrink-0 self-end sm:self-center">
-                                  <span className="px-2.5 py-1 bg-purple-600 text-white text-xs font-black rounded-xl shadow-2xs flex items-center gap-1">
-                                    <Clock className="w-3 h-3" />
-                                    {formatMinutesToText(log.durationMinutes)}
-                                  </span>
-                                  <button
-                                    onClick={() => handleDeleteTimelog(log.id)}
-                                    className="p-1.5 text-slate-400 hover:text-rose-600 hover:bg-rose-50 rounded-lg transition-colors cursor-pointer"
-                                    title="Sil"
-                                  >
-                                    <Trash2 className="w-3.5 h-3.5" />
-                                  </button>
-                                </div>
+                                <span>{note.date || (note.startTime ? note.startTime.split('T')[0] : '')}</span>
                               </div>
-                            ))
-                          )}
-                        </div>
-                      </div>
-                    )}
+                            </div>
+                          );
+                        })
+                      )}
+                    </div>
                   </div>
                 </div>
 
@@ -2167,6 +2165,44 @@ export const ProjectsSection: React.FC<Props> = ({
 
               {/* RIGHT COLUMN (4 cols in lg: 33% width - Connected Items) */}
               <div className="lg:col-span-4 space-y-6">
+
+                {/* Time Summary Widgets connected to Right Column top */}
+                <div className="bg-gradient-to-br from-purple-900 via-indigo-900 to-slate-900 text-white rounded-3xl p-5 shadow-xs space-y-3.5 border border-purple-800">
+                  <div className="flex items-center justify-between border-b border-white/10 pb-2.5">
+                    <div className="flex items-center gap-2">
+                      <div className="p-2 bg-white/10 rounded-xl backdrop-blur-xs">
+                        <Clock className="w-4 h-4 text-purple-300" />
+                      </div>
+                      <div>
+                        <h4 className="text-xs font-black text-white">Kart Zaman Analizi</h4>
+                        <p className="text-[10px] text-purple-200">Kart'a harcanan toplam ve ortalama süre</p>
+                      </div>
+                    </div>
+                  </div>
+
+                  <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-1 gap-3">
+                    <div className="p-3 bg-white/10 rounded-2xl backdrop-blur-xs">
+                      <div className="text-[10px] font-extrabold text-purple-200 uppercase tracking-wider">
+                        Kart'la İlişkili Toplam Zaman
+                      </div>
+                      <div className="text-lg font-black text-white mt-0.5">
+                        {formatMinutesToText(cardTotalMinutes)}
+                      </div>
+                    </div>
+
+                    <div className="p-3 bg-white/10 rounded-2xl backdrop-blur-xs">
+                      <div className="text-[10px] font-extrabold text-indigo-200 uppercase tracking-wider">
+                        Günlük Ortalama Süre
+                      </div>
+                      <div className="text-lg font-black text-white mt-0.5">
+                        {formatMinutesToText(cardDailyAvgMinutes)}
+                        <span className="text-[10px] font-normal text-purple-200 block sm:inline lg:block">
+                          ({cardUniqueDays.size} aktif gün)
+                        </span>
+                      </div>
+                    </div>
+                  </div>
+                </div>
                 
                 <div className="bg-white rounded-3xl p-6 border border-slate-200 shadow-xs space-y-5">
                   <div className="border-b border-slate-100 pb-3">
@@ -3045,15 +3081,18 @@ export const ProjectsSection: React.FC<Props> = ({
             >
               {/* Description */}
               <div>
-                <label className="block text-xs font-black text-slate-700 mb-1">
-                  Açıklama / Yapılan İş
-                </label>
-                <input
-                  type="text"
+                <div className="flex items-center justify-between mb-1">
+                  <label className="block text-xs font-black text-slate-700">
+                    Açıklama / Yapılan İş (Markdown Destekli)
+                  </label>
+                  <span className="text-[10px] text-slate-400 font-normal">**kalın**, *italik*, # başlık, - liste</span>
+                </div>
+                <textarea
+                  rows={3}
                   required
                   value={manualDescription}
                   onChange={(e) => setManualDescription(e.target.value)}
-                  placeholder="Örn: Tasarım incelemesi yapıldı ve revizyonlar girildi"
+                  placeholder="Örn: Tasarım incelemesi yapıldı ve revizyonlar girildi (**kalın**, *italik*, - liste vb. kullanılabilir)"
                   className="w-full px-3.5 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-xs font-medium text-slate-900 focus:outline-hidden focus:border-purple-500"
                 />
               </div>

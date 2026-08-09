@@ -1,11 +1,19 @@
-import React from 'react';
-import { Settings, Moon, Sun, Globe, Check, Palette, Languages, Sparkles } from 'lucide-react';
+import React, { useState } from 'react';
+import { Settings, Moon, Sun, Globe, Check, Palette, Languages, Sparkles, Tag, Plus, Edit2, Trash2, Shield, Layers, FileText, Clock, X } from 'lucide-react';
+import { NoteType, NoteTypeField } from '../types';
 
 interface Props {
   theme: 'light' | 'dark';
   onThemeChange: (theme: 'light' | 'dark') => void;
   language: 'tr' | 'en';
   onLanguageChange: (language: 'tr' | 'en') => void;
+  noteTypes?: NoteType[];
+  onSaveNoteType?: (typeData: NoteType) => Promise<void> | void;
+  onDeleteNoteType?: (id: string) => Promise<void> | void;
+}
+
+interface EditableField extends NoteTypeField {
+  _optionsRaw?: string;
 }
 
 export const SettingsSection: React.FC<Props> = ({
@@ -13,8 +21,124 @@ export const SettingsSection: React.FC<Props> = ({
   onThemeChange,
   language,
   onLanguageChange,
+  noteTypes = [
+    { id: 'note', name: 'Düz Not', isSystem: true },
+    { id: 'timelog', name: 'Timelog', isSystem: true },
+  ],
+  onSaveNoteType,
+  onDeleteNoteType,
 }) => {
   const isTr = language === 'tr';
+
+  // Custom Note Type Editor Modal State
+  const [isTypeModalOpen, setIsTypeModalOpen] = useState(false);
+  const [editingType, setEditingType] = useState<NoteType | null>(null);
+  const [typeName, setTypeName] = useState('');
+  const [fields, setFields] = useState<EditableField[]>([]);
+  const [isSavingType, setIsSavingType] = useState(false);
+
+  const handleOpenNewTypeModal = () => {
+    setEditingType(null);
+    setTypeName('');
+    setFields([]);
+    setIsTypeModalOpen(true);
+  };
+
+  const handleOpenEditTypeModal = (nt: NoteType) => {
+    if (nt.isSystem) return;
+    setEditingType(nt);
+    setTypeName(nt.name);
+    const preparedFields: EditableField[] = (nt.fields || []).map((f) => ({
+      ...f,
+      _optionsRaw: f.options ? f.options.join('; ') : '',
+    }));
+    setFields(preparedFields);
+    setIsTypeModalOpen(true);
+  };
+
+  const handleAddField = () => {
+    setFields([
+      ...fields,
+      {
+        id: `f-${Date.now()}-${Math.random().toString(36).substring(2, 6)}`,
+        name: '',
+        type: 'number',
+        required: false,
+        options: [],
+        _optionsRaw: '',
+      },
+    ]);
+  };
+
+  const handleRemoveField = (id: string) => {
+    setFields(fields.filter((f) => f.id !== id));
+  };
+
+  const handleFieldChange = (id: string, key: keyof EditableField, val: any) => {
+    setFields(
+      fields.map((f) => {
+        if (f.id === id) {
+          const updated = { ...f, [key]: val };
+          if (key === 'type' && val === 'select' && !updated._optionsRaw && updated.options?.length) {
+            updated._optionsRaw = updated.options.join('; ');
+          }
+          return updated;
+        }
+        return f;
+      })
+    );
+  };
+
+  const handleOptionsRawChange = (fieldId: string, rawText: string) => {
+    const parsedOptions = rawText
+      .split(';')
+      .map((s) => s.trim())
+      .filter((s) => s.length > 0);
+
+    setFields((prev) =>
+      prev.map((f) => {
+        if (f.id === fieldId) {
+          return {
+            ...f,
+            _optionsRaw: rawText,
+            options: parsedOptions,
+          };
+        }
+        return f;
+      })
+    );
+  };
+
+  const handleSaveTypeSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!typeName.trim()) return;
+    setIsSavingType(true);
+
+    try {
+      const cleanedFields: NoteTypeField[] = fields
+        .filter((f) => f.name.trim() !== '')
+        .map(({ _optionsRaw, ...f }) => ({
+          ...f,
+          options: f.type === 'select' ? (f.options && f.options.length > 0 ? f.options : []) : undefined,
+        }));
+
+      const typeData: NoteType = {
+        id: editingType ? editingType.id : `type-${Date.now()}`,
+        name: typeName.trim(),
+        isSystem: false,
+        fields: cleanedFields,
+      };
+
+      if (onSaveNoteType) {
+        await onSaveNoteType(typeData);
+      }
+      setIsTypeModalOpen(false);
+    } catch (err) {
+      console.error('Save Note Type Error:', err);
+    } finally {
+      setIsSavingType(false);
+    }
+  };
 
   return (
     <div className="max-w-4xl mx-auto space-y-6 animate-in fade-in zoom-in-95 duration-150">
@@ -213,6 +337,293 @@ export const SettingsSection: React.FC<Props> = ({
           </div>
         </div>
       </div>
+
+      {/* 3. NOT TÜRLERİ VE ÖZEL PARAMETRE YÖNETİMİ */}
+      <div className="bg-white dark:bg-slate-800 rounded-3xl p-6 border border-slate-200/80 dark:border-slate-700 shadow-2xs space-y-5">
+        <div className="flex flex-wrap items-center justify-between gap-3 border-b border-slate-100 dark:border-slate-700/80 pb-4">
+          <div className="flex items-center gap-2.5">
+            <div className="p-2 bg-purple-100 dark:bg-purple-950/60 text-purple-700 dark:text-purple-400 rounded-xl">
+              <Layers className="w-5 h-5" />
+            </div>
+            <div>
+              <h3 className="font-extrabold text-slate-900 dark:text-white text-base">
+                {isTr ? 'Not Türleri ve Özel Parametreler' : 'Note Types & Custom Parameters'}
+              </h3>
+              <p className="text-xs text-slate-500 dark:text-slate-400">
+                {isTr
+                  ? 'Sabit türler (Düz Not, Timelog) haricinde yeni not türleri ekleyin ve sayı, metin, tarih gibi özel alanlar tanımlayın'
+                  : 'Define custom note types and custom fields like numbers, text, or dates'}
+              </p>
+            </div>
+          </div>
+
+          <button
+            onClick={handleOpenNewTypeModal}
+            className="px-4 py-2 bg-purple-600 hover:bg-purple-700 text-white font-extrabold text-xs rounded-xl transition-all shadow-xs flex items-center gap-1.5 cursor-pointer"
+          >
+            <Plus className="w-4 h-4" />
+            <span>{isTr ? 'Yeni Not Türü Ekle' : 'Add Note Type'}</span>
+          </button>
+        </div>
+
+        {/* Note Types List */}
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-3.5 pt-1">
+          {noteTypes.map((nt) => (
+            <div
+              key={nt.id}
+              className={`p-4 rounded-2xl border transition-all flex flex-col justify-between space-y-3 ${
+                nt.isSystem
+                  ? 'bg-slate-50/80 dark:bg-slate-900/40 border-slate-200 dark:border-slate-700'
+                  : 'bg-white dark:bg-slate-800 border-purple-200 dark:border-purple-800/80 shadow-2xs'
+              }`}
+            >
+              <div className="flex items-start justify-between gap-2">
+                <div className="flex items-center gap-2.5">
+                  <div
+                    className={`p-2 rounded-xl text-white font-black text-xs flex items-center justify-center ${
+                      nt.id === 'timelog'
+                        ? 'bg-purple-600'
+                        : nt.id === 'note'
+                        ? 'bg-slate-700'
+                        : 'bg-indigo-600'
+                    }`}
+                  >
+                    {nt.id === 'timelog' ? (
+                      <Clock className="w-4 h-4" />
+                    ) : (
+                      <FileText className="w-4 h-4" />
+                    )}
+                  </div>
+                  <div>
+                    <h4 className="font-extrabold text-slate-900 dark:text-white text-sm flex items-center gap-2">
+                      <span>{nt.name}</span>
+                      {nt.isSystem && (
+                        <span className="px-2 py-0.5 bg-slate-200 dark:bg-slate-700 text-slate-700 dark:text-slate-300 text-[10px] font-black rounded-md flex items-center gap-1">
+                          <Shield className="w-3 h-3 text-amber-500" /> Sabit / Silinemez
+                        </span>
+                      )}
+                    </h4>
+                    <p className="text-[11px] text-slate-500 dark:text-slate-400 mt-0.5">
+                      {nt.id === 'timelog'
+                        ? 'Zaman takibi için başlangıç & bitiş zamanı içeren standart not'
+                        : nt.id === 'note'
+                        ? 'Genel serbest metin ve çizim notu'
+                        : `${nt.fields?.length || 0} adet özel parametre alanı`}
+                    </p>
+                  </div>
+                </div>
+
+                {!nt.isSystem && (
+                  <div className="flex items-center gap-1">
+                    <button
+                      onClick={() => handleOpenEditTypeModal(nt)}
+                      className="p-1.5 text-slate-400 hover:text-indigo-600 hover:bg-indigo-50 dark:hover:bg-indigo-950/50 rounded-lg transition-colors cursor-pointer"
+                      title="Düzenle"
+                    >
+                      <Edit2 className="w-3.5 h-3.5" />
+                    </button>
+                    <button
+                      onClick={() => onDeleteNoteType && onDeleteNoteType(nt.id)}
+                      className="p-1.5 text-slate-400 hover:text-rose-600 hover:bg-rose-50 dark:hover:bg-rose-950/50 rounded-lg transition-colors cursor-pointer"
+                      title="Sil"
+                    >
+                      <Trash2 className="w-3.5 h-3.5" />
+                    </button>
+                  </div>
+                )}
+              </div>
+
+              {/* Render Fields Pills for Custom Types */}
+              {nt.fields && nt.fields.length > 0 && (
+                <div className="pt-2 border-t border-slate-100 dark:border-slate-700 flex flex-wrap gap-1.5">
+                  {nt.fields.map((f) => (
+                    <span
+                      key={f.id}
+                      className="px-2 py-0.5 bg-indigo-50 dark:bg-indigo-950/60 text-indigo-800 dark:text-indigo-300 border border-indigo-200 dark:border-indigo-800/80 rounded-md text-[10px] font-bold"
+                    >
+                      {f.name} ({f.type === 'number' ? 'Sayı' : f.type === 'text' ? 'Metin' : f.type === 'date' ? 'Tarih' : f.type === 'boolean' ? 'Evet/Hayır' : 'Seçim'})
+                    </span>
+                  ))}
+                </div>
+              )}
+            </div>
+          ))}
+        </div>
+      </div>
+
+      {/* MODAL: NOT TÜRÜ OLUŞTURMA / DÜZENLEME MODALI */}
+      {isTypeModalOpen && (
+        <div className="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-xs flex items-center justify-center p-3 sm:p-4">
+          <div className="bg-white dark:bg-slate-800 rounded-3xl max-w-xl w-full p-6 shadow-2xl border border-slate-200 dark:border-slate-700 space-y-5 animate-in fade-in zoom-in-95 duration-150 max-h-[90vh] overflow-y-auto">
+            <div className="flex items-center justify-between border-b border-slate-100 dark:border-slate-700 pb-3">
+              <div className="flex items-center gap-2.5">
+                <div className="p-2 bg-purple-100 dark:bg-purple-950/60 text-purple-700 dark:text-purple-400 rounded-xl">
+                  <Layers className="w-5 h-5" />
+                </div>
+                <div>
+                  <h3 className="font-extrabold text-slate-900 dark:text-white text-base">
+                    {editingType ? 'Not Türünü Düzenle' : 'Yeni Not Türü Tanımla'}
+                  </h3>
+                  <p className="text-xs text-slate-500 dark:text-slate-400">
+                    Not türü adı ve not oluştururken istenecek özel parametre alanlarını belirleyin
+                  </p>
+                </div>
+              </div>
+              <button
+                onClick={() => setIsTypeModalOpen(false)}
+                className="p-1.5 text-slate-400 hover:text-slate-600 rounded-xl transition-colors cursor-pointer"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            <form onSubmit={handleSaveTypeSubmit} className="space-y-4">
+              <div>
+                <label className="block text-xs font-bold text-slate-700 dark:text-slate-300 mb-1">
+                  Not Türü Adı <span className="text-rose-500">*</span>
+                </label>
+                <input
+                  type="text"
+                  value={typeName}
+                  onChange={(e) => setTypeName(e.target.value)}
+                  placeholder="Örn: Fiyat Notu, Müşteri Teklifi, Saha Faturası"
+                  required
+                  className="w-full px-3.5 py-2 text-xs bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-xl font-bold text-slate-900 dark:text-white"
+                />
+              </div>
+
+              {/* Dynamic Parameter Fields Section */}
+              <div className="space-y-3 pt-2 border-t border-slate-100 dark:border-slate-700">
+                <div className="flex items-center justify-between">
+                  <div>
+                    <label className="block text-xs font-bold text-slate-800 dark:text-slate-200">
+                      Özel Parametre Alanları (Veri Tipleri)
+                    </label>
+                    <p className="text-[11px] text-slate-500 dark:text-slate-400">
+                      Örn: 'Fiyat' adı verip 'Sayı' tipini seçerseniz not girerken sayı istenir.
+                    </p>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={handleAddField}
+                    className="px-2.5 py-1 bg-indigo-50 dark:bg-indigo-950/60 text-indigo-700 dark:text-indigo-300 hover:bg-indigo-100 font-bold text-xs rounded-lg transition-colors flex items-center gap-1 cursor-pointer"
+                  >
+                    <Plus className="w-3.5 h-3.5" /> Parametre Ekle
+                  </button>
+                </div>
+
+                {fields.length === 0 ? (
+                  <div className="p-4 bg-slate-50 dark:bg-slate-900/50 border border-dashed border-slate-200 dark:border-slate-700 rounded-xl text-center text-slate-400 text-xs italic">
+                    Henüz özel parametre alanı eklenmedi. Standart not metnine ek özel alanlar için "Parametre Ekle" butonuna basın.
+                  </div>
+                ) : (
+                  <div className="space-y-2.5 max-h-60 overflow-y-auto pr-1">
+                    {fields.map((f, idx) => (
+                      <div
+                        key={f.id}
+                        className="p-3 bg-slate-50 dark:bg-slate-900/80 border border-slate-200 dark:border-slate-700 rounded-xl space-y-2"
+                      >
+                        <div className="flex items-center gap-2 flex-wrap sm:flex-nowrap">
+                          <div className="flex-1 min-w-[140px]">
+                            <input
+                              type="text"
+                              value={f.name}
+                              onChange={(e) => handleFieldChange(f.id, 'name', e.target.value)}
+                              placeholder={`Parametre Adı (Örn: Fiyat)`}
+                              required
+                              className="w-full px-2.5 py-1.5 text-xs bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-lg font-bold text-slate-800 dark:text-white"
+                            />
+                          </div>
+
+                          <div className="w-36">
+                            <select
+                              value={f.type}
+                              onChange={(e) => handleFieldChange(f.id, 'type', e.target.value)}
+                              className="w-full px-2 py-1.5 text-xs bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-lg font-semibold text-slate-800 dark:text-white"
+                            >
+                              <option value="number">Sayı (Number)</option>
+                              <option value="text">Metin (Text)</option>
+                              <option value="date">Tarih (Date)</option>
+                              <option value="boolean">Evet/Hayır (Bool)</option>
+                              <option value="select">Seçim Listesi</option>
+                            </select>
+                          </div>
+
+                          <label className="flex items-center gap-1.5 cursor-pointer text-[10px] font-bold text-slate-600 dark:text-slate-300 select-none">
+                            <input
+                              type="checkbox"
+                              checked={!!f.required}
+                              onChange={(e) => handleFieldChange(f.id, 'required', e.target.checked)}
+                              className="w-3.5 h-3.5 rounded border-slate-300 text-purple-600"
+                            />
+                            Zorunlu
+                          </label>
+
+                          <button
+                            type="button"
+                            onClick={() => handleRemoveField(f.id)}
+                            className="p-1.5 text-slate-400 hover:text-rose-600 hover:bg-rose-50 dark:hover:bg-rose-950/50 rounded-lg transition-colors cursor-pointer shrink-0 ml-auto sm:ml-0"
+                            title="Parametreyi Sil"
+                          >
+                            <Trash2 className="w-4 h-4" />
+                          </button>
+                        </div>
+
+                        {/* Options Input for 'select' type */}
+                        {f.type === 'select' && (
+                          <div className="pt-2 border-t border-slate-200/80 dark:border-slate-700/80 space-y-1.5">
+                            <label className="block text-[10px] font-extrabold text-indigo-700 dark:text-indigo-400">
+                              Seçenek Listesi (Noktalı virgül ';' ile ayırarak yazın) <span className="text-rose-500">*</span>
+                            </label>
+                            <input
+                              type="text"
+                              value={f._optionsRaw ?? (f.options ? f.options.join('; ') : '')}
+                              onChange={(e) => handleOptionsRawChange(f.id, e.target.value)}
+                              placeholder="Örn: Seçenek 1; Seçenek 2; Seçenek 3"
+                              required
+                              className="w-full px-2.5 py-1.5 text-xs bg-white dark:bg-slate-800 border border-indigo-200 dark:border-indigo-800/80 rounded-lg font-medium text-slate-800 dark:text-white placeholder:text-slate-400"
+                            />
+                            {f.options && f.options.length > 0 && (
+                              <div className="flex flex-wrap gap-1 mt-1">
+                                {f.options.map((opt, i) => (
+                                  <span
+                                    key={i}
+                                    className="px-2 py-0.5 bg-indigo-100 dark:bg-indigo-950/80 text-indigo-800 dark:text-indigo-300 text-[10px] font-bold rounded-md"
+                                  >
+                                    {opt}
+                                  </span>
+                                ))}
+                              </div>
+                            )}
+                          </div>
+                        )}
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+
+              <div className="flex items-center justify-end gap-2.5 pt-3 border-t border-slate-100 dark:border-slate-700">
+                <button
+                  type="button"
+                  onClick={() => setIsTypeModalOpen(false)}
+                  className="px-4 py-2 bg-slate-100 hover:bg-slate-200 dark:bg-slate-700 dark:hover:bg-slate-600 text-slate-700 dark:text-slate-200 font-bold text-xs rounded-xl transition-colors cursor-pointer"
+                >
+                  İptal
+                </button>
+                <button
+                  type="submit"
+                  disabled={isSavingType}
+                  className="px-5 py-2 bg-purple-600 hover:bg-purple-700 text-white font-extrabold text-xs rounded-xl transition-all shadow-xs flex items-center gap-1.5 cursor-pointer disabled:opacity-50"
+                >
+                  <Check className="w-4 h-4" />
+                  <span>{editingType ? 'Güncelle' : 'Kaydet'}</span>
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
     </div>
   );
 };

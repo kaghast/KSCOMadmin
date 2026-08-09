@@ -14,9 +14,12 @@ import {
   BookOpen,
   Mail,
   Calendar as CalendarIcon,
+  Filter,
+  ArrowUpDown,
+  Layers,
 } from 'lucide-react';
 import { MarkdownPreview } from './MarkdownPreview';
-import { NoteItem, ContactItem, NoteLocation, EmailItem, CalendarEvent, TimeLog } from '../types';
+import { NoteItem, ContactItem, NoteLocation, EmailItem, CalendarEvent, TimeLog, NoteType } from '../types';
 import { NoteCalendarSidebar } from './NoteCalendarSidebar';
 
 interface Props {
@@ -26,6 +29,7 @@ interface Props {
   events?: CalendarEvent[];
   locations: NoteLocation[];
   timeLogs?: TimeLog[];
+  noteTypes?: NoteType[];
   onAddNote: () => void;
   onEditNote: (note: NoteItem) => void;
   onDeleteNote: (id: string) => Promise<void>;
@@ -42,6 +46,7 @@ export const NotesSection: React.FC<Props> = ({
   events = [],
   locations,
   timeLogs = [],
+  noteTypes = [],
   onAddNote,
   onEditNote,
   onDeleteNote,
@@ -53,19 +58,53 @@ export const NotesSection: React.FC<Props> = ({
   const [searchTerm, setSearchTerm] = useState('');
   const [selectedTagFilter, setSelectedTagFilter] = useState<string | null>(null);
   const [selectedDateFilter, setSelectedDateFilter] = useState<string | null>(null);
+  const [selectedTypeFilter, setSelectedTypeFilter] = useState<string>('all');
+  const [sortBy, setSortBy] = useState<'newest' | 'oldest' | 'title-asc' | 'title-desc' | 'updated'>('newest');
 
-  // Extract all unique tags across notes and timelogs
+  // 1. Exclude 'timelog' type notes from Note Management
+  const nonTimelogNotes = notes.filter((n) => n.noteType !== 'timelog');
+
+  // Helper to get printable name for note type
+  const getNoteTypeName = (typeId?: string) => {
+    if (!typeId || typeId === 'note') return 'Standart Not';
+    const found = noteTypes.find((t) => t.id === typeId);
+    return found ? found.name : typeId;
+  };
+
+  // Collect available note type options (excluding timelog)
+  const availableTypeOptions = React.useMemo(() => {
+    const optionsMap = new Map<string, string>();
+    optionsMap.set('note', 'Standart Not');
+
+    // Add custom types from noteTypes prop
+    noteTypes.forEach((nt) => {
+      if (nt.id !== 'timelog') {
+        optionsMap.set(nt.id, nt.name);
+      }
+    });
+
+    // Add any types present in notes
+    nonTimelogNotes.forEach((n) => {
+      if (n.noteType && n.noteType !== 'timelog' && !optionsMap.has(n.noteType)) {
+        optionsMap.set(n.noteType, n.noteType);
+      }
+    });
+
+    return Array.from(optionsMap.entries()).map(([id, name]) => ({ id, name }));
+  }, [noteTypes, nonTimelogNotes]);
+
+  // Extract all unique tags across non-timelog notes and timelogs
   const allTags = Array.from(
     new Set(
       [
-        ...notes.flatMap((n) => n.tags || []),
+        ...nonTimelogNotes.flatMap((n) => n.tags || []),
         ...timeLogs.flatMap((tl) => tl.tags || []),
       ].filter((t) => t && typeof t === 'string' && t.trim())
     )
   );
 
-  // Filter notes based on search, tag, date
-  const filteredNotes = notes.filter((n) => {
+  // Filter notes based on search, type, tag, date
+  const filteredNotes = nonTimelogNotes.filter((n) => {
     const term = searchTerm.toLowerCase();
     const matchesSearch =
       n.title.toLowerCase().includes(term) ||
@@ -76,17 +115,38 @@ export const NotesSection: React.FC<Props> = ({
       (n.linkedEvents && n.linkedEvents.some((ev) => ev.summary.toLowerCase().includes(term))) ||
       (n.location && n.location.name.toLowerCase().includes(term));
 
+    const matchesType =
+      selectedTypeFilter === 'all' ||
+      (selectedTypeFilter === 'note' && (!n.noteType || n.noteType === 'note')) ||
+      n.noteType === selectedTypeFilter;
+
     const matchesTag = !selectedTagFilter || (n.tags && n.tags.includes(selectedTagFilter));
     const matchesDate = !selectedDateFilter || n.date === selectedDateFilter;
 
-    return matchesSearch && matchesTag && matchesDate;
+    return matchesSearch && matchesType && matchesTag && matchesDate;
   });
 
-  // Sort notes: pinned first, then newest date
+  // Sort notes: pinned first, then selected sort order
   const sortedNotes = [...filteredNotes].sort((a, b) => {
     if (a.pinned && !b.pinned) return -1;
     if (!a.pinned && b.pinned) return 1;
-    return new Date(b.date).getTime() - new Date(a.date).getTime();
+
+    switch (sortBy) {
+      case 'oldest':
+        return new Date(a.date).getTime() - new Date(b.date).getTime();
+      case 'title-asc':
+        return a.title.localeCompare(b.title, 'tr');
+      case 'title-desc':
+        return b.title.localeCompare(a.title, 'tr');
+      case 'updated': {
+        const timeA = (a as any).updatedAt ? new Date((a as any).updatedAt).getTime() : new Date(a.date).getTime();
+        const timeB = (b as any).updatedAt ? new Date((b as any).updatedAt).getTime() : new Date(b.date).getTime();
+        return timeB - timeA;
+      }
+      case 'newest':
+      default:
+        return new Date(b.date).getTime() - new Date(a.date).getTime();
+    }
   });
 
   return (
@@ -126,17 +186,55 @@ export const NotesSection: React.FC<Props> = ({
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
         {/* Left Column: Search, Tag Chips & Notes Grid (Spans 2 cols on lg) */}
         <div className="lg:col-span-2 space-y-4">
-          {/* Search & Tag Bar */}
-          <div className="space-y-2">
-            <div className="relative">
-              <Search className="w-4 h-4 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2" />
-              <input
-                type="text"
-                placeholder="Not başlığı, içerik, kişi, e-posta, etkinlik veya konum adı ile arayın..."
-                value={searchTerm}
-                onChange={(e) => setSearchTerm(e.target.value)}
-                className="w-full pl-9 pr-3 py-2 text-xs bg-slate-50 border border-slate-200 rounded-xl focus:outline-hidden focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 text-slate-800 placeholder:text-slate-400"
-              />
+          {/* Search, Filter & Sort Bar */}
+          <div className="space-y-2.5">
+            <div className="flex flex-wrap items-center gap-2">
+              {/* Search input */}
+              <div className="relative flex-1 min-w-[200px]">
+                <Search className="w-4 h-4 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2" />
+                <input
+                  type="text"
+                  placeholder="Not başlığı, içerik, kişi, e-posta, etkinlik veya konum adı ile arayın..."
+                  value={searchTerm}
+                  onChange={(e) => setSearchTerm(e.target.value)}
+                  className="w-full pl-9 pr-3 py-2 text-xs bg-slate-50 border border-slate-200 rounded-xl focus:outline-hidden focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 text-slate-800 placeholder:text-slate-400 font-medium"
+                />
+              </div>
+
+              {/* Note Type Filter Dropdown */}
+              <div className="flex items-center gap-1.5 bg-slate-50 border border-slate-200 rounded-xl px-2.5 py-1.5 shrink-0">
+                <Filter className="w-3.5 h-3.5 text-indigo-600" />
+                <span className="text-[11px] font-bold text-slate-600">Tür:</span>
+                <select
+                  value={selectedTypeFilter}
+                  onChange={(e) => setSelectedTypeFilter(e.target.value)}
+                  className="bg-transparent text-xs font-bold text-slate-800 focus:outline-none cursor-pointer"
+                >
+                  <option value="all">Tüm Türler ({nonTimelogNotes.length})</option>
+                  {availableTypeOptions.map((opt) => (
+                    <option key={opt.id} value={opt.id}>
+                      {opt.name}
+                    </option>
+                  ))}
+                </select>
+              </div>
+
+              {/* Sort Dropdown */}
+              <div className="flex items-center gap-1.5 bg-slate-50 border border-slate-200 rounded-xl px-2.5 py-1.5 shrink-0">
+                <ArrowUpDown className="w-3.5 h-3.5 text-indigo-600" />
+                <span className="text-[11px] font-bold text-slate-600">Sırala:</span>
+                <select
+                  value={sortBy}
+                  onChange={(e) => setSortBy(e.target.value as any)}
+                  className="bg-transparent text-xs font-bold text-slate-800 focus:outline-none cursor-pointer"
+                >
+                  <option value="newest">En Yeni Tarih</option>
+                  <option value="oldest">En Eski Tarih</option>
+                  <option value="updated">Son Güncelleme</option>
+                  <option value="title-asc">Başlık (A - Z)</option>
+                  <option value="title-desc">Başlık (Z - A)</option>
+                </select>
+              </div>
             </div>
 
             {/* Tag Filter Chips */}
@@ -179,7 +277,7 @@ export const NotesSection: React.FC<Props> = ({
             {sortedNotes.length === 0 ? (
               <div className="py-12 border border-dashed border-slate-200 rounded-2xl text-center text-slate-400 flex flex-col items-center justify-center gap-2">
                 <FileText className="w-10 h-10 stroke-1 text-slate-300" />
-                <p className="text-xs font-medium">Aramanıza uygun not bulunamadı.</p>
+                <p className="text-xs font-medium">Aramanıza veya filtrenize uygun not bulunamadı.</p>
                 <button
                   onClick={onAddNote}
                   className="mt-1 text-xs font-semibold text-indigo-600 hover:underline"
@@ -206,7 +304,7 @@ export const NotesSection: React.FC<Props> = ({
                   >
                     {/* Title & Pin & Actions Header */}
                     <div className="flex items-start justify-between gap-3">
-                      <div className="flex items-center gap-2 min-w-0 flex-1">
+                      <div className="flex items-center gap-2 min-w-0 flex-1 flex-wrap">
                         <button
                           onClick={() => onTogglePin(note)}
                           className={`p-1 rounded-lg transition-colors cursor-pointer shrink-0 ${
@@ -220,6 +318,12 @@ export const NotesSection: React.FC<Props> = ({
                         </button>
 
                         <h3 className="text-sm font-bold text-slate-900 truncate">{note.title}</h3>
+
+                        {/* Note Type Badge */}
+                        <span className="px-2 py-0.5 bg-indigo-50 border border-indigo-100 text-indigo-700 rounded-md text-[10px] font-bold shrink-0 flex items-center gap-1">
+                          <Layers className="w-3 h-3 text-indigo-500" />
+                          {getNoteTypeName(note.noteType)}
+                        </span>
                       </div>
 
                       <div className="flex items-center gap-1 shrink-0">
@@ -244,6 +348,28 @@ export const NotesSection: React.FC<Props> = ({
                     <div className="text-xs text-slate-700 bg-white/80 p-3 rounded-xl border border-slate-100">
                       <MarkdownPreview content={note.content} imgMaxHeight="max-h-72" />
                     </div>
+
+                    {/* Custom Fields (Parameters) */}
+                    {note.customFields && Object.keys(note.customFields).length > 0 && (
+                      <div className="flex flex-wrap gap-1.5 pt-1 border-t border-slate-100">
+                        {Object.entries(note.customFields).map(([key, value]) => {
+                          if (value === undefined || value === null || value === '') return null;
+                          const typeDef = noteTypes.find((t) => t.id === note.noteType);
+                          const fieldDef = typeDef?.fields?.find((f) => f.id === key);
+                          const fieldLabel = fieldDef ? fieldDef.name : key;
+                          const displayVal = typeof value === 'boolean' ? (value ? 'Evet' : 'Hayır') : String(value);
+
+                          return (
+                            <span
+                              key={key}
+                              className="px-2 py-0.5 bg-slate-100 border border-slate-200/60 text-slate-700 rounded-md text-[10px] font-medium"
+                            >
+                              <span className="font-bold text-slate-500">{fieldLabel}:</span> {displayVal}
+                            </span>
+                          );
+                        })}
+                      </div>
+                    )}
 
                     {/* Linked Relational Items (Emails & Events) */}
                     {((note.linkedEmails && note.linkedEmails.length > 0) ||

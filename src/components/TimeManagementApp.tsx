@@ -22,6 +22,7 @@ import {
   Layers,
   Sparkles,
   RefreshCw,
+  ExternalLink,
 } from 'lucide-react';
 import {
   PieChart,
@@ -44,6 +45,7 @@ import {
   DriveFile,
   TimeLog,
 } from '../types';
+import { MarkdownPreview } from './MarkdownPreview';
 
 interface TimeManagementAppProps {
   projects?: Project[];
@@ -54,6 +56,7 @@ interface TimeManagementAppProps {
   emails?: EmailItem[];
   driveFiles?: DriveFile[];
   language?: string;
+  onSelectCard?: (cardId?: string, cardTitle?: string) => void;
 }
 
 type GoogleLinkType = 'tasks' | 'calendar' | 'gmail' | 'drive' | '';
@@ -69,10 +72,12 @@ export const TimeManagementApp: React.FC<TimeManagementAppProps> = ({
   emails = [],
   driveFiles = [],
   language = 'tr',
+  onSelectCard,
 }) => {
   const isTr = language === 'tr';
 
-  // 1. DYNAMIC TAGS FROM NOTES + TIMELOGS + USER CREATED TAGS
+  // 1. TIMELOGS & TAGS STATE
+  const [timeLogs, setTimeLogs] = useState<TimeLog[]>([]);
   const [userCreatedTags, setUserCreatedTags] = useState<string[]>([]);
 
   // Combined tags across Notes, TimeLogs, and User dynamically added tags
@@ -105,8 +110,6 @@ export const TimeManagementApp: React.FC<TimeManagementAppProps> = ({
     }
   };
 
-  // 2. TIMELOGS STATE
-  const [timeLogs, setTimeLogs] = useState<TimeLog[]>([]);
   const [isLoading, setIsLoading] = useState(true);
 
   // 3. LIVE TIMER TRACKER STATE
@@ -167,7 +170,7 @@ export const TimeManagementApp: React.FC<TimeManagementAppProps> = ({
     // Default seed logs if empty
     const now = new Date();
     const todayStr = now.toISOString().slice(0, 10);
-    const firstTag = noteTags[0] || 'Genel';
+    const firstTag = availableTags[0] || 'Genel';
 
     const demoLogs: TimeLog[] = [
       {
@@ -589,46 +592,78 @@ export const TimeManagementApp: React.FC<TimeManagementAppProps> = ({
   };
 
   // Helper badge icon renderer for linked service
-  const renderLinkBadge = (type?: string, title?: string) => {
-    if (!title && !type) return null;
-    const itemTitle = title || 'Bağlı Öğe';
+  const renderLinkBadge = (type?: string, title?: string, cardTitle?: string) => {
+    if (!type || type === '' || type === 'none') return null;
+
+    // If the link title is identical to the main cardTitle (or is a task link pointing to the same card), don't duplicate it
+    if (title && cardTitle && title.trim().toLowerCase() === cardTitle.trim().toLowerCase()) {
+      if (type === 'tasks' || type === 'task') return null;
+    }
+
+    const itemTitle = title || (isTr ? 'Bağlı Öğe' : 'Linked Item');
 
     switch (type) {
       case 'tasks':
+      case 'task':
         return (
-          <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full bg-emerald-50 border border-emerald-200 text-emerald-800 text-[11px] font-semibold">
+          <a
+            href="https://tasks.google.com"
+            target="_blank"
+            rel="noreferrer"
+            className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full bg-emerald-50 border border-emerald-200 text-emerald-800 text-[11px] font-semibold hover:bg-emerald-100 hover:underline transition-all cursor-pointer"
+            title={isTr ? 'Google Tasks Sayfasına Git' : 'Open Google Tasks'}
+          >
             <CheckSquare className="w-3.5 h-3.5 text-emerald-600 shrink-0" />
             <span className="truncate max-w-[200px]">{itemTitle}</span>
-          </span>
+            <ExternalLink className="w-2.5 h-2.5 text-emerald-600 opacity-70 ml-0.5 shrink-0" />
+          </a>
         );
       case 'calendar':
+      case 'event':
         return (
-          <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full bg-blue-50 border border-blue-200 text-blue-800 text-[11px] font-semibold">
+          <a
+            href="https://calendar.google.com"
+            target="_blank"
+            rel="noreferrer"
+            className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full bg-blue-50 border border-blue-200 text-blue-800 text-[11px] font-semibold hover:bg-blue-100 hover:underline transition-all cursor-pointer"
+            title={isTr ? 'Google Takvim Sayfasına Git' : 'Open Google Calendar'}
+          >
             <Calendar className="w-3.5 h-3.5 text-blue-600 shrink-0" />
             <span className="truncate max-w-[200px]">{itemTitle}</span>
-          </span>
+            <ExternalLink className="w-2.5 h-2.5 text-blue-600 opacity-70 ml-0.5 shrink-0" />
+          </a>
         );
       case 'gmail':
+      case 'email':
         return (
-          <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full bg-rose-50 border border-rose-200 text-rose-800 text-[11px] font-semibold">
+          <a
+            href="https://mail.google.com"
+            target="_blank"
+            rel="noreferrer"
+            className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full bg-rose-50 border border-rose-200 text-rose-800 text-[11px] font-semibold hover:bg-rose-100 hover:underline transition-all cursor-pointer"
+            title={isTr ? 'Gmail Sayfasına Git' : 'Open Gmail'}
+          >
             <Mail className="w-3.5 h-3.5 text-rose-600 shrink-0" />
             <span className="truncate max-w-[200px]">{itemTitle}</span>
-          </span>
+            <ExternalLink className="w-2.5 h-2.5 text-rose-600 opacity-70 ml-0.5 shrink-0" />
+          </a>
         );
       case 'drive':
         return (
-          <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full bg-amber-50 border border-amber-200 text-amber-800 text-[11px] font-semibold">
+          <a
+            href="https://drive.google.com"
+            target="_blank"
+            rel="noreferrer"
+            className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full bg-amber-50 border border-amber-200 text-amber-800 text-[11px] font-semibold hover:bg-amber-100 hover:underline transition-all cursor-pointer"
+            title={isTr ? 'Google Drive Sayfasına Git' : 'Open Google Drive'}
+          >
             <HardDrive className="w-3.5 h-3.5 text-amber-600 shrink-0" />
             <span className="truncate max-w-[200px]">{itemTitle}</span>
-          </span>
+            <ExternalLink className="w-2.5 h-2.5 text-amber-600 opacity-70 ml-0.5 shrink-0" />
+          </a>
         );
       default:
-        return (
-          <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full bg-slate-100 border border-slate-200 text-slate-700 text-[11px] font-semibold">
-            <Calendar className="w-3.5 h-3.5 text-slate-500 shrink-0" />
-            <span className="truncate max-w-[200px]">{itemTitle}</span>
-          </span>
-        );
+        return null;
     }
   };
 
@@ -785,19 +820,33 @@ export const TimeManagementApp: React.FC<TimeManagementAppProps> = ({
               <Layers className="w-3.5 h-3.5 text-emerald-600" />
               {isTr ? 'Bağlı Google Servisi' : 'Linked Google Service'}
             </label>
-            <div className="grid grid-cols-4 gap-1 mb-2">
+            <div className="grid grid-cols-5 gap-1 mb-2">
+              <button
+                type="button"
+                disabled={isTimerRunning}
+                onClick={() => { setActiveLinkType(''); setActiveLinkId(''); }}
+                className={`flex items-center justify-center gap-1 py-1.5 px-1.5 rounded-lg text-xs font-medium border transition-all cursor-pointer ${
+                  !activeLinkType
+                    ? 'bg-slate-700 text-white border-slate-700 font-bold'
+                    : 'bg-slate-50 text-slate-600 border-slate-200 hover:bg-slate-100'
+                }`}
+                title={isTr ? 'Bağlı Öğe Yok' : 'No Linked Item'}
+              >
+                <span>{isTr ? 'Öğesiz' : 'None'}</span>
+              </button>
+
               <button
                 type="button"
                 disabled={isTimerRunning}
                 onClick={() => { setActiveLinkType('tasks'); setActiveLinkId(''); }}
-                className={`flex items-center justify-center gap-1 py-1.5 px-2 rounded-lg text-xs font-medium border transition-all cursor-pointer ${
+                className={`flex items-center justify-center gap-1 py-1.5 px-1.5 rounded-lg text-xs font-medium border transition-all cursor-pointer ${
                   activeLinkType === 'tasks'
                     ? 'bg-emerald-600 text-white border-emerald-600 font-bold'
                     : 'bg-slate-50 text-slate-600 border-slate-200 hover:bg-slate-100'
                 }`}
                 title="Google Tasks"
               >
-                <CheckSquare className="w-3.5 h-3.5" />
+                <CheckSquare className="w-3.5 h-3.5 shrink-0" />
                 <span className="hidden sm:inline">Tasks</span>
               </button>
 
@@ -805,14 +854,14 @@ export const TimeManagementApp: React.FC<TimeManagementAppProps> = ({
                 type="button"
                 disabled={isTimerRunning}
                 onClick={() => { setActiveLinkType('calendar'); setActiveLinkId(''); }}
-                className={`flex items-center justify-center gap-1 py-1.5 px-2 rounded-lg text-xs font-medium border transition-all cursor-pointer ${
+                className={`flex items-center justify-center gap-1 py-1.5 px-1.5 rounded-lg text-xs font-medium border transition-all cursor-pointer ${
                   activeLinkType === 'calendar'
                     ? 'bg-blue-600 text-white border-blue-600 font-bold'
                     : 'bg-slate-50 text-slate-600 border-slate-200 hover:bg-slate-100'
                 }`}
                 title="Google Calendar"
               >
-                <Calendar className="w-3.5 h-3.5" />
+                <Calendar className="w-3.5 h-3.5 shrink-0" />
                 <span className="hidden sm:inline">Takvim</span>
               </button>
 
@@ -820,14 +869,14 @@ export const TimeManagementApp: React.FC<TimeManagementAppProps> = ({
                 type="button"
                 disabled={isTimerRunning}
                 onClick={() => { setActiveLinkType('gmail'); setActiveLinkId(''); }}
-                className={`flex items-center justify-center gap-1 py-1.5 px-2 rounded-lg text-xs font-medium border transition-all cursor-pointer ${
+                className={`flex items-center justify-center gap-1 py-1.5 px-1.5 rounded-lg text-xs font-medium border transition-all cursor-pointer ${
                   activeLinkType === 'gmail'
                     ? 'bg-rose-600 text-white border-rose-600 font-bold'
                     : 'bg-slate-50 text-slate-600 border-slate-200 hover:bg-slate-100'
                 }`}
                 title="Gmail"
               >
-                <Mail className="w-3.5 h-3.5" />
+                <Mail className="w-3.5 h-3.5 shrink-0" />
                 <span className="hidden sm:inline">Gmail</span>
               </button>
 
@@ -835,14 +884,14 @@ export const TimeManagementApp: React.FC<TimeManagementAppProps> = ({
                 type="button"
                 disabled={isTimerRunning}
                 onClick={() => { setActiveLinkType('drive'); setActiveLinkId(''); }}
-                className={`flex items-center justify-center gap-1 py-1.5 px-2 rounded-lg text-xs font-medium border transition-all cursor-pointer ${
+                className={`flex items-center justify-center gap-1 py-1.5 px-1.5 rounded-lg text-xs font-medium border transition-all cursor-pointer ${
                   activeLinkType === 'drive'
                     ? 'bg-amber-600 text-white border-amber-600 font-bold'
                     : 'bg-slate-50 text-slate-600 border-slate-200 hover:bg-slate-100'
                 }`}
                 title="Google Drive"
               >
-                <HardDrive className="w-3.5 h-3.5" />
+                <HardDrive className="w-3.5 h-3.5 shrink-0" />
                 <span className="hidden sm:inline">Drive</span>
               </button>
             </div>
@@ -912,9 +961,15 @@ export const TimeManagementApp: React.FC<TimeManagementAppProps> = ({
 
         {/* Work Description Note */}
         <div className="mt-3">
-          <input
-            type="text"
-            placeholder={isTr ? 'Çalışma detayı veya not ekleyin...' : 'Add work description or note...'}
+          <div className="flex items-center justify-between mb-1">
+            <label className="text-[11px] font-semibold text-slate-700">
+              {isTr ? 'Açıklama / Detaylar (Markdown)' : 'Description / Details (Markdown)'}
+            </label>
+            <span className="text-[10px] text-slate-400">**kalın**, *italik*, - liste</span>
+          </div>
+          <textarea
+            rows={2}
+            placeholder={isTr ? 'Çalışma detayı veya not ekleyin (Markdown destekli)...' : 'Add work description or note (Markdown supported)...'}
             value={activeDescription}
             onChange={(e) => setActiveDescription(e.target.value)}
             className="w-full px-3.5 py-2 bg-slate-50 border border-slate-200 rounded-xl text-xs text-slate-800 placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-emerald-500"
@@ -1089,24 +1144,32 @@ export const TimeManagementApp: React.FC<TimeManagementAppProps> = ({
                   <div className="space-y-2 flex-1">
                     {/* Header: Card Title + Project + Linked Badge */}
                     <div className="flex flex-wrap items-center gap-2">
-                      <span className="font-bold text-slate-900 text-sm">{log.cardTitle}</span>
-
-                      {log.projectName && (
-                        <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full bg-purple-50 border border-purple-200 text-purple-700 text-[11px] font-medium">
-                          <FolderKanban className="w-3 h-3" />
-                          {log.projectName}
+                      {log.cardTitle ? (
+                        <button
+                          type="button"
+                          onClick={() => onSelectCard?.(log.cardId || log.linkId, log.cardTitle)}
+                          className="font-bold text-slate-900 hover:text-purple-700 hover:underline text-sm inline-flex items-center gap-1.5 cursor-pointer group/card transition-colors"
+                          title={isTr ? 'Projelere / Karta Git' : 'Go to Card'}
+                        >
+                          <FolderKanban className="w-3.5 h-3.5 text-purple-600 group-hover/card:scale-110 transition-transform shrink-0" />
+                          <span>{log.cardTitle}</span>
+                          <ExternalLink className="w-3 h-3 text-slate-400 opacity-60 group-hover/card:opacity-100 transition-opacity shrink-0" />
+                        </button>
+                      ) : (
+                        <span className="font-bold text-slate-400 text-xs italic">
+                          {isTr ? 'Kartsız Zaman Kaydı' : 'Unlinked Timelog'}
                         </span>
                       )}
 
                       {/* Linked Service Badge */}
-                      {renderLinkBadge(log.linkType, log.linkTitle || log.eventSummary)}
+                      {renderLinkBadge(log.linkType, log.linkTitle || log.eventSummary, log.cardTitle)}
                     </div>
 
-                    {/* Description Note */}
+                    {/* Description Note (Markdown Rendered) */}
                     {log.description && (
-                      <p className="text-xs text-slate-600 leading-relaxed bg-white/80 p-2.5 rounded-xl border border-slate-100">
-                        {log.description}
-                      </p>
+                      <div className="bg-white/80 p-2.5 rounded-xl border border-slate-100 text-xs">
+                        <MarkdownPreview content={log.description} className="text-xs" />
+                      </div>
                     )}
 
                     {/* Note Tags */}
@@ -1217,17 +1280,29 @@ export const TimeManagementApp: React.FC<TimeManagementAppProps> = ({
                 )}
               </div>
 
-              {/* 4 Google Service Options for Link */}
+              {/* Google Service Options for Link */}
               <div>
                 <label className="block text-xs font-semibold text-slate-700 mb-1 flex items-center gap-1.5">
                   <Layers className="w-3.5 h-3.5 text-emerald-600" />
-                  {isTr ? 'Bağlı Kısım (4 Seçenek)' : 'Linked Service (4 Options)'}
+                  {isTr ? 'Bağlı Servis / Öğe' : 'Linked Service / Item'}
                 </label>
-                <div className="grid grid-cols-4 gap-1.5 mb-2">
+                <div className="grid grid-cols-5 gap-1.5 mb-2">
+                  <button
+                    type="button"
+                    onClick={() => { setFormLinkType(''); setFormLinkId(''); }}
+                    className={`flex items-center justify-center gap-1 py-2 px-1 rounded-xl text-xs font-semibold border transition-all cursor-pointer ${
+                      !formLinkType
+                        ? 'bg-slate-700 text-white border-slate-700 shadow-2xs'
+                        : 'bg-slate-50 text-slate-700 border-slate-200 hover:bg-slate-100'
+                    }`}
+                  >
+                    <span>{isTr ? 'Öğesiz' : 'None'}</span>
+                  </button>
+
                   <button
                     type="button"
                     onClick={() => { setFormLinkType('tasks'); setFormLinkId(''); }}
-                    className={`flex items-center justify-center gap-1 py-2 px-2 rounded-xl text-xs font-semibold border transition-all cursor-pointer ${
+                    className={`flex items-center justify-center gap-1 py-2 px-1 rounded-xl text-xs font-semibold border transition-all cursor-pointer ${
                       formLinkType === 'tasks'
                         ? 'bg-emerald-600 text-white border-emerald-600 shadow-2xs'
                         : 'bg-slate-50 text-slate-700 border-slate-200 hover:bg-slate-100'
@@ -1240,7 +1315,7 @@ export const TimeManagementApp: React.FC<TimeManagementAppProps> = ({
                   <button
                     type="button"
                     onClick={() => { setFormLinkType('calendar'); setFormLinkId(''); }}
-                    className={`flex items-center justify-center gap-1 py-2 px-2 rounded-xl text-xs font-semibold border transition-all cursor-pointer ${
+                    className={`flex items-center justify-center gap-1 py-2 px-1 rounded-xl text-xs font-semibold border transition-all cursor-pointer ${
                       formLinkType === 'calendar'
                         ? 'bg-blue-600 text-white border-blue-600 shadow-2xs'
                         : 'bg-slate-50 text-slate-700 border-slate-200 hover:bg-slate-100'
@@ -1253,7 +1328,7 @@ export const TimeManagementApp: React.FC<TimeManagementAppProps> = ({
                   <button
                     type="button"
                     onClick={() => { setFormLinkType('gmail'); setFormLinkId(''); }}
-                    className={`flex items-center justify-center gap-1 py-2 px-2 rounded-xl text-xs font-semibold border transition-all cursor-pointer ${
+                    className={`flex items-center justify-center gap-1 py-2 px-1 rounded-xl text-xs font-semibold border transition-all cursor-pointer ${
                       formLinkType === 'gmail'
                         ? 'bg-rose-600 text-white border-rose-600 shadow-2xs'
                         : 'bg-slate-50 text-slate-700 border-slate-200 hover:bg-slate-100'
@@ -1266,7 +1341,7 @@ export const TimeManagementApp: React.FC<TimeManagementAppProps> = ({
                   <button
                     type="button"
                     onClick={() => { setFormLinkType('drive'); setFormLinkId(''); }}
-                    className={`flex items-center justify-center gap-1 py-2 px-2 rounded-xl text-xs font-semibold border transition-all cursor-pointer ${
+                    className={`flex items-center justify-center gap-1 py-2 px-1 rounded-xl text-xs font-semibold border transition-all cursor-pointer ${
                       formLinkType === 'drive'
                         ? 'bg-amber-600 text-white border-amber-600 shadow-2xs'
                         : 'bg-slate-50 text-slate-700 border-slate-200 hover:bg-slate-100'
@@ -1383,14 +1458,17 @@ export const TimeManagementApp: React.FC<TimeManagementAppProps> = ({
                 </div>
               </div>
 
-              {/* Description */}
+              {/* Description (Markdown Supported) */}
               <div>
-                <label className="block text-xs font-semibold text-slate-700 mb-1">
-                  {isTr ? 'Açıklama / Detaylar' : 'Description / Details'}
-                </label>
+                <div className="flex items-center justify-between mb-1">
+                  <label className="block text-xs font-semibold text-slate-700">
+                    {isTr ? 'Açıklama / Detaylar (Markdown Destekli)' : 'Description / Details (Markdown Supported)'}
+                  </label>
+                  <span className="text-[10px] text-slate-400">**kalın**, *italik*, # başlık, - liste</span>
+                </div>
                 <textarea
                   rows={3}
-                  placeholder={isTr ? 'Çalışma sırasında yapılan işlerin özeti...' : 'Summary of work done...'}
+                  placeholder={isTr ? 'Çalışma sırasında yapılan işlerin özeti (Markdown formatı kullanılabilir: **kalın**, *italik*, - liste)...' : 'Summary of work done (Markdown format supported)...'}
                   value={formDescription}
                   onChange={(e) => setFormDescription(e.target.value)}
                   className="w-full px-3.5 py-2 bg-slate-50 border border-slate-200 rounded-xl text-xs text-slate-800 focus:outline-none focus:ring-2 focus:ring-emerald-500"

@@ -2,6 +2,7 @@ import 'dotenv/config';
 import express from 'express';
 import cookieParser from 'cookie-parser';
 import path from 'path';
+import { Readable } from 'stream';
 import { google } from 'googleapis';
 import { createServer as createViteServer } from 'vite';
 import {
@@ -11,6 +12,9 @@ import {
   saveNoteToDb,
   saveLocationToDb,
   deleteNoteFromDb,
+  getAllNoteTypesFromDb,
+  saveNoteTypeToDb,
+  deleteNoteTypeFromDb,
   syncWithGoogleDriveAdminSpace,
   restoreFromGoogleDriveAdminSpace,
   getAllProjectsFromDb,
@@ -50,7 +54,8 @@ async function ensureRestoredFromDrive(req: express.Request) {
 
 app.set('trust proxy', true);
 
-app.use(express.json());
+app.use(express.json({ limit: '20mb' }));
+app.use(express.urlencoded({ limit: '20mb', extended: true }));
 app.use(cookieParser());
 
 // OAuth configuration
@@ -116,7 +121,84 @@ function getAuthenticatedClient(req: express.Request) {
 let demoState = {
   emails: [] as Array<any>,
   events: [] as Array<any>,
-  driveFiles: [] as Array<any>,
+  driveFiles: [
+    {
+      id: 'file-demo-md-1',
+      name: 'README_Proje_Dokumani.md',
+      mimeType: 'text/markdown',
+      webViewLink: 'https://drive.google.com',
+      modifiedTime: new Date().toISOString(),
+      size: '12 KB',
+      isFolder: false,
+      starred: true,
+      parents: [],
+      content: `# Proje Dokümantasyonu & Notlar
+
+Bu doküman **Google Drive** üzerinde saklanan örnek bir \`.md\` (Markdown) dosyasıdır.
+
+## 🚀 Özellikler & Formatlar
+- Live **Markdown Editörü** ve Canlı Önizleme (Preview)
+- Anında **Google Drive Kaydetme** (API entegrasyonu)
+- Kod blokları, listeler, tablolar ve formatlama araçları
+
+\`\`\`typescript
+// Google Drive Markdown Entegrasyonu
+const isDriveMarkdownWorking = true;
+console.log("Markdown Editörü Aktif!", isDriveMarkdownWorking);
+\`\`\`
+
+- [x] Google Drive API \`fileType=markdown\` filtresi eklendi
+- [x] Tüm \`.md\` dosyaları listeleniyor
+- [x] Editör ve Preview ekranı aktif
+- [ ] Yeni notlar yazılacak
+
+> "Zamanınızı verimli yönetin, dokümanlarınızı Google Drive ile senkronize tutun."
+`,
+    },
+    {
+      id: 'folder-adminspace-1',
+      name: 'adminspace',
+      mimeType: 'application/vnd.google-apps.folder',
+      webViewLink: 'https://drive.google.com',
+      modifiedTime: new Date().toISOString(),
+      isFolder: true,
+      starred: true,
+      parents: [],
+    },
+    {
+      id: 'file-demo-1',
+      name: 'Proje_Planlama_Notlari.gdoc',
+      mimeType: 'application/vnd.google-apps.document',
+      webViewLink: 'https://docs.google.com',
+      modifiedTime: new Date().toISOString(),
+      size: '1.2 MB',
+      isFolder: false,
+      starred: true,
+      parents: [],
+    },
+    {
+      id: 'file-demo-2',
+      name: 'Zaman_Hub_Butce.gsheet',
+      mimeType: 'application/vnd.google-apps.spreadsheet',
+      webViewLink: 'https://sheets.google.com',
+      modifiedTime: new Date().toISOString(),
+      size: '850 KB',
+      isFolder: false,
+      starred: false,
+      parents: [],
+    },
+    {
+      id: 'file-demo-3',
+      name: 'Finansal_Rapor_2026.pdf',
+      mimeType: 'application/pdf',
+      webViewLink: 'https://drive.google.com',
+      modifiedTime: new Date().toISOString(),
+      size: '2.4 MB',
+      isFolder: false,
+      starred: true,
+      parents: [],
+    },
+  ] as Array<any>,
   tasks: [] as Array<{
     id: string;
     title: string;
@@ -572,15 +654,21 @@ app.get('/api/drive/starred', async (req, res) => {
       const response = await drive.files.list({
         q: qStr,
         fields: 'files(id, name, mimeType, webViewLink, iconLink, thumbnailLink, modifiedTime, size, starred, parents)',
-        pageSize: 30,
+        pageSize: 50,
         orderBy: 'modifiedTime desc',
+        supportsAllDrives: true,
+        includeItemsFromAllDrives: true,
       });
 
       const files = (response.data.files || []).map((f) => ({
         id: f.id!,
         name: f.name || 'İsimsiz Dosya',
         mimeType: f.mimeType || 'application/octet-stream',
-        webViewLink: f.webViewLink || '#',
+        webViewLink:
+          f.webViewLink ||
+          (f.mimeType === 'application/vnd.google-apps.folder'
+            ? `https://drive.google.com/drive/folders/${f.id}`
+            : `https://drive.google.com/file/d/${f.id}/view`),
         iconLink: f.iconLink,
         thumbnailLink: f.thumbnailLink,
         modifiedTime: f.modifiedTime || new Date().toISOString(),
@@ -605,7 +693,7 @@ app.get('/api/drive/starred', async (req, res) => {
 });
 
 app.get('/api/drive/files', async (req, res) => {
-  const { folderId, search, starredOnly, limit } = req.query;
+  const { folderId, search, starredOnly, fileType, limit } = req.query;
   const authClient = getAuthenticatedClient(req);
 
   const maxCount = limit ? Math.min(100, Math.max(1, parseInt(limit as string) || 100)) : 100;
@@ -615,14 +703,36 @@ app.get('/api/drive/files', async (req, res) => {
       const drive = google.drive({ version: 'v3', auth: authClient });
       let qStr = 'trashed = false';
 
-      if (starredOnly === 'true') {
+      if (starredOnly === 'true' || fileType === 'starred') {
         qStr += ' and starred = true';
+      }
+
+      if (fileType === 'pdf') {
+        qStr += " and (mimeType = 'application/pdf' or name contains '.pdf')";
+      } else if (fileType === 'markdown') {
+        qStr += " and (mimeType = 'text/markdown' or mimeType = 'text/x-markdown' or mimeType = 'text/plain' or name contains '.md' or name contains '.markdown')";
+      } else if (fileType === 'docs') {
+        qStr += " and (mimeType = 'application/vnd.google-apps.document' or mimeType = 'application/msword' or mimeType = 'application/vnd.openxmlformats-officedocument.wordprocessingml.document')";
+      } else if (fileType === 'sheets') {
+        qStr += " and (mimeType = 'application/vnd.google-apps.spreadsheet' or mimeType = 'application/vnd.ms-excel' or mimeType = 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet')";
+      } else if (fileType === 'slides') {
+        qStr += " and (mimeType = 'application/vnd.google-apps.presentation' or mimeType = 'application/vnd.ms-powerpoint' or mimeType = 'application/vnd.openxmlformats-officedocument.presentationml.presentation')";
+      } else if (fileType === 'folders') {
+        qStr += " and mimeType = 'application/vnd.google-apps.folder'";
       }
 
       if (search && typeof search === 'string' && search.trim()) {
         const cleanSearch = search.trim().replace(/'/g, "\\'");
         qStr += ` and name contains '${cleanSearch}'`;
-      } else if (folderId && typeof folderId === 'string' && folderId !== 'all') {
+      } else if (
+        folderId &&
+        typeof folderId === 'string' &&
+        folderId !== 'all' &&
+        starredOnly !== 'true' &&
+        fileType !== 'starred' &&
+        fileType !== 'pdf' &&
+        fileType !== 'markdown'
+      ) {
         const parent = folderId === 'root' ? 'root' : folderId;
         qStr += ` and '${parent}' in parents`;
       }
@@ -632,13 +742,19 @@ app.get('/api/drive/files', async (req, res) => {
         fields: 'files(id, name, mimeType, webViewLink, iconLink, thumbnailLink, modifiedTime, size, starred, parents)',
         pageSize: maxCount,
         orderBy: 'modifiedTime desc',
+        supportsAllDrives: true,
+        includeItemsFromAllDrives: true,
       });
 
       const files = (response.data.files || []).map((f) => ({
         id: f.id!,
         name: f.name || 'İsimsiz Dosya',
         mimeType: f.mimeType || 'application/octet-stream',
-        webViewLink: f.webViewLink || '#',
+        webViewLink:
+          f.webViewLink ||
+          (f.mimeType === 'application/vnd.google-apps.folder'
+            ? `https://drive.google.com/drive/folders/${f.id}`
+            : `https://drive.google.com/file/d/${f.id}/view`),
         iconLink: f.iconLink,
         thumbnailLink: f.thumbnailLink,
         modifiedTime: f.modifiedTime || new Date().toISOString(),
@@ -661,11 +777,12 @@ app.get('/api/drive/files', async (req, res) => {
       const isScopeError =
         err?.message?.toLowerCase().includes('scope') ||
         err?.message?.toLowerCase().includes('permission') ||
+        err?.message?.toLowerCase().includes('invalid_grant') ||
         err?.code === 403 ||
         err?.code === 401;
       return res.json({
-        files: [],
-        error: err?.message || 'Google Drive hatası',
+        files: demoState.driveFiles || [],
+        error: `Google Drive API Uyarısı: ${err?.message || 'Hesabınızın Drive yetkisi yenilenmelidir.'}`,
         requiresReauth: isScopeError,
         demoMode: false,
       });
@@ -673,11 +790,90 @@ app.get('/api/drive/files', async (req, res) => {
   }
 
   let files = demoState.driveFiles || [];
+  if (starredOnly === 'true' || fileType === 'starred') {
+    files = files.filter((f) => f.starred);
+  } else if (fileType === 'pdf') {
+    files = files.filter((f) => f.mimeType === 'application/pdf' || f.name.toLowerCase().endsWith('.pdf'));
+  } else if (fileType === 'markdown') {
+    files = files.filter((f) => f.mimeType?.includes('markdown') || f.name.toLowerCase().endsWith('.md') || f.name.toLowerCase().endsWith('.markdown'));
+  } else if (fileType === 'docs') {
+    files = files.filter((f) => f.mimeType?.includes('document') || f.name.toLowerCase().endsWith('.gdoc') || f.name.toLowerCase().endsWith('.doc') || f.name.toLowerCase().endsWith('.docx'));
+  } else if (fileType === 'sheets') {
+    files = files.filter((f) => f.mimeType?.includes('spreadsheet') || f.name.toLowerCase().endsWith('.gsheet') || f.name.toLowerCase().endsWith('.xls') || f.name.toLowerCase().endsWith('.xlsx'));
+  } else if (fileType === 'slides') {
+    files = files.filter((f) => f.mimeType?.includes('presentation') || f.name.toLowerCase().endsWith('.gslides') || f.name.toLowerCase().endsWith('.ppt') || f.name.toLowerCase().endsWith('.pptx'));
+  } else if (fileType === 'folders') {
+    files = files.filter((f) => f.isFolder || f.mimeType?.includes('folder'));
+  }
+
   if (search && typeof search === 'string' && search.trim()) {
     const s = search.trim().toLowerCase();
     files = files.filter((f) => f.name.toLowerCase().includes(s));
   }
   res.json({ files, currentFolderId: folderId || 'all', demoMode: true });
+});
+
+// GET file content from Drive
+app.get('/api/drive/files/:id/content', async (req, res) => {
+  const { id } = req.params;
+  const authClient = getAuthenticatedClient(req);
+
+  if (authClient) {
+    try {
+      const drive = google.drive({ version: 'v3', auth: authClient });
+      const response = await drive.files.get(
+        { fileId: id, alt: 'media' },
+        { responseType: 'text' }
+      );
+      return res.json({ content: response.data || '', demoMode: false });
+    } catch (err: any) {
+      console.error('Drive Get File Content Error:', err?.message || err);
+      return res.status(500).json({ error: 'Dosya içeriği okunamadı: ' + (err?.message || err) });
+    }
+  }
+
+  // Demo state lookup
+  const file = demoState.driveFiles.find((f) => f.id === id);
+  if (file && (file as any).content !== undefined) {
+    return res.json({ content: (file as any).content, demoMode: true });
+  }
+
+  return res.json({
+    content: `# ${file?.name || 'Markdown Dokümanı.md'}\n\nBu dosya Google Drive hesabınızdaki bir Markdown belgesidir.\n\n## 📝 Düzenleme ve Önizleme\nSol tarafta Markdown kodlarınızı yazabilir, sağ tarafta canlı önizlemesini görebilirsiniz.\n\n- [x] Başlıklar ve Listeler\n- [x] Kod Blokları\n- [x] Google Drive Senkronizasyonu\n\n\`\`\`javascript\nconsole.log("Drive Markdown Editor ready!");\n\`\`\``,
+    demoMode: true,
+  });
+});
+
+// PUT update file content in Drive
+app.put('/api/drive/files/:id/content', async (req, res) => {
+  const { id } = req.params;
+  const { content } = req.body;
+  const authClient = getAuthenticatedClient(req);
+
+  if (authClient) {
+    try {
+      const drive = google.drive({ version: 'v3', auth: authClient });
+      await drive.files.update({
+        fileId: id,
+        media: {
+          mimeType: 'text/markdown',
+          body: content || '',
+        },
+      });
+      return res.json({ success: true, demoMode: false });
+    } catch (err: any) {
+      console.error('Drive Update File Content Error:', err?.message || err);
+      return res.status(500).json({ error: 'Dosya içeriği kaydedilemedi: ' + (err?.message || err) });
+    }
+  }
+
+  // Demo state update
+  const file = demoState.driveFiles.find((f) => f.id === id);
+  if (file) {
+    (file as any).content = content;
+    file.modifiedTime = new Date().toISOString();
+  }
+  return res.json({ success: true, demoMode: true });
 });
 
 app.post('/api/drive/create-folder', async (req, res) => {
@@ -863,6 +1059,144 @@ app.post('/api/drive/create', async (req, res) => {
   demoState.driveFiles.unshift(newDoc);
 
   res.json({ success: true, file: newDoc, demoMode: true });
+});
+
+app.post('/api/drive/upload-image', async (req, res) => {
+  const { name, mimeType, base64Data } = req.body;
+  if (!base64Data) {
+    return res.status(400).json({ error: 'base64Data parametresi gereklidir.' });
+  }
+
+  const authClient = getAuthenticatedClient(req);
+  const fileName = name || `Gorsel_${Date.now()}.png`;
+  const fileMime = mimeType || 'image/png';
+
+  let cleanBase64 = base64Data;
+  if (base64Data.includes(',')) {
+    cleanBase64 = base64Data.split(',')[1];
+  }
+
+  const buffer = Buffer.from(cleanBase64, 'base64');
+  const dataUrl = base64Data.startsWith('data:')
+    ? base64Data
+    : `data:${fileMime};base64,${cleanBase64}`;
+
+  if (authClient) {
+    try {
+      const drive = google.drive({ version: 'v3', auth: authClient });
+
+      // 1. Find or create 'adminspace' folder in Google Drive
+      let folderId = 'root';
+      const folderSearch = await drive.files.list({
+        q: "name = 'adminspace' and mimeType = 'application/vnd.google-apps.folder' and trashed = false",
+        fields: 'files(id, name)',
+      });
+
+      if (folderSearch.data.files && folderSearch.data.files.length > 0) {
+        folderId = folderSearch.data.files[0].id!;
+      } else {
+        const newFolder = await drive.files.create({
+          requestBody: {
+            name: 'adminspace',
+            mimeType: 'application/vnd.google-apps.folder',
+          },
+          fields: 'id',
+        });
+        if (newFolder.data.id) {
+          folderId = newFolder.data.id;
+        }
+      }
+
+      // 2. Upload image file
+      const requestBody: any = {
+        name: fileName,
+        mimeType: fileMime,
+        parents: [folderId],
+      };
+
+      const response = await drive.files.create({
+        requestBody,
+        media: {
+          mimeType: fileMime,
+          body: Readable.from(buffer),
+        },
+        fields: 'id, name, mimeType, webViewLink, webContentLink, thumbnailLink, modifiedTime, size',
+      });
+
+      const fileData = response.data;
+
+      // 3. Make permission public if possible
+      try {
+        await drive.permissions.create({
+          fileId: fileData.id!,
+          requestBody: { role: 'reader', type: 'anyone' },
+        });
+      } catch (permErr) {
+        // ignore if restricted
+      }
+
+      const imageUrl = `https://lh3.googleusercontent.com/d/${fileData.id}=s1600` ||
+        fileData.thumbnailLink ||
+        fileData.webViewLink ||
+        dataUrl;
+
+      const driveFile = {
+        id: fileData.id || `drive-img-${Date.now()}`,
+        name: fileData.name || fileName,
+        mimeType: fileData.mimeType || fileMime,
+        webViewLink: fileData.webViewLink || `https://drive.google.com/file/d/${fileData.id}/view`,
+        modifiedTime: fileData.modifiedTime || new Date().toISOString(),
+        size: `${(buffer.length / 1024).toFixed(1)} KB`,
+      };
+
+      demoState.driveFiles.unshift(driveFile);
+
+      return res.json({
+        success: true,
+        file: driveFile,
+        imageUrl: imageUrl,
+        dataUrl: dataUrl,
+        demoMode: false,
+      });
+    } catch (err: any) {
+      console.error('Drive Image Upload Error:', err?.message || err);
+      const fallbackFile = {
+        id: `img-file-${Date.now()}`,
+        name: fileName,
+        mimeType: fileMime,
+        webViewLink: dataUrl,
+        modifiedTime: new Date().toISOString(),
+        size: `${(buffer.length / 1024).toFixed(1)} KB`,
+      };
+      demoState.driveFiles.unshift(fallbackFile);
+      return res.json({
+        success: true,
+        file: fallbackFile,
+        imageUrl: dataUrl,
+        dataUrl: dataUrl,
+        demoMode: true,
+      });
+    }
+  }
+
+  // Demo mode
+  const demoFile = {
+    id: `demo-img-${Date.now()}`,
+    name: fileName,
+    mimeType: fileMime,
+    webViewLink: dataUrl,
+    modifiedTime: new Date().toISOString(),
+    size: `${(buffer.length / 1024).toFixed(1)} KB`,
+  };
+  demoState.driveFiles.unshift(demoFile);
+
+  return res.json({
+    success: true,
+    file: demoFile,
+    imageUrl: dataUrl,
+    dataUrl: dataUrl,
+    demoMode: true,
+  });
 });
 
 // ================= TASKS ROUTES =================
@@ -1299,9 +1633,71 @@ app.get('/api/notes', async (req, res) => {
   });
 });
 
+// ================= NOTE TYPES ROUTES =================
+app.get('/api/note-types', async (req, res) => {
+  await getAdminSpaceDb();
+  const noteTypes = getAllNoteTypesFromDb();
+  res.json({ noteTypes });
+});
+
+app.post('/api/note-types', async (req, res) => {
+  await getAdminSpaceDb();
+  const typeData = req.body;
+  if (!typeData.id) {
+    typeData.id = `type-${Date.now()}`;
+  }
+  saveNoteTypeToDb(typeData);
+
+  const authClient = getAuthenticatedClient(req);
+  if (authClient) {
+    syncWithGoogleDriveAdminSpace(authClient).catch(() => {});
+  }
+
+  res.json({ success: true, noteType: typeData });
+});
+
+app.delete('/api/note-types/:id', async (req, res) => {
+  await getAdminSpaceDb();
+  const { id } = req.params;
+  if (id === 'note' || id === 'timelog') {
+    return res.status(400).json({ error: 'Sabit sistem not türleri silinemez.' });
+  }
+  deleteNoteTypeFromDb(id);
+
+  const authClient = getAuthenticatedClient(req);
+  if (authClient) {
+    syncWithGoogleDriveAdminSpace(authClient).catch(() => {});
+  }
+
+  res.json({ success: true });
+});
+
 app.post('/api/notes', async (req, res) => {
   await getAdminSpaceDb();
-  const { title, content, contactResourceName, contactDisplayName, contacts, linkedEmails, linkedEvents, linkedDriveFiles, linkedTasks, tags, location, date, pinned, projectId } = req.body;
+  const {
+    id,
+    title,
+    content,
+    noteType,
+    startTime,
+    endTime,
+    durationMinutes,
+    customFields,
+    contactResourceName,
+    contactDisplayName,
+    contacts,
+    linkedEmails,
+    linkedEvents,
+    linkedDriveFiles,
+    linkedTasks,
+    tags,
+    location,
+    date,
+    pinned,
+    projectId,
+    cardId,
+    cardTitle,
+  } = req.body;
 
   let savedLocation = location;
   if (location && location.lat && location.lng) {
@@ -1322,9 +1718,14 @@ app.post('/api/notes', async (req, res) => {
   }
 
   const newNote = {
-    id: `note-${Date.now()}`,
+    id: id || `note-${Date.now()}`,
     title: title || 'İsimsiz Not',
     content: content || '',
+    noteType: noteType || 'note',
+    startTime: startTime || null,
+    endTime: endTime || null,
+    durationMinutes: durationMinutes !== undefined && durationMinutes !== null ? Number(durationMinutes) : null,
+    customFields: customFields || {},
     contactResourceName: contactResourceName || '',
     contactDisplayName: contactDisplayName || '',
     contacts: Array.isArray(contacts) ? contacts : [],
@@ -1335,13 +1736,36 @@ app.post('/api/notes', async (req, res) => {
     tags: Array.isArray(tags) ? tags : [],
     location: savedLocation || null,
     date: date || new Date().toISOString().split('T')[0],
-    createdAt: new Date().toISOString(),
+    createdAt: req.body.createdAt || new Date().toISOString(),
     updatedAt: new Date().toISOString(),
     pinned: !!pinned,
     projectId: projectId || null,
+    cardId: cardId || null,
+    cardTitle: cardTitle || null,
   };
 
   saveNoteToDb(newNote);
+
+  // If noteType is timelog, also sync to timelogs table for backward compatibility
+  if (newNote.noteType === 'timelog') {
+    const timelogObj = {
+      id: newNote.id,
+      cardId: newNote.cardId || newNote.projectId || '',
+      cardTitle: newNote.cardTitle || newNote.title || 'Timelog',
+      projectId: newNote.projectId || '',
+      startTime: newNote.startTime || new Date().toISOString(),
+      endTime: newNote.endTime || new Date().toISOString(),
+      durationMinutes: newNote.durationMinutes || 0,
+      description: newNote.content,
+      tags: newNote.tags,
+      createdAt: newNote.createdAt,
+    };
+    try {
+      saveTimelogToDb(timelogObj);
+    } catch (e) {
+      console.error('Failed to save timelog compat:', e);
+    }
+  }
 
   const authClient = getAuthenticatedClient(req);
   if (authClient) {
@@ -1354,7 +1778,29 @@ app.post('/api/notes', async (req, res) => {
 app.put('/api/notes/:id', async (req, res) => {
   await getAdminSpaceDb();
   const { id } = req.params;
-  const { title, content, contactResourceName, contactDisplayName, contacts, linkedEmails, linkedEvents, linkedDriveFiles, linkedTasks, tags, location, date, pinned, projectId } = req.body;
+  const {
+    title,
+    content,
+    noteType,
+    startTime,
+    endTime,
+    durationMinutes,
+    customFields,
+    contactResourceName,
+    contactDisplayName,
+    contacts,
+    linkedEmails,
+    linkedEvents,
+    linkedDriveFiles,
+    linkedTasks,
+    tags,
+    location,
+    date,
+    pinned,
+    projectId,
+    cardId,
+    cardTitle,
+  } = req.body;
 
   const notes = getAllNotesFromDb();
   const existingNote = notes.find((n) => n.id === id);
@@ -1382,6 +1828,11 @@ app.put('/api/notes/:id', async (req, res) => {
     ...existingNote,
     title: title !== undefined ? title : existingNote.title,
     content: content !== undefined ? content : existingNote.content,
+    noteType: noteType !== undefined ? noteType : existingNote.noteType,
+    startTime: startTime !== undefined ? startTime : existingNote.startTime,
+    endTime: endTime !== undefined ? endTime : existingNote.endTime,
+    durationMinutes: durationMinutes !== undefined ? durationMinutes : existingNote.durationMinutes,
+    customFields: customFields !== undefined ? customFields : existingNote.customFields,
     contactResourceName: contactResourceName !== undefined ? contactResourceName : existingNote.contactResourceName,
     contactDisplayName: contactDisplayName !== undefined ? contactDisplayName : existingNote.contactDisplayName,
     contacts: contacts !== undefined ? (Array.isArray(contacts) ? contacts : []) : existingNote.contacts,
@@ -1394,6 +1845,8 @@ app.put('/api/notes/:id', async (req, res) => {
     date: date !== undefined ? date : existingNote.date,
     pinned: pinned !== undefined ? pinned : existingNote.pinned,
     projectId: projectId !== undefined ? projectId : existingNote.projectId,
+    cardId: cardId !== undefined ? cardId : existingNote.cardId,
+    cardTitle: cardTitle !== undefined ? cardTitle : existingNote.cardTitle,
     updatedAt: new Date().toISOString(),
   };
 

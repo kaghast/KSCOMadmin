@@ -150,10 +150,32 @@ export interface LinkedTask {
   due?: string;
 }
 
+export interface NoteTypeField {
+  id: string;
+  name: string;
+  type: 'text' | 'number' | 'boolean' | 'date' | 'select';
+  options?: string[];
+  required?: boolean;
+}
+
+export interface NoteType {
+  id: string; // 'note', 'timelog', or custom ID e.g. 'fiyat'
+  name: string; // 'Düz Not', 'Timelog', 'Fiyat'
+  isSystem?: boolean; // built-in system type (immutable name/type)
+  icon?: string;
+  color?: string;
+  fields?: NoteTypeField[];
+}
+
 export interface NoteItem {
   id: string;
   title: string;
   content: string; // Markdown supported content
+  noteType?: string; // 'note' | 'timelog' | customNoteTypeId
+  startTime?: string; // for timelogs (ISO string or YYYY-MM-DDTHH:mm)
+  endTime?: string;   // for timelogs
+  durationMinutes?: number;
+  customFields?: Record<string, any>; // custom dynamic field values
   contactResourceName?: string;
   contactDisplayName?: string;
   contacts?: LinkedContact[];
@@ -169,6 +191,8 @@ export interface NoteItem {
   pinned?: boolean;
   projectId?: string;
   projectName?: string;
+  cardId?: string;
+  cardTitle?: string;
 }
 
 export interface ProjectColumn {

@@ -23,6 +23,9 @@ import {
   CheckCircle2,
   HardDrive,
   Users,
+  Image as ImageIcon,
+  UploadCloud,
+  Clock,
 } from 'lucide-react';
 import { MarkdownPreview } from './MarkdownPreview';
 import L from 'leaflet';
@@ -41,12 +44,15 @@ import {
   LinkedTask,
   Project,
   ProjectTask,
+  NoteType,
+  NoteTypeField,
 } from '../types';
 import { DrawingCanvas } from './DrawingCanvas';
 
 interface Props {
   isOpen: boolean;
-  note: NoteItem | null;
+  note?: NoteItem | null;
+  noteTypes?: NoteType[];
   contacts: ContactItem[];
   emails: EmailItem[];
   events: CalendarEvent[];
@@ -59,6 +65,11 @@ interface Props {
     id?: string;
     title: string;
     content: string;
+    noteType?: string;
+    startTime?: string;
+    endTime?: string;
+    durationMinutes?: number;
+    customFields?: Record<string, any>;
     contacts?: LinkedContact[];
     linkedEmails?: LinkedEmail[];
     linkedEvents?: LinkedEvent[];
@@ -68,6 +79,8 @@ interface Props {
     location?: NoteLocation | null;
     date: string;
     projectId?: string;
+    cardId?: string;
+    cardTitle?: string;
   }) => Promise<void>;
 }
 
@@ -81,6 +94,10 @@ interface PlaceResult {
 export const NoteModal: React.FC<Props> = ({
   isOpen,
   note,
+  noteTypes = [
+    { id: 'note', name: 'Düz Not', isSystem: true },
+    { id: 'timelog', name: 'Timelog', isSystem: true },
+  ],
   contacts,
   emails,
   events,
@@ -98,6 +115,12 @@ export const NoteModal: React.FC<Props> = ({
   const [selectedProjectId, setSelectedProjectId] = useState<string>('');
   const [location, setLocation] = useState<NoteLocation | null>(null);
   const [locationName, setLocationName] = useState('');
+
+  // Note Type & Dynamic Parameters State
+  const [selectedNoteType, setSelectedNoteType] = useState<string>('note');
+  const [startTime, setStartTime] = useState<string>('');
+  const [endTime, setEndTime] = useState<string>('');
+  const [customFields, setCustomFields] = useState<Record<string, any>>({});
 
   // Selected Arrays
   const [selectedContacts, setSelectedContacts] = useState<LinkedContact[]>([]);
@@ -135,6 +158,116 @@ export const NoteModal: React.FC<Props> = ({
 
   const [isSubmitting, setIsSubmitting] = useState(false);
 
+  // Editor Image Upload & Drag/Drop Refs & States
+  const textareaRef = useRef<HTMLTextAreaElement>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
+  const [isUploadingImage, setIsUploadingImage] = useState(false);
+  const [uploadProgressStatus, setUploadProgressStatus] = useState<string | null>(null);
+
+  const handleProcessAndUploadImage = async (file: File) => {
+    if (!file || !file.type.startsWith('image/')) return;
+
+    setIsUploadingImage(true);
+    setUploadProgressStatus("Görsel Google Drive'a yükleniyor...");
+
+    try {
+      const reader = new FileReader();
+      reader.readAsDataURL(file);
+      reader.onload = async () => {
+        const base64Data = reader.result as string;
+
+        const res = await fetch('/api/drive/upload-image', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            name: file.name || `Gorsel_${Date.now()}.png`,
+            mimeType: file.type || 'image/png',
+            base64Data,
+          }),
+        });
+
+        if (res.ok) {
+          const data = await res.json();
+          const driveFile = data.file;
+          const imageUrl = data.imageUrl || data.dataUrl || base64Data;
+
+          // Link Drive file to note metadata automatically
+          if (driveFile && driveFile.id) {
+            setLinkedDriveFiles((prev) => {
+              if (prev.some((f) => f.id === driveFile.id)) return prev;
+              return [
+                ...prev,
+                {
+                  id: driveFile.id,
+                  name: driveFile.name || file.name,
+                  mimeType: driveFile.mimeType || file.type,
+                  webViewLink: driveFile.webViewLink,
+                },
+              ];
+            });
+          }
+
+          // Insert Markdown image snippet into content
+          const imageName = (file.name || 'Görsel').replace(/[\[\]]/g, '');
+          const markdownTag = `\n\n![${imageName}](${imageUrl})\n\n`;
+
+          if (textareaRef.current) {
+            const start = textareaRef.current.selectionStart || 0;
+            const end = textareaRef.current.selectionEnd || 0;
+            const currentVal = textareaRef.current.value;
+            const newContent =
+              currentVal.substring(0, start) + markdownTag + currentVal.substring(end);
+            setContent(newContent);
+          } else {
+            setContent((prev) => prev + markdownTag);
+          }
+
+          setUploadProgressStatus("✅ Görsel Google Drive'a yüklendi ve nota eklendi!");
+          setTimeout(() => setUploadProgressStatus(null), 3500);
+        } else {
+          setUploadProgressStatus('❌ Görsel yüklenemedi');
+          setTimeout(() => setUploadProgressStatus(null), 3500);
+        }
+        setIsUploadingImage(false);
+      };
+    } catch (err) {
+      console.error('Error processing image:', err);
+      setUploadProgressStatus('❌ Görsel işleme hatası');
+      setTimeout(() => setUploadProgressStatus(null), 3500);
+      setIsUploadingImage(false);
+    }
+  };
+
+  const handlePaste = (e: React.ClipboardEvent<HTMLTextAreaElement>) => {
+    const items = e.clipboardData?.items;
+    if (!items) return;
+
+    for (let i = 0; i < items.length; i++) {
+      const item = items[i];
+      if (item.type.indexOf('image') !== -1) {
+        e.preventDefault();
+        const file = item.getAsFile();
+        if (file) {
+          handleProcessAndUploadImage(file);
+        }
+        break;
+      }
+    }
+  };
+
+  const handleDrop = (e: React.DragEvent<HTMLTextAreaElement>) => {
+    e.preventDefault();
+    const files = e.dataTransfer?.files;
+    if (files && files.length > 0) {
+      for (let i = 0; i < files.length; i++) {
+        if (files[i].type.startsWith('image/')) {
+          handleProcessAndUploadImage(files[i]);
+          break;
+        }
+      }
+    }
+  };
+
   // Map Refs
   const mapContainerRef = useRef<HTMLDivElement>(null);
   const mapInstanceRef = useRef<L.Map | null>(null);
@@ -167,6 +300,13 @@ export const NoteModal: React.FC<Props> = ({
       setLocation(note.location || null);
       setLocationName(note.location?.name || '');
 
+      setSelectedNoteType(note.noteType || 'note');
+      
+      const nowIso = new Date().toISOString().slice(0, 16);
+      setStartTime(note.startTime ? note.startTime.slice(0, 16) : nowIso);
+      setEndTime(note.endTime ? note.endTime.slice(0, 16) : nowIso);
+      setCustomFields(note.customFields || {});
+
       // Multi Contacts
       if (note.contacts && note.contacts.length > 0) {
         setSelectedContacts(note.contacts);
@@ -194,6 +334,11 @@ export const NoteModal: React.FC<Props> = ({
       setLinkedEvents([]);
       setLinkedDriveFiles([]);
       setLinkedTasks([]);
+      setSelectedNoteType('note');
+      const nowIso = new Date().toISOString().slice(0, 16);
+      setStartTime(nowIso);
+      setEndTime(nowIso);
+      setCustomFields({});
     }
   }, [note, isOpen]);
 
@@ -550,10 +695,26 @@ export const NoteModal: React.FC<Props> = ({
         }
       }
 
+      let durationMins: number | undefined = undefined;
+      if (selectedNoteType === 'timelog' && startTime && endTime) {
+        const s = new Date(startTime).getTime();
+        const e = new Date(endTime).getTime();
+        if (!isNaN(s) && !isNaN(e) && e > s) {
+          durationMins = Math.round((e - s) / (1000 * 60));
+        } else {
+          durationMins = 0;
+        }
+      }
+
       await onSave({
         id: note?.id,
         title: title.trim() || 'İsimsiz Not',
         content: finalContent,
+        noteType: selectedNoteType,
+        startTime: selectedNoteType === 'timelog' ? startTime : undefined,
+        endTime: selectedNoteType === 'timelog' ? endTime : undefined,
+        durationMinutes: durationMins,
+        customFields: customFields,
         contacts: selectedContacts,
         linkedEmails,
         linkedEvents,
@@ -568,6 +729,8 @@ export const NoteModal: React.FC<Props> = ({
           : null,
         date,
         projectId: selectedProjectId || undefined,
+        cardId: note?.cardId || selectedProjectId || undefined,
+        cardTitle: note?.cardTitle || undefined,
       });
       onClose();
     } catch (err) {
@@ -614,6 +777,149 @@ export const NoteModal: React.FC<Props> = ({
         <form onSubmit={handleSubmit} className="flex-1 flex flex-col md:flex-row overflow-hidden min-h-0">
           {/* BÖLÜM 1: GENİŞ SOL İÇERİK PANELSİ */}
           <div className="w-full md:w-[58%] border-b md:border-b-0 md:border-r border-slate-200 p-4 space-y-3 flex flex-col overflow-y-auto">
+            
+            {/* Note Type Selector */}
+            <div>
+              <label className="block text-xs font-bold text-slate-700 mb-1">
+                Not Türü
+              </label>
+              <div className="flex items-center gap-2 flex-wrap">
+                {noteTypes.map((nt) => {
+                  const isSelected = selectedNoteType === nt.id;
+                  return (
+                    <button
+                      key={nt.id}
+                      type="button"
+                      onClick={() => setSelectedNoteType(nt.id)}
+                      className={`px-3 py-1.5 rounded-xl text-xs font-extrabold flex items-center gap-1.5 transition-all cursor-pointer border ${
+                        isSelected
+                          ? 'bg-indigo-600 text-white border-indigo-600 shadow-xs'
+                          : 'bg-slate-50 text-slate-700 border-slate-200 hover:bg-slate-100'
+                      }`}
+                    >
+                      {nt.id === 'timelog' ? <Clock className="w-3.5 h-3.5" /> : <FileText className="w-3.5 h-3.5" />}
+                      <span>{nt.name}</span>
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+
+            {/* Dynamic Timelog Fields */}
+            {selectedNoteType === 'timelog' && (
+              <div className="p-3 bg-purple-50/80 border border-purple-200 rounded-2xl space-y-2">
+                <div className="flex items-center justify-between flex-wrap gap-1">
+                  <span className="text-xs font-extrabold text-purple-900 flex items-center gap-1.5">
+                    <Clock className="w-4 h-4 text-purple-600" /> Timelog Zaman Aralığı
+                  </span>
+                  {startTime && endTime && (
+                    <span className="text-[11px] font-bold text-purple-700 bg-purple-100 px-2.5 py-0.5 rounded-lg">
+                      Süre: {Math.max(0, Math.round((new Date(endTime).getTime() - new Date(startTime).getTime()) / (1000 * 60)))} dakika
+                    </span>
+                  )}
+                </div>
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
+                  <div>
+                    <label className="block text-[10px] font-bold text-purple-900 mb-1">Başlangıç Zamanı</label>
+                    <input
+                      type="datetime-local"
+                      value={startTime}
+                      onChange={(e) => setStartTime(e.target.value)}
+                      required
+                      className="w-full px-2.5 py-1.5 text-xs bg-white border border-purple-200 rounded-xl font-bold text-slate-800"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-[10px] font-bold text-purple-900 mb-1">Bitiş Zamanı</label>
+                    <input
+                      type="datetime-local"
+                      value={endTime}
+                      onChange={(e) => setEndTime(e.target.value)}
+                      required
+                      className="w-full px-2.5 py-1.5 text-xs bg-white border border-purple-200 rounded-xl font-bold text-slate-800"
+                    />
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {/* Dynamic Custom Note Type Fields */}
+            {(() => {
+              const activeNt = noteTypes.find((t) => t.id === selectedNoteType);
+              if (!activeNt || !activeNt.fields || activeNt.fields.length === 0) return null;
+              return (
+                <div className="p-3 bg-indigo-50/70 border border-indigo-200 rounded-2xl space-y-2">
+                  <span className="text-xs font-extrabold text-indigo-900 block">
+                    {activeNt.name} Özel Parametreleri
+                  </span>
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
+                    {activeNt.fields.map((f) => (
+                      <div key={f.id} className={f.type === 'text' ? 'sm:col-span-2' : ''}>
+                        <label className="block text-[10px] font-bold text-indigo-900 mb-1">
+                          {f.name} {f.required && <span className="text-rose-500">*</span>}
+                        </label>
+                        {f.type === 'number' && (
+                          <input
+                            type="number"
+                            value={customFields[f.id] ?? ''}
+                            onChange={(e) => setCustomFields({ ...customFields, [f.id]: e.target.value })}
+                            placeholder={`Sayısal ${f.name} giriniz...`}
+                            required={f.required}
+                            className="w-full px-2.5 py-1.5 text-xs bg-white border border-indigo-200 rounded-xl font-semibold text-slate-800"
+                          />
+                        )}
+                        {f.type === 'text' && (
+                          <input
+                            type="text"
+                            value={customFields[f.id] ?? ''}
+                            onChange={(e) => setCustomFields({ ...customFields, [f.id]: e.target.value })}
+                            placeholder={`${f.name} giriniz...`}
+                            required={f.required}
+                            className="w-full px-2.5 py-1.5 text-xs bg-white border border-indigo-200 rounded-xl font-semibold text-slate-800"
+                          />
+                        )}
+                        {f.type === 'date' && (
+                          <input
+                            type="date"
+                            value={customFields[f.id] ?? ''}
+                            onChange={(e) => setCustomFields({ ...customFields, [f.id]: e.target.value })}
+                            required={f.required}
+                            className="w-full px-2.5 py-1.5 text-xs bg-white border border-indigo-200 rounded-xl font-semibold text-slate-800"
+                          />
+                        )}
+                        {f.type === 'boolean' && (
+                          <label className="flex items-center gap-2 cursor-pointer mt-1">
+                            <input
+                              type="checkbox"
+                              checked={!!customFields[f.id]}
+                              onChange={(e) => setCustomFields({ ...customFields, [f.id]: e.target.checked })}
+                              className="w-4 h-4 rounded text-indigo-600 border-indigo-300 focus:ring-indigo-500"
+                            />
+                            <span className="text-xs text-slate-800 font-bold">{f.name} Evet/Aktif</span>
+                          </label>
+                        )}
+                        {f.type === 'select' && (
+                          <select
+                            value={customFields[f.id] ?? ''}
+                            onChange={(e) => setCustomFields({ ...customFields, [f.id]: e.target.value })}
+                            required={f.required}
+                            className="w-full px-2.5 py-1.5 text-xs bg-white border border-indigo-200 rounded-xl font-semibold text-slate-800"
+                          >
+                            <option value="">Seçiniz...</option>
+                            {f.options?.map((opt) => (
+                              <option key={opt} value={opt}>
+                                {opt}
+                              </option>
+                            ))}
+                          </select>
+                        )}
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              );
+            })()}
+
             {/* Note Title */}
             <div>
               <label className="block text-xs font-bold text-slate-700 mb-1">
@@ -677,55 +983,108 @@ export const NoteModal: React.FC<Props> = ({
 
             {/* Note Content - 3 MODES (Düzenle, Önizleme, Çizim) */}
             <div className="flex-1 flex flex-col min-h-[280px]">
-              <div className="flex items-center justify-between mb-1.5">
-                <label className="block text-xs font-bold text-slate-700">
+              <div className="flex flex-wrap items-center justify-between gap-2 mb-2">
+                <label className="block text-xs font-bold text-slate-700 flex items-center gap-1.5">
+                  <FileText className="w-3.5 h-3.5 text-indigo-600" />
                   Not İçeriği Modu
                 </label>
-                <div className="flex items-center gap-1 p-0.5 bg-slate-100 rounded-xl border border-slate-200">
+
+                <div className="flex items-center gap-1.5 flex-wrap">
+                  {/* Image Upload Button */}
                   <button
                     type="button"
-                    onClick={() => setActiveTab('edit')}
-                    className={`px-2.5 py-1 text-[11px] font-semibold rounded-lg flex items-center gap-1 transition-all cursor-pointer ${
-                      activeTab === 'edit'
-                        ? 'bg-white text-indigo-600 shadow-2xs font-bold'
-                        : 'text-slate-500 hover:text-slate-800'
-                    }`}
+                    onClick={() => fileInputRef.current?.click()}
+                    disabled={isUploadingImage}
+                    className="px-2.5 py-1 text-[11px] font-bold text-indigo-700 bg-indigo-50 hover:bg-indigo-100 border border-indigo-200/80 rounded-lg flex items-center gap-1.5 transition-all cursor-pointer shadow-2xs disabled:opacity-50"
+                    title="Görsel yükle / yapıştır (Google Drive adminspace klasörüne kaydedilir)"
                   >
-                    <Edit2 className="w-3 h-3" /> Metin
+                    {isUploadingImage ? (
+                      <Loader2 className="w-3.5 h-3.5 animate-spin text-indigo-600" />
+                    ) : (
+                      <ImageIcon className="w-3.5 h-3.5 text-indigo-600" />
+                    )}
+                    <span>{isUploadingImage ? 'Yükleniyor...' : '🖼️ Resim Yükle'}</span>
                   </button>
-                  <button
-                    type="button"
-                    onClick={() => setActiveTab('preview')}
-                    className={`px-2.5 py-1 text-[11px] font-semibold rounded-lg flex items-center gap-1 transition-all cursor-pointer ${
-                      activeTab === 'preview'
-                        ? 'bg-white text-indigo-600 shadow-2xs font-bold'
-                        : 'text-slate-500 hover:text-slate-800'
-                    }`}
-                  >
-                    <Eye className="w-3 h-3" /> Önizleme
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => setActiveTab('drawing')}
-                    className={`px-2.5 py-1 text-[11px] font-semibold rounded-lg flex items-center gap-1 transition-all cursor-pointer ${
-                      activeTab === 'drawing'
-                        ? 'bg-indigo-600 text-white shadow-2xs font-bold'
-                        : 'text-slate-600 hover:text-indigo-600'
-                    }`}
-                  >
-                    <Pencil className="w-3 h-3" /> 🎨 Çizim
-                  </button>
+
+                  <input
+                    ref={fileInputRef}
+                    type="file"
+                    accept="image/*"
+                    className="hidden"
+                    onChange={(e) => {
+                      if (e.target.files && e.target.files[0]) {
+                        handleProcessAndUploadImage(e.target.files[0]);
+                        e.target.value = '';
+                      }
+                    }}
+                  />
+
+                  {/* Editor Mode Tabs */}
+                  <div className="flex items-center gap-1 p-0.5 bg-slate-100 rounded-xl border border-slate-200">
+                    <button
+                      type="button"
+                      onClick={() => setActiveTab('edit')}
+                      className={`px-2.5 py-1 text-[11px] font-semibold rounded-lg flex items-center gap-1 transition-all cursor-pointer ${
+                        activeTab === 'edit'
+                          ? 'bg-white text-indigo-600 shadow-2xs font-bold'
+                          : 'text-slate-500 hover:text-slate-800'
+                      }`}
+                    >
+                      <Edit2 className="w-3 h-3" /> Metin
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setActiveTab('preview')}
+                      className={`px-2.5 py-1 text-[11px] font-semibold rounded-lg flex items-center gap-1 transition-all cursor-pointer ${
+                        activeTab === 'preview'
+                          ? 'bg-white text-indigo-600 shadow-2xs font-bold'
+                          : 'text-slate-500 hover:text-slate-800'
+                      }`}
+                    >
+                      <Eye className="w-3 h-3" /> Önizleme
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setActiveTab('drawing')}
+                      className={`px-2.5 py-1 text-[11px] font-semibold rounded-lg flex items-center gap-1 transition-all cursor-pointer ${
+                        activeTab === 'drawing'
+                          ? 'bg-indigo-600 text-white shadow-2xs font-bold'
+                          : 'text-slate-600 hover:text-indigo-600'
+                      }`}
+                    >
+                      <Pencil className="w-3 h-3" /> 🎨 Çizim
+                    </button>
+                  </div>
                 </div>
               </div>
 
+              {/* Upload Progress Status Banner */}
+              {uploadProgressStatus && (
+                <div className="mb-2 px-3 py-1.5 bg-indigo-50 border border-indigo-200 text-indigo-900 text-xs font-semibold rounded-xl flex items-center justify-between animate-in fade-in">
+                  <span className="flex items-center gap-1.5">
+                    <UploadCloud className="w-3.5 h-3.5 text-indigo-600" />
+                    {uploadProgressStatus}
+                  </span>
+                </div>
+              )}
+
               {/* Tab Content Display */}
               {activeTab === 'edit' && (
-                <textarea
-                  value={content}
-                  onChange={(e) => setContent(e.target.value)}
-                  placeholder="Notunuzu yazın... (# Başlık, - Liste ögesi, **Kalın metin** vb. formatlar desteklenir)"
-                  className="w-full flex-1 p-3.5 text-xs font-mono bg-slate-50 border border-slate-200 rounded-2xl focus:outline-hidden focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 text-slate-900 leading-relaxed resize-none shadow-inner"
-                />
+                <div className="flex-1 flex flex-col space-y-1.5">
+                  <textarea
+                    ref={textareaRef}
+                    value={content}
+                    onChange={(e) => setContent(e.target.value)}
+                    onPaste={handlePaste}
+                    onDragOver={(e) => e.preventDefault()}
+                    onDrop={handleDrop}
+                    placeholder="Notunuzu yazın... (# Başlık, - Liste, **Kalın metin**). Resim yapıştırabilir (Ctrl+V) veya sürükleyebilirsiniz."
+                    className="w-full flex-1 p-3.5 text-xs font-mono bg-slate-50 border border-slate-200 rounded-2xl focus:outline-hidden focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 text-slate-900 leading-relaxed resize-none shadow-inner min-h-[220px]"
+                  />
+                  <p className="text-[10px] text-slate-400 italic px-1 flex items-center justify-between">
+                    <span>💡 İpucu: Panodan resim yapıştırabilir (Ctrl+V) veya buraya sürükleyebilirsiniz. Yüklenen görseller Google Drive'a kaydedilir.</span>
+                  </p>
+                </div>
               )}
 
               {activeTab === 'preview' && (
