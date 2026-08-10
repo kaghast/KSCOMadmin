@@ -99,6 +99,7 @@ export function ensureTablesExist(db: Database) {
   try { db.run("ALTER TABLE timelogs ADD COLUMN linkType TEXT"); } catch {}
   try { db.run("ALTER TABLE timelogs ADD COLUMN linkId TEXT"); } catch {}
   try { db.run("ALTER TABLE timelogs ADD COLUMN linkTitle TEXT"); } catch {}
+  try { db.run("ALTER TABLE timelogs ADD COLUMN locationId TEXT"); } catch {}
 
   db.run(`
     CREATE TABLE IF NOT EXISTS note_types (
@@ -1657,6 +1658,9 @@ export async function exportProjectToMarkdownAndDrive(
 export function getAllTimelogsFromDb(): any[] {
   if (!dbInstance) return [];
   try {
+    const locations = getAllLocationsFromDb();
+    const locMap = new Map(locations.map((l) => [l.id, l]));
+
     const stmt = dbInstance.prepare('SELECT * FROM timelogs ORDER BY startTime DESC');
     const logs: any[] = [];
     while (stmt.step()) {
@@ -1665,6 +1669,10 @@ export function getAllTimelogsFromDb(): any[] {
       try {
         tags = JSON.parse(String(row.tags || '[]'));
       } catch {}
+
+      const locId = row.locationId ? String(row.locationId) : null;
+      const locationObj = locId ? locMap.get(locId) || null : null;
+
       logs.push({
         id: String(row.id),
         cardId: row.cardId ? String(row.cardId) : undefined,
@@ -1681,6 +1689,7 @@ export function getAllTimelogsFromDb(): any[] {
         durationMinutes: Number(row.durationMinutes || 0),
         description: row.description ? String(row.description) : '',
         tags,
+        location: locationObj || undefined,
         createdAt: String(row.createdAt || new Date().toISOString()),
       });
     }
@@ -1694,11 +1703,17 @@ export function getAllTimelogsFromDb(): any[] {
 
 export function saveTimelogToDb(log: any) {
   if (!dbInstance) return;
+
+  const locationId = log.location ? log.location.id : null;
+  if (log.location) {
+    saveLocationToDb(log.location);
+  }
+
   const tagsJson = JSON.stringify(log.tags || []);
   dbInstance.run(
     `INSERT OR REPLACE INTO timelogs
-     (id, cardId, cardTitle, projectId, projectName, linkType, linkId, linkTitle, eventId, eventSummary, startTime, endTime, durationMinutes, description, tags, createdAt)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+     (id, cardId, cardTitle, projectId, projectName, linkType, linkId, linkTitle, eventId, eventSummary, startTime, endTime, durationMinutes, description, tags, locationId, createdAt)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     [
       log.id,
       log.cardId || null,
@@ -1715,6 +1730,7 @@ export function saveTimelogToDb(log: any) {
       log.durationMinutes || 0,
       log.description || '',
       tagsJson,
+      locationId,
       log.createdAt || new Date().toISOString(),
     ]
   );

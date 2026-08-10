@@ -1,13 +1,14 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { X, MapPin, Edit3, Check, Navigation, Search, Compass, Loader2, Trash2, Filter } from 'lucide-react';
 import L from 'leaflet';
-import { NoteLocation, NoteItem } from '../types';
+import { NoteLocation, NoteItem, TimeLog } from '../types';
 
 interface Props {
   isOpen: boolean;
   selectedLocation: NoteLocation | null;
   existingLocations: NoteLocation[];
   notes?: NoteItem[];
+  timeLogs?: TimeLog[];
   onClose: () => void;
   onSelectLocation: (loc: NoteLocation) => void;
   onRenameLocation: (id: string, newName: string) => Promise<void>;
@@ -27,6 +28,7 @@ export const MapPickerModal: React.FC<Props> = ({
   selectedLocation,
   existingLocations,
   notes = [],
+  timeLogs = [],
   onClose,
   onSelectLocation,
   onRenameLocation,
@@ -370,20 +372,32 @@ export const MapPickerModal: React.FC<Props> = ({
     setDeletingLocId(null);
   };
 
-  // Helper to calculate notes count for a given location
+  // Helper to calculate notes & timelogs count for a given location
   const getNoteCountForLocation = (loc: NoteLocation) => {
-    if (!notes || !Array.isArray(notes)) return 0;
-    return notes.filter((n) => {
-      if (!n.location) return false;
-      if (n.location.id && loc.id && n.location.id === loc.id) return true;
-      if (
-        n.location.name &&
-        loc.name &&
-        n.location.name.trim().toLowerCase() === loc.name.trim().toLowerCase()
-      )
-        return true;
-      return false;
-    }).length;
+    let count = 0;
+    if (notes && Array.isArray(notes)) {
+      count += notes.filter((n) => {
+        if (!n.location) return false;
+        if (n.location.id && loc.id && n.location.id === loc.id) return true;
+        return (
+          n.location.name &&
+          loc.name &&
+          n.location.name.trim().toLowerCase() === loc.name.trim().toLowerCase()
+        );
+      }).length;
+    }
+    if (timeLogs && Array.isArray(timeLogs)) {
+      count += timeLogs.filter((t) => {
+        if (!t.location) return false;
+        if (t.location.id && loc.id && t.location.id === loc.id) return true;
+        return (
+          t.location.name &&
+          loc.name &&
+          t.location.name.trim().toLowerCase() === loc.name.trim().toLowerCase()
+        );
+      }).length;
+    }
+    return count;
   };
 
   return (

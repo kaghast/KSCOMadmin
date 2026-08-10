@@ -1241,10 +1241,17 @@ export default function App() {
               tasks={tasks}
               emails={emails}
               driveFiles={driveFiles}
+              locations={locations}
               language={language}
               onSelectCard={(cardId, cardTitle) => {
                 setSidebarTab('projects');
               }}
+              onOpenMapForLocation={(loc) => {
+                setMapPickerInitLocation(loc);
+                setIsMapPickerOpen(true);
+              }}
+              onDeleteLocation={handleDeleteLocation}
+              onRenameLocation={handleRenameLocation}
             />
           )}
 

@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useState, useEffect, useMemo, useRef } from 'react';
 import {
   Clock,
   Play,
@@ -23,7 +23,12 @@ import {
   Sparkles,
   RefreshCw,
   ExternalLink,
+  MapPin,
+  Compass,
+  Loader2,
+  Navigation,
 } from 'lucide-react';
+import L from 'leaflet';
 import {
   PieChart,
   Pie,
@@ -44,6 +49,7 @@ import {
   EmailItem,
   DriveFile,
   TimeLog,
+  NoteLocation,
 } from '../types';
 import { MarkdownPreview } from './MarkdownPreview';
 
@@ -55,8 +61,12 @@ interface TimeManagementAppProps {
   tasks?: TaskItem[];
   emails?: EmailItem[];
   driveFiles?: DriveFile[];
+  locations?: NoteLocation[];
   language?: string;
   onSelectCard?: (cardId?: string, cardTitle?: string) => void;
+  onOpenMapForLocation?: (location: NoteLocation) => void;
+  onDeleteLocation?: (id: string) => Promise<void>;
+  onRenameLocation?: (id: string, newName: string) => Promise<void>;
 }
 
 type GoogleLinkType = 'tasks' | 'calendar' | 'gmail' | 'drive' | '';
@@ -71,14 +81,140 @@ export const TimeManagementApp: React.FC<TimeManagementAppProps> = ({
   tasks = [],
   emails = [],
   driveFiles = [],
+  locations = [],
   language = 'tr',
   onSelectCard,
+  onOpenMapForLocation,
+  onDeleteLocation,
+  onRenameLocation,
 }) => {
   const isTr = language === 'tr';
 
   // 1. TIMELOGS & TAGS STATE
   const [timeLogs, setTimeLogs] = useState<TimeLog[]>([]);
   const [userCreatedTags, setUserCreatedTags] = useState<string[]>([]);
+
+  // 2. LOCATION STATE
+  const [activeLocation, setActiveLocation] = useState<NoteLocation | null>(null);
+  const [activeLocationName, setActiveLocationName] = useState<string>('');
+
+  const [formLocation, setFormLocation] = useState<NoteLocation | null>(null);
+  const [formLocationName, setFormLocationName] = useState<string>('');
+  const [placeQuery, setPlaceQuery] = useState<string>('');
+  const [placeResults, setPlaceResults] = useState<any[]>([]);
+  const [isSearchingPlace, setIsSearchingPlace] = useState(false);
+  const [showPlaceDropdown, setShowPlaceDropdown] = useState(false);
+  const [isLocating, setIsLocating] = useState(false);
+  const [selectedLocationFilter, setSelectedLocationFilter] = useState<string>('');
+
+  const formMapContainerRef = useRef<HTMLDivElement>(null);
+  const formMapInstanceRef = useRef<L.Map | null>(null);
+  const formMarkerRef = useRef<L.Marker | null>(null);
+  const formSavedMarkersRef = useRef<{ [key: string]: L.Marker }>({});
+
+  const allPreviousLocations = useMemo(() => {
+    const locMap = new Map<string, NoteLocation>();
+    if (locations && Array.isArray(locations)) {
+      locations.forEach((l) => {
+        if (l && l.name) {
+          const key = l.id || l.name.trim().toLowerCase();
+          locMap.set(key, l);
+        }
+      });
+    }
+    notes.forEach((n) => {
+      if (n.location && n.location.name) {
+        const key = n.location.id || n.location.name.trim().toLowerCase();
+        if (!locMap.has(key)) {
+          locMap.set(key, n.location);
+        }
+      }
+    });
+    timeLogs.forEach((l) => {
+      if (l.location && l.location.name) {
+        const key = l.location.id || l.location.name.trim().toLowerCase();
+        if (!locMap.has(key)) {
+          locMap.set(key, l.location);
+        }
+      }
+    });
+    return Array.from(locMap.values());
+  }, [locations, notes, timeLogs]);
+
+  const matchedSavedLocations = useMemo(() => {
+    if (!placeQuery.trim()) return [];
+    const q = placeQuery.trim().toLowerCase();
+    return allPreviousLocations.filter((loc) => loc.name.toLowerCase().includes(q));
+  }, [allPreviousLocations, placeQuery]);
+
+  const handleSelectPreviousLocation = (loc: NoteLocation) => {
+    setFormLocation(loc);
+    setFormLocationName(loc.name);
+    setShowPlaceDropdown(false);
+  };
+
+  const handleSearchPlaces = async (q: string) => {
+    setPlaceQuery(q);
+    if (!q.trim() || q.trim().length < 2) {
+      setPlaceResults([]);
+      return;
+    }
+    setIsSearchingPlace(true);
+    try {
+      const res = await fetch(`https://nominatim.openstreetmap.org/search?format=json&q=${encodeURIComponent(q)}`);
+      const data = await res.json();
+      if (Array.isArray(data)) {
+        setPlaceResults(data);
+      }
+    } catch (e) {
+      console.error(e);
+    } finally {
+      setIsSearchingPlace(false);
+    }
+  };
+
+  const handleSelectPlace = (p: any) => {
+    const lat = parseFloat(p.lat);
+    const lng = parseFloat(p.lon);
+    const name = p.display_name.split(',')[0] || 'Arama Sonucu';
+    const newLoc: NoteLocation = {
+      id: `loc-${Date.now()}`,
+      name,
+      lat,
+      lng,
+    };
+    setFormLocation(newLoc);
+    setFormLocationName(name);
+    setShowPlaceDropdown(false);
+  };
+
+  const handleGetCurrentPosition = () => {
+    if (!navigator.geolocation) {
+      alert('Tarayıcınız konum servislerini desteklemiyor.');
+      return;
+    }
+    setIsLocating(true);
+    navigator.geolocation.getCurrentPosition(
+      (pos) => {
+        const lat = pos.coords.latitude;
+        const lng = pos.coords.longitude;
+        const name = `Mevcut Konum (${lat.toFixed(3)}, ${lng.toFixed(3)})`;
+        setFormLocation({
+          id: `loc-${Date.now()}`,
+          name,
+          lat,
+          lng,
+        });
+        setFormLocationName(name);
+        setIsLocating(false);
+      },
+      (err) => {
+        console.error(err);
+        alert('Konum alınamadı. Lütfen tarayıcı izinlerini kontrol edin.');
+        setIsLocating(false);
+      }
+    );
+  };
 
   // Combined tags across Notes, TimeLogs, and User dynamically added tags
   const availableTags = useMemo(() => {
@@ -212,6 +348,146 @@ export const TimeManagementApp: React.FC<TimeManagementAppProps> = ({
     setIsLoading(false);
   };
 
+  // Cleanup Leaflet Map on modal close or unmount
+  useEffect(() => {
+    if (!isModalOpen) {
+      if (formMapInstanceRef.current) {
+        try {
+          formMapInstanceRef.current.remove();
+        } catch (e) {
+          console.error(e);
+        }
+        formMapInstanceRef.current = null;
+        formMarkerRef.current = null;
+        formSavedMarkersRef.current = {};
+      }
+    }
+  }, [isModalOpen]);
+
+  // Leaflet Map Initialization & Updates for Modal
+  useEffect(() => {
+    if (!isModalOpen || !formMapContainerRef.current) return;
+
+    const timer = setTimeout(() => {
+      if (!formMapContainerRef.current) return;
+
+      const initLat = formLocation?.lat || 41.0082;
+      const initLng = formLocation?.lng || 28.9784;
+
+      if (formMapInstanceRef.current) {
+        const container = formMapInstanceRef.current.getContainer();
+        if (!container || !formMapContainerRef.current.contains(container)) {
+          try {
+            formMapInstanceRef.current.remove();
+          } catch (e) {
+            console.error(e);
+          }
+          formMapInstanceRef.current = null;
+          formMarkerRef.current = null;
+          formSavedMarkersRef.current = {};
+        }
+      }
+
+      if (!formMapInstanceRef.current) {
+        const map = L.map(formMapContainerRef.current, {
+          center: [initLat, initLng],
+          zoom: formLocation ? 14 : 11,
+          zoomControl: true,
+        });
+
+        L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+          attribution: '&copy; OpenStreetMap',
+        }).addTo(map);
+
+        const customIcon = L.divIcon({
+          className: 'custom-note-pin',
+          html: `<div style="background-color: #10b981; width: 24px; height: 24px; border-radius: 50%; border: 3px solid white; box-shadow: 0 4px 6px rgba(0,0,0,0.3); display: flex; align-items: center; justify-content: center;">
+                  <div style="width: 6px; height: 6px; background-color: white; border-radius: 50%;"></div>
+                </div>`,
+          iconSize: [24, 24],
+          iconAnchor: [12, 12],
+        });
+
+        map.on('click', (e: L.LeafletMouseEvent) => {
+          const { lat, lng } = e.latlng;
+          const newLocName = formLocationName.trim() || `Lokasyon (${lat.toFixed(3)}, ${lng.toFixed(3)})`;
+          const newLoc: NoteLocation = {
+            id: formLocation?.id || `loc-${Date.now()}`,
+            name: newLocName,
+            lat,
+            lng,
+          };
+          setFormLocation(newLoc);
+          if (!formLocationName) setFormLocationName(newLocName);
+
+          if (!formMarkerRef.current) {
+            formMarkerRef.current = L.marker([lat, lng], { icon: customIcon }).addTo(map);
+          } else {
+            formMarkerRef.current.setLatLng([lat, lng]);
+          }
+        });
+
+        formMapInstanceRef.current = map;
+      } else {
+        formMapInstanceRef.current.invalidateSize();
+      }
+
+      const map = formMapInstanceRef.current;
+      if (!map) return;
+
+      Object.values(formSavedMarkersRef.current).forEach((m) => m.remove());
+      formSavedMarkersRef.current = {};
+
+      const savedIcon = L.divIcon({
+        className: 'saved-note-pin',
+        html: `<div style="background-color: #059669; width: 22px; height: 22px; border-radius: 50%; border: 2px solid white; box-shadow: 0 2px 4px rgba(0,0,0,0.25); display: flex; align-items: center; justify-content: center;">
+                <div style="width: 6px; height: 6px; background-color: white; border-radius: 50%;"></div>
+              </div>`,
+        iconSize: [22, 22],
+        iconAnchor: [11, 11],
+      });
+
+      allPreviousLocations.forEach((loc) => {
+        if (formLocation && (formLocation.id === loc.id || formLocation.name.toLowerCase() === loc.name.toLowerCase())) {
+          return;
+        }
+
+        const marker = L.marker([loc.lat, loc.lng], { icon: savedIcon })
+          .addTo(map)
+          .bindTooltip(loc.name, { permanent: false, direction: 'top' });
+
+        marker.on('click', () => {
+          handleSelectPreviousLocation(loc);
+        });
+
+        formSavedMarkersRef.current[loc.id || loc.name] = marker;
+      });
+
+      if (formLocation) {
+        map.setView([formLocation.lat, formLocation.lng], 14);
+        const activeIcon = L.divIcon({
+          className: 'custom-note-pin-active',
+          html: `<div style="background-color: #10b981; width: 28px; height: 28px; border-radius: 50%; border: 3px solid white; box-shadow: 0 4px 8px rgba(16, 185, 129, 0.4); display: flex; align-items: center; justify-content: center;">
+                  <div style="width: 8px; height: 8px; background-color: white; border-radius: 50%;"></div>
+                </div>`,
+          iconSize: [28, 28],
+          iconAnchor: [14, 14],
+        });
+
+        if (!formMarkerRef.current) {
+          formMarkerRef.current = L.marker([formLocation.lat, formLocation.lng], { icon: activeIcon }).addTo(map);
+        } else {
+          formMarkerRef.current.setLatLng([formLocation.lat, formLocation.lng]);
+        }
+      } else if (formMarkerRef.current) {
+        formMarkerRef.current.remove();
+        formMarkerRef.current = null;
+      }
+    }, 150);
+
+    return () => clearTimeout(timer);
+  }, [isModalOpen, formLocation, allPreviousLocations]);
+
   // Live Timer Interval
   useEffect(() => {
     let interval: any = null;
@@ -271,6 +547,13 @@ export const TimeManagementApp: React.FC<TimeManagementAppProps> = ({
       return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
     };
 
+    const finalLocation = activeLocation
+      ? {
+          ...activeLocation,
+          name: activeLocationName.trim() || activeLocation.name || 'Lokasyon',
+        }
+      : undefined;
+
     const newLog: TimeLog = {
       id: `log-${Date.now()}`,
       cardId: cardId || undefined,
@@ -287,6 +570,7 @@ export const TimeManagementApp: React.FC<TimeManagementAppProps> = ({
       durationMinutes: durationMins,
       description: activeDescription.trim(),
       tags: activeTags.length > 0 ? activeTags : availableTags.slice(0, 1),
+      location: finalLocation,
       createdAt: new Date().toISOString(),
     };
 
@@ -295,6 +579,8 @@ export const TimeManagementApp: React.FC<TimeManagementAppProps> = ({
     setTimerStartTime(null);
     setTimerElapsedSeconds(0);
     setActiveDescription('');
+    setActiveLocation(null);
+    setActiveLocationName('');
 
     try {
       await fetch('/api/timelogs', {
@@ -351,6 +637,8 @@ export const TimeManagementApp: React.FC<TimeManagementAppProps> = ({
     setFormEndTime(`${todayStr}T10:00`);
     setFormDescription('');
     setFormTags(availableTags.slice(0, 1));
+    setFormLocation(null);
+    setFormLocationName('');
     setIsModalOpen(true);
   };
 
@@ -365,6 +653,8 @@ export const TimeManagementApp: React.FC<TimeManagementAppProps> = ({
     setFormEndTime(log.endTime || '');
     setFormDescription(log.description || '');
     setFormTags(log.tags || []);
+    setFormLocation(log.location || null);
+    setFormLocationName(log.location?.name || '');
     setIsModalOpen(true);
   };
 
@@ -402,6 +692,13 @@ export const TimeManagementApp: React.FC<TimeManagementAppProps> = ({
       }
     }
 
+    const finalLocation = formLocation
+      ? {
+          ...formLocation,
+          name: formLocationName.trim() || formLocation.name || 'Lokasyon',
+        }
+      : undefined;
+
     const logToSave: TimeLog = {
       id: editingLog ? editingLog.id : `log-${Date.now()}`,
       cardId: cardId || undefined,
@@ -418,6 +715,7 @@ export const TimeManagementApp: React.FC<TimeManagementAppProps> = ({
       durationMinutes: mins,
       description: formDescription.trim(),
       tags: formTags.length > 0 ? formTags : availableTags.slice(0, 1),
+      location: finalLocation,
       createdAt: editingLog ? editingLog.createdAt : new Date().toISOString(),
     };
 
@@ -525,13 +823,19 @@ export const TimeManagementApp: React.FC<TimeManagementAppProps> = ({
       (log.description && log.description.toLowerCase().includes(searchQuery.toLowerCase())) ||
       (log.projectName && log.projectName.toLowerCase().includes(searchQuery.toLowerCase())) ||
       (log.linkTitle && log.linkTitle.toLowerCase().includes(searchQuery.toLowerCase())) ||
-      (log.eventSummary && log.eventSummary.toLowerCase().includes(searchQuery.toLowerCase()));
+      (log.eventSummary && log.eventSummary.toLowerCase().includes(searchQuery.toLowerCase())) ||
+      (log.location && log.location.name.toLowerCase().includes(searchQuery.toLowerCase()));
 
     const matchesTag = !selectedTagFilter || (log.tags && log.tags.includes(selectedTagFilter));
     const matchesProject = !selectedProjectFilter || log.projectId === selectedProjectFilter;
     const matchesLinkType = !selectedLinkTypeFilter || log.linkType === selectedLinkTypeFilter;
+    const matchesLocation =
+      !selectedLocationFilter ||
+      (log.location &&
+        (log.location.id === selectedLocationFilter ||
+          log.location.name.toLowerCase() === selectedLocationFilter.toLowerCase()));
 
-    return matchesSearch && matchesTag && matchesProject && matchesLinkType;
+    return matchesSearch && matchesTag && matchesProject && matchesLinkType && matchesLocation;
   });
 
   // Analytics
@@ -954,6 +1258,75 @@ export const TimeManagementApp: React.FC<TimeManagementAppProps> = ({
               )}
             </div>
           </div>
+
+          {/* 4. Location Selector */}
+          <div>
+            <label className="block text-xs font-semibold text-slate-700 mb-1 flex items-center gap-1.5">
+              <MapPin className="w-3.5 h-3.5 text-indigo-600" />
+              {isTr ? 'Konum / Mekan' : 'Location / Venue'}
+            </label>
+            <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2">
+              {allPreviousLocations.length > 0 && (
+                <select
+                  value={activeLocation?.id || activeLocation?.name || ''}
+                  disabled={isTimerRunning}
+                  onChange={(e) => {
+                    const loc = allPreviousLocations.find((l) => (l.id || l.name) === e.target.value);
+                    if (loc) {
+                      setActiveLocation(loc);
+                      setActiveLocationName(loc.name);
+                    } else {
+                      setActiveLocation(null);
+                      setActiveLocationName('');
+                    }
+                  }}
+                  className="px-3 py-1.5 bg-slate-50 border border-slate-200 rounded-xl text-xs text-slate-800 focus:outline-none focus:ring-2 focus:ring-emerald-500"
+                >
+                  <option value="">{isTr ? '-- Önceki Mekan Seçin --' : '-- Select Saved Venue --'}</option>
+                  {allPreviousLocations.map((loc) => (
+                    <option key={loc.id || loc.name} value={loc.id || loc.name}>
+                      📍 {loc.name}
+                    </option>
+                  ))}
+                </select>
+              )}
+              <input
+                type="text"
+                placeholder={isTr ? 'veya Manuel Mekan Adı Yazın...' : 'or Type Location Name...'}
+                value={activeLocationName}
+                disabled={isTimerRunning}
+                onChange={(e) => {
+                  const val = e.target.value;
+                  setActiveLocationName(val);
+                  if (val && !activeLocation) {
+                    setActiveLocation({
+                      id: `loc-${Date.now()}`,
+                      name: val,
+                      lat: 41.0082,
+                      lng: 28.9784,
+                    });
+                  } else if (!val) {
+                    setActiveLocation(null);
+                  }
+                }}
+                className="flex-1 px-3 py-1.5 bg-white border border-slate-200 rounded-xl text-xs text-slate-800 focus:outline-none focus:ring-2 focus:ring-emerald-500"
+              />
+              {activeLocation && (
+                <button
+                  type="button"
+                  disabled={isTimerRunning}
+                  onClick={() => {
+                    setActiveLocation(null);
+                    setActiveLocationName('');
+                  }}
+                  className="p-1.5 text-slate-400 hover:text-rose-600 rounded-lg transition-colors cursor-pointer shrink-0"
+                  title="Lokasyonu Kaldır"
+                >
+                  <X className="w-4 h-4" />
+                </button>
+              )}
+            </div>
+          </div>
         </div>
 
         {/* Work Description Note */}
@@ -1102,6 +1475,22 @@ export const TimeManagementApp: React.FC<TimeManagementAppProps> = ({
               ))}
             </select>
 
+            {/* Location Filter */}
+            {allPreviousLocations.length > 0 && (
+              <select
+                value={selectedLocationFilter}
+                onChange={(e) => setSelectedLocationFilter(e.target.value)}
+                className="px-3 py-2 bg-slate-50 border border-slate-200 rounded-2xl text-xs text-slate-700 focus:outline-none focus:ring-2 focus:ring-emerald-500"
+              >
+                <option value="">{isTr ? 'Tüm Lokasyonlar' : 'All Locations'}</option>
+                {allPreviousLocations.map((loc) => (
+                  <option key={loc.id || loc.name} value={loc.id || loc.name}>
+                    📍 {loc.name}
+                  </option>
+                ))}
+              </select>
+            )}
+
             {/* Project Filter */}
             {projects.length > 0 && (
               <select
@@ -1160,6 +1549,19 @@ export const TimeManagementApp: React.FC<TimeManagementAppProps> = ({
 
                       {/* Linked Service Badge */}
                       {renderLinkBadge(log.linkType, log.linkTitle || log.eventSummary, log.cardTitle)}
+
+                      {/* Location Badge */}
+                      {log.location && (
+                        <button
+                          type="button"
+                          onClick={() => onOpenMapForLocation?.(log.location!)}
+                          className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full bg-indigo-50 border border-indigo-200 text-indigo-800 text-[11px] font-semibold hover:bg-indigo-100 hover:underline transition-all cursor-pointer shrink-0"
+                          title="Lokasyonu Haritada Göster"
+                        >
+                          <MapPin className="w-3.5 h-3.5 text-indigo-600 shrink-0" />
+                          <span className="truncate max-w-[150px]">{log.location.name}</span>
+                        </button>
+                      )}
                     </div>
 
                     {/* Description Note (Markdown Rendered) */}
@@ -1391,6 +1793,200 @@ export const TimeManagementApp: React.FC<TimeManagementAppProps> = ({
                     value={formEndTime}
                     onChange={(e) => setFormEndTime(e.target.value)}
                     className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl text-xs text-slate-800 focus:outline-none focus:ring-2 focus:ring-emerald-500"
+                  />
+                </div>
+              </div>
+
+              {/* Harita ve Lokasyon Seçimi */}
+              <div className="space-y-2 bg-indigo-50/40 p-3.5 rounded-2xl border border-indigo-100">
+                <div className="flex items-center justify-between">
+                  <label className="text-xs font-bold text-indigo-950 flex items-center gap-1.5">
+                    <MapPin className="w-4 h-4 text-indigo-600" />
+                    <span>Harita & Lokasyon Seçimi</span>
+                  </label>
+                  {formLocation && (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setFormLocation(null);
+                        setFormLocationName('');
+                      }}
+                      className="text-[11px] font-bold text-rose-600 hover:text-rose-800 hover:underline cursor-pointer flex items-center gap-1"
+                    >
+                      <Trash2 className="w-3 h-3" />
+                      <span>Kaldır</span>
+                    </button>
+                  )}
+                </div>
+
+                {/* Previous locations quick chips */}
+                {allPreviousLocations.length > 0 && (
+                  <div className="space-y-1">
+                    <span className="text-[10px] font-extrabold uppercase text-indigo-500 tracking-wider">
+                      Önceki Mekanlar
+                    </span>
+                    <div className="flex flex-wrap gap-1.5 max-h-24 overflow-y-auto p-1 bg-white rounded-xl border border-indigo-100">
+                      {allPreviousLocations.map((loc) => {
+                        const isSelected =
+                          formLocation?.id === loc.id ||
+                          (formLocationName && formLocationName.trim().toLowerCase() === loc.name.trim().toLowerCase());
+                        return (
+                          <div
+                            key={loc.id || loc.name}
+                            className={`rounded-xl border flex items-center overflow-hidden shrink-0 transition-all ${
+                              isSelected
+                                ? 'bg-emerald-600 text-white border-emerald-600 shadow-2xs'
+                                : 'bg-white hover:bg-indigo-100/80 text-indigo-900 border-indigo-200/80 shadow-2xs'
+                            }`}
+                          >
+                            <button
+                              type="button"
+                              onClick={() => handleSelectPreviousLocation(loc)}
+                              className="px-2.5 py-1 text-[11px] font-bold flex items-center gap-1 cursor-pointer"
+                            >
+                              <MapPin className={`w-3 h-3 ${isSelected ? 'text-white' : 'text-indigo-600'}`} />
+                              <span>{loc.name}</span>
+                            </button>
+                            {onDeleteLocation && loc.id && (
+                              <button
+                                type="button"
+                                onClick={async (e) => {
+                                  e.stopPropagation();
+                                  if (confirm(`"${loc.name}" lokasyonunu silmek istediğinize emin misiniz?`)) {
+                                    await onDeleteLocation(loc.id);
+                                    if (formLocation?.id === loc.id) {
+                                      setFormLocation(null);
+                                      setFormLocationName('');
+                                    }
+                                  }
+                                }}
+                                className={`px-1.5 py-1 text-[10px] transition-colors cursor-pointer ${
+                                  isSelected
+                                    ? 'hover:bg-emerald-700 text-emerald-100 hover:text-white'
+                                    : 'hover:bg-rose-50 text-slate-400 hover:text-rose-600'
+                                }`}
+                                title="Lokasyonu Sil"
+                              >
+                                <Trash2 className="w-3 h-3" />
+                              </button>
+                            )}
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </div>
+                )}
+
+                {/* Search Box & Geolocation Button */}
+                <div className="flex items-center gap-1.5 relative z-10">
+                  <div className="relative flex-1">
+                    <Search className="w-3.5 h-3.5 text-slate-400 absolute left-2.5 top-1/2 -translate-y-1/2" />
+                    <input
+                      type="text"
+                      value={placeQuery}
+                      onFocus={() => setShowPlaceDropdown(true)}
+                      onChange={(e) => handleSearchPlaces(e.target.value)}
+                      placeholder="Mekan veya Adres Ara..."
+                      className="w-full pl-8 pr-2 py-1.5 text-xs bg-white border border-indigo-200/80 rounded-xl focus:outline-none text-slate-800"
+                    />
+                    {isSearchingPlace && (
+                      <Loader2 className="w-3.5 h-3.5 text-indigo-600 animate-spin absolute right-2 top-1/2 -translate-y-1/2" />
+                    )}
+
+                    {showPlaceDropdown && (matchedSavedLocations.length > 0 || placeResults.length > 0) && (
+                      <div className="absolute top-full left-0 right-0 mt-1 bg-white border border-slate-200 rounded-xl shadow-xl max-h-48 overflow-y-auto z-30 divide-y divide-slate-100">
+                        {matchedSavedLocations.length > 0 && (
+                          <div className="bg-indigo-50/40">
+                            <div className="px-2 py-1 text-[10px] font-extrabold text-indigo-600 uppercase tracking-wider">
+                              Önceki Mekanlar
+                            </div>
+                            {matchedSavedLocations.map((loc) => (
+                              <div
+                                key={`saved-${loc.id || loc.name}`}
+                                onClick={() => handleSelectPreviousLocation(loc)}
+                                className="p-2 text-xs hover:bg-indigo-100/70 cursor-pointer flex items-center justify-between"
+                              >
+                                <div className="flex items-center gap-1.5 min-w-0">
+                                  <MapPin className="w-3.5 h-3.5 text-indigo-600 shrink-0" />
+                                  <span className="font-bold text-indigo-950 truncate">{loc.name}</span>
+                                </div>
+                                <span className="text-[9px] font-extrabold bg-indigo-200/80 text-indigo-800 px-1.5 py-0.5 rounded-md shrink-0">
+                                  Kayıtlı
+                                </span>
+                              </div>
+                            ))}
+                          </div>
+                        )}
+
+                        {placeResults.length > 0 && (
+                          <div>
+                            <div className="px-2 py-1 text-[10px] font-extrabold text-slate-400 uppercase tracking-wider">
+                              Harita Sonuçları
+                            </div>
+                            {placeResults.map((p) => (
+                              <div
+                                key={p.place_id}
+                                onClick={() => handleSelectPlace(p)}
+                                className="p-2 text-xs hover:bg-slate-50 cursor-pointer flex items-start gap-1.5"
+                              >
+                                <MapPin className="w-3.5 h-3.5 text-slate-500 shrink-0 mt-0.5" />
+                                <div className="min-w-0">
+                                  <div className="font-bold text-slate-900 truncate">
+                                    {p.display_name.split(',')[0]}
+                                  </div>
+                                  <div className="text-[10px] text-slate-400 truncate">{p.display_name}</div>
+                                </div>
+                              </div>
+                            ))}
+                          </div>
+                        )}
+                      </div>
+                    )}
+                  </div>
+
+                  <button
+                    type="button"
+                    onClick={handleGetCurrentPosition}
+                    disabled={isLocating}
+                    className="px-2.5 py-1.5 bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl text-xs font-semibold flex items-center gap-1 cursor-pointer shrink-0 transition-colors"
+                    title="Mevcut Konumumu Bul"
+                  >
+                    {isLocating ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Navigation className="w-3.5 h-3.5" />}
+                    <span className="hidden sm:inline">Konumum</span>
+                  </button>
+                </div>
+
+                {/* Map Container */}
+                <div className="relative rounded-2xl overflow-hidden border border-indigo-200 shadow-2xs">
+                  <div ref={formMapContainerRef} className="h-44 w-full z-0" />
+                  {!formLocation && (
+                    <div className="absolute inset-0 bg-slate-900/10 pointer-events-none flex items-center justify-center p-2">
+                      <span className="bg-white/90 text-slate-700 text-[11px] font-bold px-3 py-1.5 rounded-full shadow-md backdrop-blur-xs flex items-center gap-1.5">
+                        <Compass className="w-3.5 h-3.5 text-indigo-600" />
+                        Haritadan Tıklayarak Pin Koyabilirsiniz
+                      </span>
+                    </div>
+                  )}
+                </div>
+
+                {/* Location Name Input */}
+                <div>
+                  <input
+                    type="text"
+                    placeholder="Mekan / Konum Adı Girin (Örn: Kadıköy Ofis, Ev, Starbucks)..."
+                    value={formLocationName}
+                    onChange={(e) => {
+                      setFormLocationName(e.target.value);
+                      if (e.target.value && !formLocation) {
+                        setFormLocation({
+                          id: `loc-${Date.now()}`,
+                          name: e.target.value,
+                          lat: 41.0082,
+                          lng: 28.9784,
+                        });
+                      }
+                    }}
+                    className="w-full px-3 py-1.5 bg-white border border-indigo-200 rounded-xl text-xs text-slate-800 focus:outline-none focus:ring-2 focus:ring-indigo-500 font-medium"
                   />
                 </div>
               </div>

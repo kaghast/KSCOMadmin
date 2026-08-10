@@ -70,6 +70,7 @@ export interface TimeLog {
   durationMinutes: number;
   description?: string;
   tags: string[];    // Tags (same tag set as notes)
+  location?: NoteLocation;
   createdAt: string;
 }
 
