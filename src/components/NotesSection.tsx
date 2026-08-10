@@ -37,6 +37,8 @@ interface Props {
   onRefresh: () => void;
   isLoading: boolean;
   onOpenMapForLocation?: (loc: NoteLocation) => void;
+  onSaveNote?: (data: any) => Promise<void>;
+  onSaveTimelog?: (data: any) => Promise<void>;
 }
 
 export const NotesSection: React.FC<Props> = ({
@@ -54,6 +56,8 @@ export const NotesSection: React.FC<Props> = ({
   onRefresh,
   isLoading,
   onOpenMapForLocation,
+  onSaveNote,
+  onSaveTimelog,
 }) => {
   const [searchTerm, setSearchTerm] = useState('');
   const [selectedTagFilter, setSelectedTagFilter] = useState<string | null>(null);
@@ -457,8 +461,13 @@ export const NotesSection: React.FC<Props> = ({
         <div className="lg:col-span-1">
           <NoteCalendarSidebar
             notes={notes}
+            timeLogs={timeLogs}
+            events={events}
             selectedDate={selectedDateFilter}
             onSelectDate={setSelectedDateFilter}
+            onSaveNote={onSaveNote}
+            onSaveTimelog={onSaveTimelog}
+            onRefresh={onRefresh}
           />
         </div>
       </div>

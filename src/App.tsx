@@ -88,6 +88,28 @@ export default function App() {
   const [isSidebarCollapsed, setIsSidebarCollapsed] = useState(false);
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
 
+  // Global AdminSpace Google Drive Database & Notes Sync Handlers
+  const [isSyncingDrive, setIsSyncingDrive] = useState(false);
+  const [driveSyncMessage, setDriveSyncMessage] = useState<string | null>(null);
+
+  const handleSyncToDrive = async () => {
+    setIsSyncingDrive(true);
+    setDriveSyncMessage(null);
+    try {
+      const res = await fetch('/api/adminspace/sync', { method: 'POST' });
+      const data = await res.json();
+      if (res.ok && data.success) {
+        setDriveSyncMessage(`Yerel SQLite veritabanı, notlar ve JSON yedekleri Google Drive 'adminspace' klasörüne kaydedildi.`);
+      } else {
+        setDriveSyncMessage(data.error || 'Yükleme başarısız.');
+      }
+    } catch (err: any) {
+      setDriveSyncMessage(`Yükleme hatası: ${err.message}`);
+    } finally {
+      setIsSyncingDrive(false);
+    }
+  };
+
   const handleTabChange = (tab: NavTab) => {
     setSidebarTab(tab);
     setInitialTaskIdOrSlug(null);
@@ -96,6 +118,8 @@ export default function App() {
     if (window.location.pathname !== path) {
       window.history.pushState({}, '', path);
     }
+    // Sol sidebar item'ına her basıldığında anlık Google Drive senkronizasyonu başlat
+    handleSyncToDrive();
   };
 
   const handleSelectTaskSlug = (task: ProjectTask | null) => {
@@ -561,10 +585,6 @@ export default function App() {
     }
   };
 
-  // Global AdminSpace Google Drive Database & Notes Sync Handlers
-  const [isSyncingDrive, setIsSyncingDrive] = useState(false);
-  const [driveSyncMessage, setDriveSyncMessage] = useState<string | null>(null);
-
   const handleRestoreFromDrive = async () => {
     setIsSyncingDrive(true);
     setDriveSyncMessage(null);
@@ -580,24 +600,6 @@ export default function App() {
       }
     } catch (err: any) {
       setDriveSyncMessage(`İndirme hatası: ${err.message}`);
-    } finally {
-      setIsSyncingDrive(false);
-    }
-  };
-
-  const handleSyncToDrive = async () => {
-    setIsSyncingDrive(true);
-    setDriveSyncMessage(null);
-    try {
-      const res = await fetch('/api/adminspace/sync', { method: 'POST' });
-      const data = await res.json();
-      if (res.ok && data.success) {
-        setDriveSyncMessage(`Yerel SQLite veritabanı, notlar ve JSON yedekleri Google Drive 'adminspace' klasörüne kaydedildi.`);
-      } else {
-        setDriveSyncMessage(data.error || 'Yükleme başarısız.');
-      }
-    } catch (err: any) {
-      setDriveSyncMessage(`Yükleme hatası: ${err.message}`);
     } finally {
       setIsSyncingDrive(false);
     }
@@ -910,6 +912,16 @@ export default function App() {
     fetchNotes();
   };
 
+  const handleSaveTimelog = async (logData: any) => {
+    await fetch('/api/timelogs', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(logData),
+    });
+    fetchTimelogs();
+    fetchNotes();
+  };
+
   const handleDeleteNote = async (id: string) => {
     await fetch(`/api/notes/${id}`, { method: 'DELETE' });
     fetchNotes();
@@ -1020,6 +1032,8 @@ export default function App() {
                 setMapPickerInitLocation(loc);
                 setIsMapPickerOpen(true);
               }}
+              onSaveNote={handleSaveNote}
+              onSaveTimelog={handleSaveTimelog}
             />
           )}
 
