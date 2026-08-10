@@ -19,6 +19,7 @@ import {
   deleteNoteTypeFromDb,
   syncWithGoogleDriveAdminSpace,
   restoreFromGoogleDriveAdminSpace,
+  smartSyncWithDrive,
   getOrCreateAdminSpaceFolder,
   getAllProjectsFromDb,
   saveProjectToDb,
@@ -37,39 +38,15 @@ type TaskPriority = 'high' | 'medium' | 'low';
 const app = express();
 const PORT = process.env.PORT ? parseInt(process.env.PORT, 10) : 3000;
 
-let hasAutoRestoredFromDrive = false;
-let autoRestorePromise: Promise<any> | null = null;
-
 async function ensureRestoredFromDrive(req: express.Request) {
-  if (hasAutoRestoredFromDrive) return;
-
   const authClient = getAuthenticatedClient(req);
   if (!authClient) return;
 
-  if (autoRestorePromise) {
-    return autoRestorePromise;
+  try {
+    await smartSyncWithDrive(authClient);
+  } catch (err) {
+    console.error('Error during Google Drive smart sync:', err);
   }
-
-  hasAutoRestoredFromDrive = true;
-  autoRestorePromise = (async () => {
-    try {
-      const SQLITE_FILE = path.join(process.cwd(), 'adminspace', 'adminspace.sqlite');
-      if (!fs.existsSync(SQLITE_FILE)) {
-        console.log('Local SQLite database does not exist. Restoring from Google Drive adminspace folder...');
-        const res = await restoreFromGoogleDriveAdminSpace(authClient);
-        console.log('Initial restore from Google Drive completed:', res);
-      } else {
-        console.log('Local SQLite database exists. Performing sync with Google Drive adminspace folder...');
-        await syncWithGoogleDriveAdminSpace(authClient);
-      }
-    } catch (err) {
-      console.error('Error during Google Drive adminspace auto-restore/sync:', err);
-    } finally {
-      autoRestorePromise = null;
-    }
-  })();
-
-  return autoRestorePromise;
 }
 
 app.set('trust proxy', true);
@@ -267,8 +244,7 @@ app.get('/api/auth/callback', async (req, res) => {
       maxAge: 30 * 24 * 60 * 60 * 1000, // 30 days
     });
 
-    // Reset auto-restored flag and immediately create/sync Google Drive adminspace folder
-    hasAutoRestoredFromDrive = false;
+    // Immediately create/sync Google Drive adminspace folder
     syncWithGoogleDriveAdminSpace(oauth2Client)
       .then((res) => {
         if (res) console.log('[OAuth Callback] Google Drive adminspace sync success:', res.folderId);
@@ -2195,7 +2171,6 @@ app.post('/api/adminspace/restore', async (req, res) => {
   await getAdminSpaceDb();
   const result = await restoreFromGoogleDriveAdminSpace(authClient);
   if (result) {
-    hasAutoRestoredFromDrive = true;
     res.json({ success: true, ...result });
   } else {
     res.status(500).json({ error: 'Failed to restore adminspace from Google Drive' });

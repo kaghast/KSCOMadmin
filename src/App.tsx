@@ -1007,33 +1007,8 @@ export default function App() {
 
         {/* Right Main Content Panel */}
         <main className="flex-1 overflow-y-auto p-3 sm:p-6 lg:p-8 space-y-4 sm:space-y-6 min-w-0">
-          {/* Auth Status & Real-time Sync Banner */}
-          {authStatus.isAuthenticated ? (
-            <div className="bg-slate-900 text-white border border-slate-800 rounded-2xl p-3 sm:p-4 flex flex-wrap items-center justify-between gap-3 shadow-md">
-              <div className="flex items-center gap-3">
-                <div className="p-2 bg-indigo-600/30 text-indigo-400 rounded-xl border border-indigo-500/30">
-                  <Cloud className="w-5 h-5 text-indigo-400" />
-                </div>
-                <div>
-                  <div className="flex items-center gap-2">
-                    <span className="text-xs font-bold text-slate-100">Gerçek Zamanlı Google Drive Senkronizasyonu</span>
-                    <span className="px-2 py-0.5 bg-emerald-500/20 text-emerald-400 border border-emerald-500/30 text-[10px] font-extrabold rounded-md flex items-center gap-1.5">
-                      <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse"></span>
-                      <span>Otomatik Senkronizasyon Aktif</span>
-                    </span>
-                  </div>
-                  <p className="text-[11px] text-slate-400 mt-0.5">
-                    Bağlı Hesap: <strong className="text-indigo-300 font-mono">{authStatus.user?.email || 'Google Hesabı'}</strong> — Tüm veri güncellemeleri Google Drive <code className="text-indigo-300 font-mono">adminspace</code> klasörüne anında kaydedilir.
-                  </p>
-                </div>
-              </div>
-
-              <div className="flex items-center gap-2 text-xs font-bold text-slate-300 bg-slate-800/80 px-3.5 py-2 rounded-xl border border-slate-700/60">
-                <CheckCircle2 className="w-4 h-4 text-emerald-400 shrink-0" />
-                <span>Anlık Senkronizasyon Etkin</span>
-              </div>
-            </div>
-          ) : (
+          {/* Auth Status Banner (shown only when not authenticated) */}
+          {!authStatus.isAuthenticated && (
             <div className="bg-gradient-to-r from-amber-500/10 via-amber-500/5 to-amber-500/10 border border-amber-200/80 rounded-2xl p-4 flex flex-wrap items-center justify-between gap-4 shadow-2xs">
               <div className="flex items-center gap-3">
                 <div className="p-2 bg-amber-100 text-amber-700 rounded-xl">

@@ -13,6 +13,8 @@ if (!fs.existsSync(ADMINSPACE_DIR)) {
 }
 
 let dbInstance: Database | null = null;
+export let lastLocalWriteTimestamp = 0;
+export let lastDriveSyncTimestamp = 0;
 
 export function ensureTablesExist(db: Database) {
   db.run(`
@@ -375,6 +377,7 @@ ${task.description || '*Açıklama girilmedi.*'}
       }
     });
 
+    lastLocalWriteTimestamp = Date.now();
   } catch (err) {
     console.error('Error saving SQLite DB to disk in adminspace:', err);
   }
@@ -1141,6 +1144,7 @@ export async function syncWithGoogleDriveAdminSpace(authClient: any) {
         }
       }
 
+      lastDriveSyncTimestamp = Date.now();
       return {
         folderId,
         folderLink,
@@ -1156,6 +1160,65 @@ export async function syncWithGoogleDriveAdminSpace(authClient: any) {
   })();
 
   return pendingSyncPromise;
+}
+
+// Smart sync function: automatically compares local vs Drive timestamps and either restores or syncs
+let lastDriveCheckTime = 0;
+let pendingSmartSyncPromise: Promise<any> | null = null;
+
+export async function smartSyncWithDrive(authClient: any) {
+  if (!authClient) return null;
+
+  const now = Date.now();
+  if (now - lastDriveCheckTime < 2500 && lastLocalWriteTimestamp <= lastDriveSyncTimestamp) {
+    return null;
+  }
+
+  if (pendingSmartSyncPromise) {
+    return pendingSmartSyncPromise;
+  }
+
+  pendingSmartSyncPromise = (async () => {
+    try {
+      lastDriveCheckTime = Date.now();
+      const drive = google.drive({ version: 'v3', auth: authClient });
+      const folderInfo = await getOrCreateAdminSpaceFolder(drive);
+      if (!folderInfo?.folderId) return null;
+      const folderId = folderInfo.folderId;
+
+      const sqliteSearch = await drive.files.list({
+        q: `'${folderId}' in parents and name = 'adminspace.sqlite' and trashed = false`,
+        fields: 'files(id, name, modifiedTime)',
+      });
+      const sqliteFiles = sqliteSearch.data.files || [];
+      const sqliteFile = sqliteFiles[0];
+
+      if (sqliteFile?.modifiedTime) {
+        const driveModifiedMs = new Date(sqliteFile.modifiedTime).getTime();
+
+        if (driveModifiedMs > lastLocalWriteTimestamp + 2000) {
+          console.log(`[Smart Sync] Drive is NEWER (${sqliteFile.modifiedTime} vs local write ${new Date(lastLocalWriteTimestamp).toISOString()}). Restoring from Drive...`);
+          const res = await restoreFromGoogleDriveAdminSpace(authClient);
+          return res;
+        }
+      }
+
+      if (lastLocalWriteTimestamp > lastDriveSyncTimestamp || !sqliteFile) {
+        console.log('[Smart Sync] Local database has updates. Syncing to Google Drive...');
+        const res = await syncWithGoogleDriveAdminSpace(authClient);
+        return res;
+      }
+
+      return null;
+    } catch (err) {
+      console.error('[Smart Sync Error]:', err);
+      return null;
+    } finally {
+      pendingSmartSyncPromise = null;
+    }
+  })();
+
+  return pendingSmartSyncPromise;
 }
 
 // Restore SQLite DB / data.json / cards from Google Drive 'adminspace' folder into local SQLite engine
@@ -1274,6 +1337,13 @@ export async function restoreFromGoogleDriveAdminSpace(authClient: any) {
           } catch {}
         }
       }
+    }
+
+    lastDriveSyncTimestamp = Date.now();
+    if (sqliteFile?.modifiedTime) {
+      lastLocalWriteTimestamp = new Date(sqliteFile.modifiedTime).getTime();
+    } else {
+      lastLocalWriteTimestamp = Date.now();
     }
 
     return { restored: isRestored, modifiedTime: sqliteFile?.modifiedTime || jsonFile?.modifiedTime };
