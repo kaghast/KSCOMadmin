@@ -269,11 +269,19 @@ export default function App() {
           // ignore parse failure on error status
         }
         console.error('Auth URL endpoint error:', res.status, errorDetails);
-        alert(
-          language === 'tr'
-            ? `Giriş adresi alınamadı (${errorDetails}). Lütfen Coolify ortam değişkenlerini (GOOGLE_CLIENT_ID / GOOGLE_CLIENT_SECRET) kontrol edin.`
-            : `Failed to get login URL (${errorDetails}). Please check GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET.`
-        );
+        if (res.status === 502 || errorDetails.toLowerCase().includes('bad gateway')) {
+          alert(
+            language === 'tr'
+              ? `Sunucuya ulaşılamadı (502 Bad Gateway).\n\nLütfen Coolify panelinizde şu ayarları kontrol edin:\n1. Coolify -> Uygulama -> Yapılandırma -> Port (Exposed Port): 3000 (veya uygulamanızın çalıştığı port) olduğundan emin olun.\n2. Uygulama tipi / Başlatma komutunun (npm start) aktif olduğundan ve konteynerın çökmeyip çalıştığından emin olun.`
+              : `Server unreachable (502 Bad Gateway).\n\nPlease check Coolify settings:\n1. Coolify -> Application -> Configuration -> Port (Exposed Port): Ensure it is set to 3000.\n2. Ensure the application is started via "npm start" and the container is healthy.`
+          );
+        } else {
+          alert(
+            language === 'tr'
+              ? `Giriş adresi alınamadı (${errorDetails}). Lütfen Coolify ortam değişkenlerini (GOOGLE_CLIENT_ID / GOOGLE_CLIENT_SECRET) kontrol edin.`
+              : `Failed to get login URL (${errorDetails}). Please check GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET.`
+          );
+        }
         return;
       }
 

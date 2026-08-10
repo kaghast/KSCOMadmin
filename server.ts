@@ -35,7 +35,7 @@ import {
 type TaskPriority = 'high' | 'medium' | 'low';
 
 const app = express();
-const PORT = 3000;
+const PORT = process.env.PORT ? parseInt(process.env.PORT, 10) : 3000;
 
 let hasAutoRestoredFromDrive = false;
 let autoRestorePromise: Promise<any> | null = null;
