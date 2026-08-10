@@ -1,11 +1,14 @@
 import React from 'react';
-import { LogIn, LogOut, Sparkles, Menu, X } from 'lucide-react';
+import { LogIn, LogOut, Sparkles, Menu, X, RefreshCw } from 'lucide-react';
 import { AuthStatus } from '../types';
 
 interface Props {
   authStatus: AuthStatus;
   onLogin: () => void;
   onLogout: () => void;
+  needsSync?: boolean;
+  isSyncing?: boolean;
+  onManualSync?: () => void;
   activeScreen?: 'workspace' | 'timeManagement';
   onScreenChange?: (screen: 'workspace' | 'timeManagement') => void;
   isMobileMenuOpen?: boolean;
@@ -16,6 +19,9 @@ export const Navbar: React.FC<Props> = ({
   authStatus,
   onLogin,
   onLogout,
+  needsSync = false,
+  isSyncing = false,
+  onManualSync,
   isMobileMenuOpen = false,
   onToggleMobileMenu,
 }) => {
@@ -63,6 +69,34 @@ export const Navbar: React.FC<Props> = ({
               </button>
             ) : (
               <div className="flex items-center gap-2 sm:gap-3">
+                {/* Manual Drive Sync Button */}
+                {onManualSync && (
+                  <button
+                    type="button"
+                    onClick={onManualSync}
+                    disabled={isSyncing}
+                    title={
+                      needsSync
+                        ? 'Google Drive ile eşitlenmemiş değişiklikler var! Tıklayıp hemen eşitleyin.'
+                        : 'Google Drive ile Verileri Eşitle'
+                    }
+                    className={`px-3 py-1.5 rounded-xl font-extrabold text-xs flex items-center gap-1.5 transition-all cursor-pointer disabled:opacity-50 shrink-0 ${
+                      needsSync
+                        ? 'bg-gradient-to-r from-amber-500 via-orange-500 to-indigo-600 text-white shadow-lg shadow-amber-500/40 ring-2 ring-amber-400 animate-pulse hover:brightness-110'
+                        : 'bg-indigo-600 hover:bg-indigo-500 text-white shadow-xs border border-indigo-500/50'
+                    }`}
+                  >
+                    <RefreshCw className={`w-3.5 h-3.5 ${isSyncing ? 'animate-spin' : ''}`} />
+                    <span>{isSyncing ? 'Eşitleniyor...' : 'Eşitle'}</span>
+                    {needsSync && !isSyncing && (
+                      <span className="relative flex h-2 w-2">
+                        <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-amber-300 opacity-75"></span>
+                        <span className="relative inline-flex rounded-full h-2 w-2 bg-amber-200"></span>
+                      </span>
+                    )}
+                  </button>
+                )}
+
                 <div className="flex items-center gap-2 bg-slate-800 px-2.5 sm:px-3 py-1.5 rounded-xl border border-slate-700">
                   {authStatus.user?.picture && authStatus.user.picture.trim() !== '' ? (
                     <img

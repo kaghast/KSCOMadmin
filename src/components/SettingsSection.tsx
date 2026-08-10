@@ -234,22 +234,27 @@ export const SettingsSection: React.FC<Props> = ({
 
         {authStatus.isAuthenticated ? (
           <div className="space-y-4">
-            <div className="p-4 bg-emerald-50/50 dark:bg-emerald-950/20 border border-emerald-200 dark:border-emerald-800/80 rounded-2xl flex flex-wrap items-center justify-between gap-4">
+            <div className="p-4 bg-slate-50 dark:bg-slate-900/60 border border-slate-200/80 dark:border-slate-700/80 rounded-2xl flex flex-wrap items-center justify-between gap-4">
               <div className="space-y-1">
                 <div className="text-xs font-bold text-slate-800 dark:text-slate-200 flex items-center gap-2">
-                  <Database className="w-4 h-4 text-emerald-600 dark:text-emerald-400" />
+                  <Database className="w-4 h-4 text-indigo-600 dark:text-indigo-400" />
                   <span>Bağlı Google Hesabı:</span>
                   <span className="text-indigo-600 dark:text-indigo-400 font-mono font-bold">{authStatus.user?.email || 'Aktif Oturum'}</span>
                 </div>
                 <p className="text-[11px] text-slate-600 dark:text-slate-400">
-                  Gerçek zamanlı otomatik senkronizasyon aktif. Yapılan her ekleme, düzenleme veya silme işlemi anında Google Drive’daki <code className="bg-slate-100 dark:bg-slate-800 px-1.5 py-0.5 rounded text-indigo-600 dark:text-indigo-400 font-mono text-[11px]">adminspace</code> klasörünüze kaydedilir.
+                  Verileriniz Google Drive’daki <code className="bg-slate-100 dark:bg-slate-800 px-1.5 py-0.5 rounded text-indigo-600 dark:text-indigo-400 font-mono text-[11px]">adminspace</code> klasörünüzde saklanır. Değişiklik yaptığınızda üst menüdeki <strong>Eşitle</strong> butonu parlar. Butona basarak verilerinizi kolayca eşitleyebilirsiniz.
                 </p>
               </div>
 
-              <div className="flex items-center gap-2 px-3.5 py-2 bg-emerald-100 dark:bg-emerald-900/40 text-emerald-800 dark:text-emerald-300 rounded-xl text-xs font-extrabold border border-emerald-300 dark:border-emerald-800">
-                <span className="w-2.5 h-2.5 rounded-full bg-emerald-500 animate-pulse"></span>
-                <span>Gerçek Zamanlı Senkronizasyon Aktif</span>
-              </div>
+              <button
+                type="button"
+                onClick={onSyncToDrive}
+                disabled={isSyncingDrive}
+                className="px-4 py-2.5 bg-indigo-600 hover:bg-indigo-700 text-white font-extrabold text-xs rounded-xl transition-all shadow-sm flex items-center gap-2 cursor-pointer disabled:opacity-50 shrink-0"
+              >
+                <RefreshCw className={`w-4 h-4 ${isSyncingDrive ? 'animate-spin' : ''}`} />
+                <span>{isSyncingDrive ? 'Eşitleniyor...' : 'Google Drive ile Eşitle'}</span>
+              </button>
             </div>
 
             {driveSyncMessage && (

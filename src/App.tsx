@@ -90,24 +90,60 @@ export default function App() {
 
   // Global AdminSpace Google Drive Database & Notes Sync Handlers
   const [isSyncingDrive, setIsSyncingDrive] = useState(false);
+  const [needsSync, setNeedsSync] = useState(false);
   const [driveSyncMessage, setDriveSyncMessage] = useState<string | null>(null);
 
-  const handleSyncToDrive = async () => {
+  const refreshAllData = async () => {
+    try {
+      await Promise.allSettled([
+        fetchNotes(),
+        fetchProjects(),
+        fetchTimelogs(),
+        fetchNoteTypes(),
+        fetchContacts(),
+      ]);
+    } catch (err) {
+      console.error('Error refreshing data after sync:', err);
+    }
+  };
+
+  const checkSyncStatus = async () => {
+    if (!authStatus.isAuthenticated) return;
+    try {
+      const res = await fetch('/api/adminspace/sync-status');
+      if (res.ok) {
+        const data = await res.json();
+        if (data.needsSync) {
+          setNeedsSync(true);
+        }
+      }
+    } catch {
+      // Silent error handling
+    }
+  };
+
+  const handleManualSync = async () => {
     setIsSyncingDrive(true);
     setDriveSyncMessage(null);
     try {
-      const res = await fetch('/api/adminspace/sync', { method: 'POST' });
+      const res = await fetch('/api/adminspace/manual-sync', { method: 'POST' });
       const data = await res.json();
       if (res.ok && data.success) {
-        setDriveSyncMessage(`Yerel SQLite veritabanı, notlar ve JSON yedekleri Google Drive 'adminspace' klasörüne kaydedildi.`);
+        setNeedsSync(false);
+        setDriveSyncMessage(data.message || 'Google Drive ile eşitlendi.');
+        await refreshAllData();
       } else {
-        setDriveSyncMessage(data.error || 'Yükleme başarısız.');
+        setDriveSyncMessage(data.error || 'Eşitleme sırasında hata oluştu.');
       }
     } catch (err: any) {
-      setDriveSyncMessage(`Yükleme hatası: ${err.message}`);
+      setDriveSyncMessage(`Eşitleme hatası: ${err.message}`);
     } finally {
       setIsSyncingDrive(false);
     }
+  };
+
+  const handleSyncToDrive = async () => {
+    await handleManualSync();
   };
 
   const handleTabChange = (tab: NavTab) => {
@@ -551,6 +587,19 @@ export default function App() {
     fetchNoteTypes();
   }, []);
 
+  useEffect(() => {
+    if (authStatus.isAuthenticated) {
+      checkSyncStatus();
+      const interval = setInterval(checkSyncStatus, 25000);
+      const onFocus = () => checkSyncStatus();
+      window.addEventListener('focus', onFocus);
+      return () => {
+        clearInterval(interval);
+        window.removeEventListener('focus', onFocus);
+      };
+    }
+  }, [authStatus.isAuthenticated]);
+
   // Combined tags across notes and timelogs
   const allTags = useMemo(() => {
     const set = new Set<string>();
@@ -624,6 +673,7 @@ export default function App() {
       body: JSON.stringify(projectData),
     });
     if (res.ok) {
+      setNeedsSync(true);
       await fetchProjects();
     }
   };
@@ -635,6 +685,7 @@ export default function App() {
       body: JSON.stringify(project),
     });
     if (res.ok) {
+      setNeedsSync(true);
       await fetchProjects();
       triggerAutoDriveSync(project.id);
     }
@@ -645,6 +696,7 @@ export default function App() {
       method: 'DELETE',
     });
     if (res.ok) {
+      setNeedsSync(true);
       await fetchProjects();
     }
   };
@@ -660,6 +712,7 @@ export default function App() {
       body: JSON.stringify(taskData),
     });
     if (res.ok) {
+      setNeedsSync(true);
       const data = await res.json();
       if (data.task) {
         setProjectTasks((prev) => [...prev.filter((t) => t.id !== data.task.id), data.task]);
@@ -670,6 +723,7 @@ export default function App() {
   };
 
   const handleUpdateProjectTask = async (task: ProjectTask) => {
+    setNeedsSync(true);
     setProjectTasks((prev) => prev.map((t) => (t.id === task.id ? task : t)));
     const res = await fetch(`/api/projects/tasks/${task.id}`, {
       method: 'PUT',
@@ -683,6 +737,7 @@ export default function App() {
   };
 
   const handleDeleteProjectTask = async (taskId: string) => {
+    setNeedsSync(true);
     const task = projectTasks.find((t) => t.id === taskId);
     setProjectTasks((prev) => prev.filter((t) => t.id !== taskId));
     const res = await fetch(`/api/projects/tasks/${taskId}`, {
@@ -913,6 +968,7 @@ export default function App() {
     cardId?: string;
     cardTitle?: string;
   }) => {
+    setNeedsSync(true);
     if (data.id) {
       await fetch(`/api/notes/${data.id}`, {
         method: 'PUT',
@@ -930,6 +986,7 @@ export default function App() {
   };
 
   const handleSaveTimelog = async (logData: any) => {
+    setNeedsSync(true);
     await fetch('/api/timelogs', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -940,6 +997,7 @@ export default function App() {
   };
 
   const handleDeleteNote = async (id: string) => {
+    setNeedsSync(true);
     await fetch(`/api/notes/${id}`, { method: 'DELETE' });
     fetchNotes();
   };
@@ -987,6 +1045,9 @@ export default function App() {
         authStatus={authStatus}
         onLogin={handleLogin}
         onLogout={handleLogout}
+        needsSync={needsSync}
+        isSyncing={isSyncingDrive}
+        onManualSync={handleManualSync}
         isMobileMenuOpen={isMobileMenuOpen}
         onToggleMobileMenu={() => setIsMobileMenuOpen(!isMobileMenuOpen)}
       />

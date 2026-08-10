@@ -1166,6 +1166,104 @@ export async function syncWithGoogleDriveAdminSpace(authClient: any) {
 let lastDriveCheckTime = 0;
 let pendingSmartSyncPromise: Promise<any> | null = null;
 
+export async function getSyncStatus(authClient: any) {
+  if (!authClient) {
+    return { authenticated: false, needsSync: false, reason: 'Oturum açılmadı' };
+  }
+
+  try {
+    const drive = google.drive({ version: 'v3', auth: authClient });
+    const folderInfo = await getOrCreateAdminSpaceFolder(drive);
+    if (!folderInfo?.folderId) {
+      return { authenticated: true, needsSync: true, reason: 'Google Drive klasörü henüz oluşturulmadı' };
+    }
+
+    const sqliteSearch = await drive.files.list({
+      q: `'${folderInfo.folderId}' in parents and name = 'adminspace.sqlite' and trashed = false`,
+      fields: 'files(id, name, modifiedTime)',
+    });
+    const sqliteFiles = sqliteSearch.data.files || [];
+    const sqliteFile = sqliteFiles[0];
+
+    let needsSync = false;
+    let reason = 'Veriler senkronize';
+
+    if (!sqliteFile) {
+      needsSync = true;
+      reason = 'Google Drive üzerinde henüz veritabanı yedeği yok';
+    } else {
+      const driveModifiedMs = new Date(sqliteFile.modifiedTime || 0).getTime();
+      if (driveModifiedMs > lastDriveSyncTimestamp + 2000) {
+        needsSync = true;
+        reason = 'Google Drive üzerinde daha yeni veriler mevcut';
+      } else if (lastLocalWriteTimestamp > lastDriveSyncTimestamp + 2000) {
+        needsSync = true;
+        reason = 'Yerel veriler henüz Google Drive ile eşitlenmedi';
+      }
+    }
+
+    return {
+      authenticated: true,
+      needsSync,
+      reason,
+      lastLocalWriteTimestamp,
+      lastDriveSyncTimestamp,
+      driveModifiedTime: sqliteFile?.modifiedTime || null,
+    };
+  } catch (err: any) {
+    console.error('Error in getSyncStatus:', err);
+    return { authenticated: true, needsSync: false, reason: err?.message || 'Hata' };
+  }
+}
+
+export async function performManualSync(authClient: any) {
+  if (!authClient) return { success: false, error: 'Google OAuth oturumu gerekli' };
+
+  try {
+    saveDbToDisk();
+    const drive = google.drive({ version: 'v3', auth: authClient });
+    const folderInfo = await getOrCreateAdminSpaceFolder(drive);
+    if (!folderInfo?.folderId) {
+      return { success: false, error: 'Google Drive klasörü oluşturulamadı' };
+    }
+
+    const sqliteSearch = await drive.files.list({
+      q: `'${folderInfo.folderId}' in parents and name = 'adminspace.sqlite' and trashed = false`,
+      fields: 'files(id, name, modifiedTime)',
+    });
+    const sqliteFiles = sqliteSearch.data.files || [];
+    const sqliteFile = sqliteFiles[0];
+
+    if (sqliteFile?.modifiedTime) {
+      const driveModifiedMs = new Date(sqliteFile.modifiedTime).getTime();
+      // If Drive file is newer than local write timestamp by more than 2 seconds, restore from Drive
+      if (driveModifiedMs > lastLocalWriteTimestamp + 2000) {
+        console.log(`[Manual Sync] Google Drive is NEWER (${sqliteFile.modifiedTime} vs local write ${new Date(lastLocalWriteTimestamp).toISOString()}). Restoring from Drive...`);
+        const restoreRes = await restoreFromGoogleDriveAdminSpace(authClient);
+        return {
+          success: true,
+          action: 'downloaded',
+          message: 'Google Drive’daki güncel veriler yerele indirildi ve yüklendi.',
+          details: restoreRes,
+        };
+      }
+    }
+
+    // Otherwise upload local DB to Google Drive
+    console.log('[Manual Sync] Local DB is newer or Drive has no DB. Uploading local DB to Drive...');
+    const syncRes = await syncWithGoogleDriveAdminSpace(authClient);
+    return {
+      success: true,
+      action: 'uploaded',
+      message: 'Yerel verileriniz Google Drive’daki adminspace klasörüne kaydedildi.',
+      details: syncRes,
+    };
+  } catch (err: any) {
+    console.error('Manual sync error:', err);
+    return { success: false, error: err?.message || 'Eşitleme sırasında bir hata oluştu.' };
+  }
+}
+
 export async function smartSyncWithDrive(authClient: any) {
   if (!authClient) return null;
 

@@ -20,6 +20,8 @@ import {
   syncWithGoogleDriveAdminSpace,
   restoreFromGoogleDriveAdminSpace,
   smartSyncWithDrive,
+  getSyncStatus,
+  performManualSync,
   getOrCreateAdminSpaceFolder,
   getAllProjectsFromDb,
   saveProjectToDb,
@@ -1601,7 +1603,6 @@ app.patch('/api/contacts/update', async (req, res) => {
 
 app.get('/api/notes', async (req, res) => {
   await getAdminSpaceDb();
-  await ensureRestoredFromDrive(req);
 
   let notes = getAllNotesFromDb();
   let locations = getAllLocationsFromDb();
@@ -1853,7 +1854,6 @@ app.put('/api/notes/:id', async (req, res) => {
 
 app.get('/api/projects', async (req, res) => {
   await getAdminSpaceDb();
-  await ensureRestoredFromDrive(req);
 
   const projects = getAllProjectsFromDb();
   const tasks = getAllProjectTasksFromDb();
@@ -1946,7 +1946,6 @@ app.delete('/api/projects/:id', async (req, res) => {
 // PROJECT TASKS ENDPOINTS
 app.get('/api/projects/:id/tasks', async (req, res) => {
   await getAdminSpaceDb();
-  await ensureRestoredFromDrive(req);
 
   const { id } = req.params;
   const tasks = getAllProjectTasksFromDb(id);
@@ -2054,7 +2053,6 @@ app.post('/api/projects/:id/export-markdown', async (req, res) => {
 
 app.get('/api/timelogs', async (req, res) => {
   await getAdminSpaceDb();
-  await ensureRestoredFromDrive(req);
 
   const logs = getAllTimelogsFromDb();
   res.json({ timelogs: logs });
@@ -2146,6 +2144,23 @@ app.delete('/api/locations/:id', async (req, res) => {
   }
 
   res.json({ success: true });
+});
+
+app.get('/api/adminspace/sync-status', async (req, res) => {
+  const authClient = getAuthenticatedClient(req);
+  const status = await getSyncStatus(authClient);
+  res.json(status);
+});
+
+app.post('/api/adminspace/manual-sync', async (req, res) => {
+  const authClient = getAuthenticatedClient(req);
+  if (!authClient) {
+    return res.status(401).json({ error: 'Google OAuth oturumu gerekli' });
+  }
+
+  await getAdminSpaceDb();
+  const result = await performManualSync(authClient);
+  res.json(result);
 });
 
 app.post('/api/adminspace/sync', async (req, res) => {
