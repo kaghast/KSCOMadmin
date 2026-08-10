@@ -267,6 +267,17 @@ app.get('/api/auth/callback', async (req, res) => {
       maxAge: 30 * 24 * 60 * 60 * 1000, // 30 days
     });
 
+    // Reset auto-restored flag and immediately create/sync Google Drive adminspace folder
+    hasAutoRestoredFromDrive = false;
+    syncWithGoogleDriveAdminSpace(oauth2Client)
+      .then((res) => {
+        if (res) console.log('[OAuth Callback] Google Drive adminspace sync success:', res.folderId);
+        else console.warn('[OAuth Callback] Google Drive adminspace sync returned null.');
+      })
+      .catch((err) => {
+        console.error('[OAuth Callback] Google Drive adminspace sync failed:', err);
+      });
+
     res.send(`
       <!DOCTYPE html>
       <html>

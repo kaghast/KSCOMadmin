@@ -36,7 +36,7 @@ import { TimeManagementApp } from './components/TimeManagementApp';
 import { SettingsSection } from './components/SettingsSection';
 import { LoginGate } from './components/LoginGate';
 import { createTaskSlug } from './utils/slug';
-import { Sparkles, ShieldCheck, Zap, RefreshCw, AlertCircle, HardDrive, Cloud } from 'lucide-react';
+import { Sparkles, ShieldCheck, Zap, RefreshCw, AlertCircle, HardDrive, Cloud, CloudUpload, CloudDownload, CheckCircle2 } from 'lucide-react';
 
 // URL Routing Helpers
 const tabToPath = (tab: NavTab): string => {
@@ -244,6 +244,10 @@ export default function App() {
       if (contentType && contentType.includes('application/json')) {
         const data = await res.json();
         setAuthStatus(data);
+        if (data.isAuthenticated) {
+          // Trigger Google Drive adminspace background sync on load
+          fetch('/api/adminspace/sync', { method: 'POST' }).catch(() => {});
+        }
       }
     } catch {
       // Silently ignore auth status fetch errors on load
@@ -1003,8 +1007,33 @@ export default function App() {
 
         {/* Right Main Content Panel */}
         <main className="flex-1 overflow-y-auto p-3 sm:p-6 lg:p-8 space-y-4 sm:space-y-6 min-w-0">
-          {/* Auth Status Banner (shown only when not authenticated) */}
-          {!authStatus.isAuthenticated && (
+          {/* Auth Status & Real-time Sync Banner */}
+          {authStatus.isAuthenticated ? (
+            <div className="bg-slate-900 text-white border border-slate-800 rounded-2xl p-3 sm:p-4 flex flex-wrap items-center justify-between gap-3 shadow-md">
+              <div className="flex items-center gap-3">
+                <div className="p-2 bg-indigo-600/30 text-indigo-400 rounded-xl border border-indigo-500/30">
+                  <Cloud className="w-5 h-5 text-indigo-400" />
+                </div>
+                <div>
+                  <div className="flex items-center gap-2">
+                    <span className="text-xs font-bold text-slate-100">Gerçek Zamanlı Google Drive Senkronizasyonu</span>
+                    <span className="px-2 py-0.5 bg-emerald-500/20 text-emerald-400 border border-emerald-500/30 text-[10px] font-extrabold rounded-md flex items-center gap-1.5">
+                      <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse"></span>
+                      <span>Otomatik Senkronizasyon Aktif</span>
+                    </span>
+                  </div>
+                  <p className="text-[11px] text-slate-400 mt-0.5">
+                    Bağlı Hesap: <strong className="text-indigo-300 font-mono">{authStatus.user?.email || 'Google Hesabı'}</strong> — Tüm veri güncellemeleri Google Drive <code className="text-indigo-300 font-mono">adminspace</code> klasörüne anında kaydedilir.
+                  </p>
+                </div>
+              </div>
+
+              <div className="flex items-center gap-2 text-xs font-bold text-slate-300 bg-slate-800/80 px-3.5 py-2 rounded-xl border border-slate-700/60">
+                <CheckCircle2 className="w-4 h-4 text-emerald-400 shrink-0" />
+                <span>Anlık Senkronizasyon Etkin</span>
+              </div>
+            </div>
+          ) : (
             <div className="bg-gradient-to-r from-amber-500/10 via-amber-500/5 to-amber-500/10 border border-amber-200/80 rounded-2xl p-4 flex flex-wrap items-center justify-between gap-4 shadow-2xs">
               <div className="flex items-center gap-3">
                 <div className="p-2 bg-amber-100 text-amber-700 rounded-xl">
@@ -1025,6 +1054,29 @@ export default function App() {
                 className="px-4 py-2 bg-amber-600 hover:bg-amber-700 text-white text-xs font-bold rounded-xl shadow-xs flex items-center gap-2 transition-all cursor-pointer shrink-0"
               >
                 <Zap className="w-4 h-4 fill-white" /> Canlı Google Hesabı ile Giriş Yap
+              </button>
+            </div>
+          )}
+
+          {driveSyncMessage && (
+            <div className={`p-3.5 rounded-2xl text-xs font-semibold flex items-center justify-between gap-3 border shadow-2xs ${
+              driveSyncMessage.includes('hatası') || driveSyncMessage.includes('başarısız')
+                ? 'bg-rose-50 border-rose-200 text-rose-800'
+                : 'bg-emerald-50 border-emerald-200 text-emerald-800'
+            }`}>
+              <div className="flex items-center gap-2">
+                {driveSyncMessage.includes('hatası') || driveSyncMessage.includes('başarısız') ? (
+                  <AlertCircle className="w-4 h-4 text-rose-600 shrink-0" />
+                ) : (
+                  <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0" />
+                )}
+                <span>{driveSyncMessage}</span>
+              </div>
+              <button
+                onClick={() => setDriveSyncMessage(null)}
+                className="text-slate-400 hover:text-slate-600 p-1"
+              >
+                ×
               </button>
             </div>
           )}
@@ -1283,6 +1335,12 @@ export default function App() {
               noteTypes={noteTypes}
               onSaveNoteType={handleSaveNoteType}
               onDeleteNoteType={handleDeleteNoteType}
+              authStatus={authStatus}
+              onSyncToDrive={handleSyncToDrive}
+              onRestoreFromDrive={handleRestoreFromDrive}
+              isSyncingDrive={isSyncingDrive}
+              driveSyncMessage={driveSyncMessage}
+              onLogin={handleLogin}
             />
           )}
         </main>
