@@ -910,194 +910,252 @@ export async function getOrCreateAdminSpaceFolder(drive: any): Promise<{ folderI
   return pendingFolderPromise;
 }
 
+let pendingSyncPromise: Promise<any> | null = null;
+
 // Ensure Google Drive folder 'adminspace' exists and sync SQLite/JSON/MD data into it
 export async function syncWithGoogleDriveAdminSpace(authClient: any) {
   if (!authClient) return null;
+  if (pendingSyncPromise) {
+    return pendingSyncPromise;
+  }
 
-  try {
-    saveDbToDisk();
-    const drive = google.drive({ version: 'v3', auth: authClient });
+  pendingSyncPromise = (async () => {
+    try {
+      saveDbToDisk();
+      const drive = google.drive({ version: 'v3', auth: authClient });
 
-    // 1. Get or create single 'adminspace' folder (with duplicate cleanup)
-    const folderInfo = await getOrCreateAdminSpaceFolder(drive);
-    if (!folderInfo?.folderId) return null;
-    const { folderId, folderLink } = folderInfo;
+      // 1. Get or create single 'adminspace' folder (with duplicate cleanup)
+      const folderInfo = await getOrCreateAdminSpaceFolder(drive);
+      if (!folderInfo?.folderId) return null;
+      const { folderId, folderLink } = folderInfo;
 
-    // 3. Sync adminspace.sqlite binary file into Drive
-    if (fs.existsSync(SQLITE_FILE)) {
-      const sqliteSearch = await drive.files.list({
-        q: `'${folderId}' in parents and name = 'adminspace.sqlite' and trashed = false`,
-        fields: 'files(id, name)',
-      });
-      const sqliteFileId = sqliteSearch.data.files?.[0]?.id;
-      if (sqliteFileId) {
-        await drive.files.update({
-          fileId: sqliteFileId,
-          media: {
-            mimeType: 'application/x-sqlite3',
-            body: fs.createReadStream(SQLITE_FILE),
-          },
-        });
-      } else {
-        await drive.files.create({
-          requestBody: {
-            name: 'adminspace.sqlite',
-            parents: [folderId],
-            mimeType: 'application/x-sqlite3',
-          },
-          media: {
-            mimeType: 'application/x-sqlite3',
-            body: fs.createReadStream(SQLITE_FILE),
-          },
-        });
-      }
-    }
-
-    // 4. Sync data.json dump file into Drive
-    if (fs.existsSync(DATA_JSON_FILE)) {
-      const jsonSearch = await drive.files.list({
-        q: `'${folderId}' in parents and name = 'data.json' and trashed = false`,
-        fields: 'files(id, name)',
-      });
-      const jsonFileId = jsonSearch.data.files?.[0]?.id;
-      if (jsonFileId) {
-        await drive.files.update({
-          fileId: jsonFileId,
-          media: {
-            mimeType: 'application/json',
-            body: fs.createReadStream(DATA_JSON_FILE),
-          },
-        });
-      } else {
-        await drive.files.create({
-          requestBody: {
-            name: 'data.json',
-            parents: [folderId],
-            mimeType: 'application/json',
-          },
-          media: {
-            mimeType: 'application/json',
-            body: fs.createReadStream(DATA_JSON_FILE),
-          },
-        });
-      }
-    }
-
-    // 5. Sync adminspace_notes.md Markdown file into Drive
-    const NOTES_MD_FILE = path.join(ADMINSPACE_DIR, 'adminspace_notes.md');
-    if (fs.existsSync(NOTES_MD_FILE)) {
-      const mdSearch = await drive.files.list({
-        q: `'${folderId}' in parents and name = 'adminspace_notes.md' and trashed = false`,
-        fields: 'files(id, name)',
-      });
-      const mdFileId = mdSearch.data.files?.[0]?.id;
-      if (mdFileId) {
-        await drive.files.update({
-          fileId: mdFileId,
-          media: {
-            mimeType: 'text/markdown',
-            body: fs.createReadStream(NOTES_MD_FILE),
-          },
-        });
-      } else {
-        await drive.files.create({
-          requestBody: {
-            name: 'adminspace_notes.md',
-            parents: [folderId],
-            mimeType: 'text/markdown',
-          },
-          media: {
-            mimeType: 'text/markdown',
-            body: fs.createReadStream(NOTES_MD_FILE),
-          },
-        });
-      }
-    }
-
-    // 6. Sync individual Kanban card Markdown files in cards/ subfolder into Drive
-    const CARDS_DIR = path.join(ADMINSPACE_DIR, 'cards');
-    if (fs.existsSync(CARDS_DIR)) {
-      const cardsFolderSearch = await drive.files.list({
-        q: `'${folderId}' in parents and name = 'cards' and mimeType = 'application/vnd.google-apps.folder' and trashed = false`,
-        fields: 'files(id, name)',
-      });
-      const cardFolders = cardsFolderSearch.data.files || [];
-      let cardsFolderId = cardFolders[0]?.id;
-
-      if (cardFolders.length > 1) {
-        console.warn(`[Drive Sync] Cleaning up ${cardFolders.length - 1} duplicate 'cards' folders in Google Drive...`);
-        for (let i = 1; i < cardFolders.length; i++) {
-          if (cardFolders[i].id) {
-            try {
-              await drive.files.update({ fileId: cardFolders[i].id, requestBody: { trashed: true } });
-            } catch {}
-          }
-        }
-      }
-
-      if (!cardsFolderId) {
-        const createCardsFolder = await drive.files.create({
-          requestBody: {
-            name: 'cards',
-            parents: [folderId],
-            mimeType: 'application/vnd.google-apps.folder',
-          },
-          fields: 'id',
-        });
-        cardsFolderId = createCardsFolder.data.id || undefined;
-      }
-
-      if (cardsFolderId) {
-        const existingCardsRes = await drive.files.list({
-          q: `'${cardsFolderId}' in parents and trashed = false`,
+      // 3. Sync adminspace.sqlite binary file into Drive (cleaning duplicates)
+      if (fs.existsSync(SQLITE_FILE)) {
+        const sqliteSearch = await drive.files.list({
+          q: `'${folderId}' in parents and name = 'adminspace.sqlite' and trashed = false`,
           fields: 'files(id, name)',
         });
-        const driveCardFilesMap = new Map<string, string>();
-        (existingCardsRes.data.files || []).forEach((f) => {
-          if (f.name && f.id) driveCardFilesMap.set(f.name, f.id);
+        const sqliteFiles = sqliteSearch.data.files || [];
+        const sqliteFileId = sqliteFiles[0]?.id;
+
+        if (sqliteFiles.length > 1) {
+          console.warn(`[Drive Sync] Cleaning up ${sqliteFiles.length - 1} duplicate 'adminspace.sqlite' files...`);
+          for (let i = 1; i < sqliteFiles.length; i++) {
+            if (sqliteFiles[i].id) {
+              try { await drive.files.update({ fileId: sqliteFiles[i].id, requestBody: { trashed: true } }); } catch {}
+            }
+          }
+        }
+
+        if (sqliteFileId) {
+          await drive.files.update({
+            fileId: sqliteFileId,
+            media: {
+              mimeType: 'application/x-sqlite3',
+              body: fs.createReadStream(SQLITE_FILE),
+            },
+          });
+        } else {
+          await drive.files.create({
+            requestBody: {
+              name: 'adminspace.sqlite',
+              parents: [folderId],
+              mimeType: 'application/x-sqlite3',
+            },
+            media: {
+              mimeType: 'application/x-sqlite3',
+              body: fs.createReadStream(SQLITE_FILE),
+            },
+          });
+        }
+      }
+
+      // 4. Sync data.json dump file into Drive (cleaning duplicates)
+      if (fs.existsSync(DATA_JSON_FILE)) {
+        const jsonSearch = await drive.files.list({
+          q: `'${folderId}' in parents and name = 'data.json' and trashed = false`,
+          fields: 'files(id, name)',
         });
+        const jsonFiles = jsonSearch.data.files || [];
+        const jsonFileId = jsonFiles[0]?.id;
 
-        const localCardFiles = fs.readdirSync(CARDS_DIR);
-        for (const cardFileName of localCardFiles) {
-          if (!cardFileName.endsWith('.md')) continue;
-          const cardFilePath = path.join(CARDS_DIR, cardFileName);
-          const existingDriveFileId = driveCardFilesMap.get(cardFileName);
+        if (jsonFiles.length > 1) {
+          console.warn(`[Drive Sync] Cleaning up ${jsonFiles.length - 1} duplicate 'data.json' files...`);
+          for (let i = 1; i < jsonFiles.length; i++) {
+            if (jsonFiles[i].id) {
+              try { await drive.files.update({ fileId: jsonFiles[i].id, requestBody: { trashed: true } }); } catch {}
+            }
+          }
+        }
 
-          if (existingDriveFileId) {
-            await drive.files.update({
-              fileId: existingDriveFileId,
-              media: {
-                mimeType: 'text/markdown',
-                body: fs.createReadStream(cardFilePath),
-              },
-            });
-          } else {
-            await drive.files.create({
-              requestBody: {
-                name: cardFileName,
-                parents: [cardsFolderId],
-                mimeType: 'text/markdown',
-              },
-              media: {
-                mimeType: 'text/markdown',
-                body: fs.createReadStream(cardFilePath),
-              },
-            });
+        if (jsonFileId) {
+          await drive.files.update({
+            fileId: jsonFileId,
+            media: {
+              mimeType: 'application/json',
+              body: fs.createReadStream(DATA_JSON_FILE),
+            },
+          });
+        } else {
+          await drive.files.create({
+            requestBody: {
+              name: 'data.json',
+              parents: [folderId],
+              mimeType: 'application/json',
+            },
+            media: {
+              mimeType: 'application/json',
+              body: fs.createReadStream(DATA_JSON_FILE),
+            },
+          });
+        }
+      }
+
+      // 5. Sync adminspace_notes.md Markdown file into Drive (cleaning duplicates)
+      const NOTES_MD_FILE = path.join(ADMINSPACE_DIR, 'adminspace_notes.md');
+      if (fs.existsSync(NOTES_MD_FILE)) {
+        const mdSearch = await drive.files.list({
+          q: `'${folderId}' in parents and name = 'adminspace_notes.md' and trashed = false`,
+          fields: 'files(id, name)',
+        });
+        const mdFiles = mdSearch.data.files || [];
+        const mdFileId = mdFiles[0]?.id;
+
+        if (mdFiles.length > 1) {
+          console.warn(`[Drive Sync] Cleaning up ${mdFiles.length - 1} duplicate 'adminspace_notes.md' files...`);
+          for (let i = 1; i < mdFiles.length; i++) {
+            if (mdFiles[i].id) {
+              try { await drive.files.update({ fileId: mdFiles[i].id, requestBody: { trashed: true } }); } catch {}
+            }
+          }
+        }
+
+        if (mdFileId) {
+          await drive.files.update({
+            fileId: mdFileId,
+            media: {
+              mimeType: 'text/markdown',
+              body: fs.createReadStream(NOTES_MD_FILE),
+            },
+          });
+        } else {
+          await drive.files.create({
+            requestBody: {
+              name: 'adminspace_notes.md',
+              parents: [folderId],
+              mimeType: 'text/markdown',
+            },
+            media: {
+              mimeType: 'text/markdown',
+              body: fs.createReadStream(NOTES_MD_FILE),
+            },
+          });
+        }
+      }
+
+      // 6. Sync individual Kanban card Markdown files in cards/ subfolder into Drive
+      const CARDS_DIR = path.join(ADMINSPACE_DIR, 'cards');
+      if (fs.existsSync(CARDS_DIR)) {
+        const cardsFolderSearch = await drive.files.list({
+          q: `'${folderId}' in parents and name = 'cards' and mimeType = 'application/vnd.google-apps.folder' and trashed = false`,
+          fields: 'files(id, name)',
+        });
+        const cardFolders = cardsFolderSearch.data.files || [];
+        let cardsFolderId = cardFolders[0]?.id;
+
+        if (cardFolders.length > 1) {
+          console.warn(`[Drive Sync] Cleaning up ${cardFolders.length - 1} duplicate 'cards' folders in Google Drive...`);
+          for (let i = 1; i < cardFolders.length; i++) {
+            if (cardFolders[i].id) {
+              try {
+                await drive.files.update({ fileId: cardFolders[i].id, requestBody: { trashed: true } });
+              } catch {}
+            }
+          }
+        }
+
+        if (!cardsFolderId) {
+          const createCardsFolder = await drive.files.create({
+            requestBody: {
+              name: 'cards',
+              parents: [folderId],
+              mimeType: 'application/vnd.google-apps.folder',
+            },
+            fields: 'id',
+          });
+          cardsFolderId = createCardsFolder.data.id || undefined;
+        }
+
+        if (cardsFolderId) {
+          const existingCardsRes = await drive.files.list({
+            q: `'${cardsFolderId}' in parents and trashed = false`,
+            fields: 'files(id, name)',
+          });
+
+          const cardFilesByName = new Map<string, string[]>();
+          (existingCardsRes.data.files || []).forEach((f) => {
+            if (f.name && f.id) {
+              if (!cardFilesByName.has(f.name)) cardFilesByName.set(f.name, []);
+              cardFilesByName.get(f.name)!.push(f.id);
+            }
+          });
+
+          const driveCardFilesMap = new Map<string, string>();
+          for (const [fileName, fileIds] of cardFilesByName.entries()) {
+            if (fileIds.length > 1) {
+              for (let i = 1; i < fileIds.length; i++) {
+                try { await drive.files.update({ fileId: fileIds[i], requestBody: { trashed: true } }); } catch {}
+              }
+            }
+            driveCardFilesMap.set(fileName, fileIds[0]);
+          }
+
+          const localCardFiles = fs.readdirSync(CARDS_DIR);
+          for (const cardFileName of localCardFiles) {
+            if (!cardFileName.endsWith('.md')) continue;
+            const cardFilePath = path.join(CARDS_DIR, cardFileName);
+            const existingDriveFileId = driveCardFilesMap.get(cardFileName);
+
+            if (existingDriveFileId) {
+              await drive.files.update({
+                fileId: existingDriveFileId,
+                media: {
+                  mimeType: 'text/markdown',
+                  body: fs.createReadStream(cardFilePath),
+                },
+              });
+            } else {
+              await drive.files.create({
+                requestBody: {
+                  name: cardFileName,
+                  parents: [cardsFolderId],
+                  mimeType: 'text/markdown',
+                },
+                media: {
+                  mimeType: 'text/markdown',
+                  body: fs.createReadStream(cardFilePath),
+                },
+              });
+            }
           }
         }
       }
-    }
 
-    return {
-      folderId,
-      folderLink,
-      syncedAt: new Date().toISOString(),
-      storagePath: SQLITE_FILE,
-    };
-  } catch (err) {
-    console.error('Google Drive adminspace sync error:', err);
-    return null;
-  }
+      return {
+        folderId,
+        folderLink,
+        syncedAt: new Date().toISOString(),
+        storagePath: SQLITE_FILE,
+      };
+    } catch (err) {
+      console.error('Google Drive adminspace sync error:', err);
+      return null;
+    } finally {
+      pendingSyncPromise = null;
+    }
+  })();
+
+  return pendingSyncPromise;
 }
 
 // Restore SQLite DB / data.json / cards from Google Drive 'adminspace' folder into local SQLite engine
