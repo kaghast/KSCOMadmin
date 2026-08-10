@@ -16,6 +16,10 @@ let dbInstance: Database | null = null;
 export let lastLocalWriteTimestamp = 0;
 export let lastDriveSyncTimestamp = 0;
 
+export function markLocalDataModified() {
+  lastLocalWriteTimestamp = Date.now();
+}
+
 export function ensureTablesExist(db: Database) {
   db.run(`
     CREATE TABLE IF NOT EXISTS locations (
@@ -377,8 +381,6 @@ ${task.description || '*Açıklama girilmedi.*'}
         try { fs.unlinkSync(path.join(CARDS_DIR, file)); } catch {}
       }
     });
-
-    lastLocalWriteTimestamp = Date.now();
   } catch (err) {
     console.error('Error saving SQLite DB to disk in adminspace:', err);
   }
@@ -412,6 +414,7 @@ export function saveLocationToDb(loc: { id: string; name: string; lat: number; l
     'INSERT OR REPLACE INTO locations (id, name, lat, lng) VALUES (?, ?, ?, ?)',
     [loc.id, loc.name, loc.lat, loc.lng]
   );
+  markLocalDataModified();
   saveDbToDisk();
 }
 
@@ -423,6 +426,7 @@ export function deleteLocationFromDb(id: string) {
   } catch (err) {
     console.error('Error unlinking location from notes:', err);
   }
+  markLocalDataModified();
   saveDbToDisk();
 }
 
@@ -481,6 +485,7 @@ export function saveNoteTypeToDb(typeData: any) {
       typeData.createdAt || new Date().toISOString(),
     ]
   );
+  markLocalDataModified();
   saveDbToDisk();
 }
 
@@ -488,6 +493,7 @@ export function deleteNoteTypeFromDb(id: string) {
   if (!dbInstance) return;
   if (id === 'note' || id === 'timelog') return; // Cannot delete built-in system types
   dbInstance.run('DELETE FROM note_types WHERE id = ? AND isSystem = 0', [id]);
+  markLocalDataModified();
   saveDbToDisk();
 }
 
@@ -636,6 +642,7 @@ export function saveNoteToDb(note: any) {
     ]
   );
 
+  markLocalDataModified();
   saveDbToDisk();
 }
 
@@ -722,6 +729,7 @@ export function saveProjectToDb(project: any) {
     ]
   );
 
+  markLocalDataModified();
   saveDbToDisk();
 }
 
@@ -729,6 +737,7 @@ export function deleteProjectFromDb(id: string) {
   if (!dbInstance) return;
   dbInstance.run('DELETE FROM projects WHERE id = ?', [id]);
   dbInstance.run('DELETE FROM project_tasks WHERE projectId = ?', [id]);
+  markLocalDataModified();
   saveDbToDisk();
 }
 
