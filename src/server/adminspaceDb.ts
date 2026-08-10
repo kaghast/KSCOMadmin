@@ -139,13 +139,28 @@ export async function getAdminSpaceDb(): Promise<Database> {
   const SQL = await initSqlJs();
 
   if (fs.existsSync(SQLITE_FILE)) {
-    const fileBuffer = fs.readFileSync(SQLITE_FILE);
-    dbInstance = new SQL.Database(fileBuffer);
+    try {
+      const fileBuffer = fs.readFileSync(SQLITE_FILE);
+      if (fileBuffer.length < 100) {
+        throw new Error('SQLite file is too small or truncated');
+      }
+      dbInstance = new SQL.Database(fileBuffer);
+      ensureTablesExist(dbInstance);
+    } catch (err) {
+      console.warn('SQLite database file is corrupted or invalid. Initializing fresh database. Error:', err);
+      try {
+        const corruptBackup = `${SQLITE_FILE}.corrupt.${Date.now()}`;
+        fs.renameSync(SQLITE_FILE, corruptBackup);
+      } catch {
+        try { fs.unlinkSync(SQLITE_FILE); } catch {}
+      }
+      dbInstance = new SQL.Database();
+      ensureTablesExist(dbInstance);
+    }
   } else {
     dbInstance = new SQL.Database();
+    ensureTablesExist(dbInstance);
   }
-
-  ensureTablesExist(dbInstance);
 
   // If project_tasks table is empty, attempt to populate from data.json
   try {
@@ -1118,17 +1133,29 @@ export async function restoreFromGoogleDriveAdminSpace(authClient: any) {
 
     if (sqliteFile?.id) {
       console.log('Restoring adminspace.sqlite from Google Drive...');
-      const fileRes = await drive.files.get(
-        { fileId: sqliteFile.id, alt: 'media' },
-        { responseType: 'arraybuffer' }
-      );
-      const buffer = Buffer.from(fileRes.data as ArrayBuffer);
-      fs.writeFileSync(SQLITE_FILE, buffer);
-
-      dbInstance = new SQL.Database(buffer);
-      ensureTablesExist(dbInstance);
-      saveDbToDisk();
-      isRestored = true;
+      try {
+        const fileRes = await drive.files.get(
+          { fileId: sqliteFile.id, alt: 'media' },
+          { responseType: 'arraybuffer' }
+        );
+        const buffer = Buffer.from(fileRes.data as ArrayBuffer);
+        if (buffer.length < 100) {
+          throw new Error('Downloaded SQLite file is truncated or invalid');
+        }
+        const tempDb = new SQL.Database(buffer);
+        ensureTablesExist(tempDb);
+        dbInstance = tempDb;
+        fs.writeFileSync(SQLITE_FILE, buffer);
+        saveDbToDisk();
+        isRestored = true;
+      } catch (err) {
+        console.error('Failed to restore SQLite file from Google Drive (corrupted file):', err);
+        if (!dbInstance) {
+          dbInstance = new SQL.Database();
+          ensureTablesExist(dbInstance);
+          saveDbToDisk();
+        }
+      }
     } else if (jsonFile?.id) {
       console.log('Restoring data.json from Google Drive...');
       const fileRes = await drive.files.get(
