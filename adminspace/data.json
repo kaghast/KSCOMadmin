@@ -1,0 +1,169 @@
+{
+  "locations": [],
+  "notes": [],
+  "projects": [
+    {
+      "id": "proj-demo-1",
+      "name": "Kanban Projesi",
+      "description": "Kişisel yönetim platformunun Kanban projesi.",
+      "color": "indigo",
+      "columns": [
+        {
+          "id": "col-1",
+          "title": "Planlanan",
+          "color": "bg-slate-100 text-slate-800"
+        },
+        {
+          "id": "col-2",
+          "title": "Devam Eden",
+          "color": "bg-blue-50 text-blue-800"
+        },
+        {
+          "id": "col-3",
+          "title": "Test / İnceleme",
+          "color": "bg-amber-50 text-amber-800"
+        },
+        {
+          "id": "col-4",
+          "title": "Tamamlandı",
+          "color": "bg-emerald-50 text-emerald-800"
+        }
+      ],
+      "linkedEmailIds": [],
+      "linkedEventIds": [],
+      "linkedDriveFileIds": [],
+      "linkedContactResourceNames": [],
+      "linkedTaskIds": [],
+      "createdAt": "2026-08-10T08:42:50.329Z",
+      "updatedAt": "2026-08-10T08:42:50.329Z"
+    }
+  ],
+  "projectTasks": [
+    {
+      "id": "pt-1785833539907",
+      "projectId": "proj-demo-1",
+      "columnId": "col-1",
+      "title": "Daily Works",
+      "description": "",
+      "priority": "none",
+      "createdAt": "2026-08-04T08:52:19.907Z",
+      "linkedEmailIds": [],
+      "linkedEventIds": [],
+      "linkedDriveFileIds": [],
+      "linkedContactResourceNames": [],
+      "linkedTaskIds": []
+    },
+    {
+      "id": "pt-1785833547435",
+      "projectId": "proj-demo-1",
+      "columnId": "col-1",
+      "title": "Family Works",
+      "description": "",
+      "priority": "none",
+      "createdAt": "2026-08-04T08:52:27.435Z",
+      "linkedEmailIds": [],
+      "linkedEventIds": [],
+      "linkedDriveFileIds": [],
+      "linkedContactResourceNames": [],
+      "linkedTaskIds": []
+    },
+    {
+      "id": "pt-1785833765683",
+      "projectId": "proj-demo-1",
+      "columnId": "col-4",
+      "title": "AdminSpace",
+      "description": "",
+      "priority": "none",
+      "createdAt": "2026-08-04T08:56:05.683Z",
+      "linkedEmailIds": [],
+      "linkedEventIds": [],
+      "linkedDriveFileIds": [],
+      "linkedContactResourceNames": [],
+      "linkedTaskIds": []
+    },
+    {
+      "id": "pt-1785837346769",
+      "projectId": "proj-demo-1",
+      "columnId": "col-2",
+      "title": "Sosyal Ağ Analizi",
+      "description": "",
+      "priority": "medium",
+      "dueDate": "2026-08-07",
+      "createdAt": "2026-08-04T09:55:46.769Z",
+      "linkedEmailIds": [],
+      "linkedEventIds": [
+        "1E11ptLOQs5aQ14T6oFpnlkJ0MlNoAtPlEpGj5eNCRz0"
+      ],
+      "linkedDriveFileIds": [
+        "1E11ptLOQs5aQ14T6oFpnlkJ0MlNoAtPlEpGj5eNCRz0"
+      ],
+      "linkedContactResourceNames": [],
+      "linkedTaskIds": []
+    },
+    {
+      "id": "pt-1785838793661",
+      "projectId": "proj-demo-1",
+      "columnId": "col-4",
+      "title": "Mindset",
+      "description": "",
+      "priority": "none",
+      "createdAt": "2026-08-04T10:19:53.661Z",
+      "linkedEmailIds": [],
+      "linkedEventIds": [],
+      "linkedDriveFileIds": [],
+      "linkedContactResourceNames": [
+        "people/c4501800706229732148",
+        "people/c89473212002079283"
+      ],
+      "linkedTaskIds": []
+    },
+    {
+      "id": "pt-1785839075235",
+      "projectId": "proj-demo-1",
+      "columnId": "col-2",
+      "title": "Nobel Kitap Bölümü",
+      "description": "",
+      "priority": "medium",
+      "dueDate": "2026-08-22",
+      "createdAt": "2026-08-04T10:24:35.235Z",
+      "linkedEmailIds": [],
+      "linkedEventIds": [],
+      "linkedDriveFileIds": [],
+      "linkedContactResourceNames": [],
+      "linkedTaskIds": []
+    },
+    {
+      "id": "pt-1785841903944",
+      "projectId": "proj-demo-1",
+      "columnId": "col-4",
+      "title": "Learn English Visually",
+      "description": "",
+      "priority": "none",
+      "createdAt": "2026-08-04T11:11:43.944Z",
+      "linkedEmailIds": [],
+      "linkedEventIds": [],
+      "linkedDriveFileIds": [
+        "1jepE8vJhjnrXnuOYnml0fr2W9bU9E5NGX_S0ZQc9EFY",
+        "1Au4wIMcMmvC3aO4JPmfPoc2eLLh3CCmaDrF_aWrckog"
+      ],
+      "linkedContactResourceNames": [],
+      "linkedTaskIds": []
+    },
+    {
+      "id": "pt-1785852525926",
+      "projectId": "proj-demo-1",
+      "columnId": "col-4",
+      "title": "KemalSahinCOM",
+      "description": "",
+      "priority": "none",
+      "createdAt": "2026-08-04T14:08:45.926Z",
+      "linkedEmailIds": [],
+      "linkedEventIds": [],
+      "linkedDriveFileIds": [],
+      "linkedContactResourceNames": [],
+      "linkedTaskIds": []
+    }
+  ],
+  "timelogs": [],
+  "updatedAt": "2026-08-10T08:42:50.333Z"
+}

@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import {
   FileText,
   Plus,
@@ -17,6 +17,7 @@ import {
   Filter,
   ArrowUpDown,
   Layers,
+  X,
 } from 'lucide-react';
 import { MarkdownPreview } from './MarkdownPreview';
 import { NoteItem, ContactItem, NoteLocation, EmailItem, CalendarEvent, TimeLog, NoteType } from '../types';
@@ -39,6 +40,7 @@ interface Props {
   onOpenMapForLocation?: (loc: NoteLocation) => void;
   onSaveNote?: (data: any) => Promise<void>;
   onSaveTimelog?: (data: any) => Promise<void>;
+  initialSearchTerm?: string;
 }
 
 export const NotesSection: React.FC<Props> = ({
@@ -58,8 +60,15 @@ export const NotesSection: React.FC<Props> = ({
   onOpenMapForLocation,
   onSaveNote,
   onSaveTimelog,
+  initialSearchTerm = '',
 }) => {
-  const [searchTerm, setSearchTerm] = useState('');
+  const [searchTerm, setSearchTerm] = useState(initialSearchTerm);
+
+  useEffect(() => {
+    if (initialSearchTerm !== undefined) {
+      setSearchTerm(initialSearchTerm);
+    }
+  }, [initialSearchTerm]);
   const [selectedTagFilter, setSelectedTagFilter] = useState<string | null>(null);
   const [selectedDateFilter, setSelectedDateFilter] = useState<string | null>(null);
   const [selectedTypeFilter, setSelectedTypeFilter] = useState<string>('all');
@@ -201,8 +210,18 @@ export const NotesSection: React.FC<Props> = ({
                   placeholder="Not başlığı, içerik, kişi, e-posta, etkinlik veya konum adı ile arayın..."
                   value={searchTerm}
                   onChange={(e) => setSearchTerm(e.target.value)}
-                  className="w-full pl-9 pr-3 py-2 text-xs bg-slate-50 border border-slate-200 rounded-xl focus:outline-hidden focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 text-slate-800 placeholder:text-slate-400 font-medium"
+                  className="w-full pl-9 pr-8 py-2 text-xs bg-slate-50 border border-slate-200 rounded-xl focus:outline-hidden focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 text-slate-800 placeholder:text-slate-400 font-medium"
                 />
+                {searchTerm && (
+                  <button
+                    type="button"
+                    onClick={() => setSearchTerm('')}
+                    className="absolute right-2.5 top-1/2 -translate-y-1/2 p-0.5 text-slate-400 hover:text-slate-600 rounded-full hover:bg-slate-200 cursor-pointer"
+                    title="Aramayı temizle"
+                  >
+                    <X className="w-3.5 h-3.5" />
+                  </button>
+                )}
               </div>
 
               {/* Note Type Filter Dropdown */}

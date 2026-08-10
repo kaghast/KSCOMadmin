@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useMemo } from 'react';
 import {
   X,
   FileText,
@@ -26,6 +26,9 @@ import {
   Image as ImageIcon,
   UploadCloud,
   Clock,
+  Trash2,
+  Maximize2,
+  Minimize2,
 } from 'lucide-react';
 import { MarkdownPreview } from './MarkdownPreview';
 import L from 'leaflet';
@@ -47,7 +50,7 @@ import {
   NoteType,
   NoteTypeField,
 } from '../types';
-import { DrawingCanvas } from './DrawingCanvas';
+import { DrawingCanvas, DrawingElement } from './DrawingCanvas';
 
 interface Props {
   isOpen: boolean;
@@ -60,6 +63,7 @@ interface Props {
   projects?: Project[];
   projectTasks?: ProjectTask[];
   allExistingTags?: string[];
+  onDeleteLocation?: (id: string) => Promise<void>;
   onClose: () => void;
   onSave: (data: {
     id?: string;
@@ -105,6 +109,7 @@ export const NoteModal: React.FC<Props> = ({
   projects = [],
   projectTasks = [],
   allExistingTags = [],
+  onDeleteLocation,
   onClose,
   onSave,
 }) => {
@@ -148,6 +153,19 @@ export const NoteModal: React.FC<Props> = ({
   // Content Modes: Edit (Markdown), Preview (Markdown), Drawing (Canvas)
   const [activeTab, setActiveTab] = useState<'edit' | 'preview' | 'drawing'>('edit');
   const [drawingDataUrl, setDrawingDataUrl] = useState<string>('');
+  const [drawingElements, setDrawingElements] = useState<DrawingElement[]>([]);
+  const [isFullFocus, setIsFullFocus] = useState<boolean>(false);
+
+  // Escape key handler for Full Focus Mode
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape' && isFullFocus) {
+        setIsFullFocus(false);
+      }
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [isFullFocus]);
 
   // Place Search & Geolocation State
   const [placeQuery, setPlaceQuery] = useState('');
@@ -272,6 +290,49 @@ export const NoteModal: React.FC<Props> = ({
   const mapContainerRef = useRef<HTMLDivElement>(null);
   const mapInstanceRef = useRef<L.Map | null>(null);
   const markerRef = useRef<L.Marker | null>(null);
+  const savedMarkersRef = useRef<{ [key: string]: L.Marker }>({});
+
+  // Deduplicated list of all previous location names & coordinates
+  const allPreviousLocations = useMemo(() => {
+    const locMap = new Map<string, NoteLocation>();
+
+    (existingLocations || []).forEach((loc) => {
+      if (loc && loc.name && loc.name.trim() && typeof loc.lat === 'number' && typeof loc.lng === 'number') {
+        const key = loc.name.trim().toLowerCase();
+        if (!locMap.has(key)) {
+          locMap.set(key, { ...loc, name: loc.name.trim() });
+        }
+      }
+    });
+
+    if (note?.location && note.location.name && note.location.name.trim()) {
+      const key = note.location.name.trim().toLowerCase();
+      if (!locMap.has(key)) {
+        locMap.set(key, { ...note.location, name: note.location.name.trim() });
+      }
+    }
+
+    return Array.from(locMap.values());
+  }, [existingLocations, note?.location]);
+
+  // Filtered previous locations for search dropdown
+  const matchedSavedLocations = useMemo(() => {
+    if (!placeQuery.trim()) return allPreviousLocations;
+    const q = placeQuery.trim().toLowerCase();
+    return allPreviousLocations.filter((loc) => loc.name.toLowerCase().includes(q));
+  }, [allPreviousLocations, placeQuery]);
+
+  // Helper to select a previous location and pin it on map
+  const handleSelectPreviousLocation = (loc: NoteLocation) => {
+    setLocation(loc);
+    setLocationName(loc.name);
+    setShowPlaceDropdown(false);
+    setPlaceQuery('');
+
+    if (mapInstanceRef.current) {
+      mapInstanceRef.current.setView([loc.lat, loc.lng], 14);
+    }
+  };
 
   // Extract drawing data URL from note content if exists
   const extractDrawingFromContent = (text: string) => {
@@ -281,6 +342,7 @@ export const NoteModal: React.FC<Props> = ({
 
   // Synchronize Note Data on open
   useEffect(() => {
+    setIsFullFocus(false);
     if (!isOpen) return;
 
     if (note) {
@@ -293,6 +355,12 @@ export const NoteModal: React.FC<Props> = ({
         setDrawingDataUrl(existingDrawing);
       } else {
         setDrawingDataUrl('');
+      }
+
+      if (note.customFields?.drawingElements && Array.isArray(note.customFields.drawingElements)) {
+        setDrawingElements(note.customFields.drawingElements);
+      } else {
+        setDrawingElements([]);
       }
 
       setDate(note.date || new Date().toISOString().split('T')[0]);
@@ -325,6 +393,7 @@ export const NoteModal: React.FC<Props> = ({
       setTitle('');
       setContent('');
       setDrawingDataUrl('');
+      setDrawingElements([]);
       setDate(new Date().toISOString().split('T')[0]);
       setLocation(null);
       setLocationName('');
@@ -397,6 +466,22 @@ export const NoteModal: React.FC<Props> = ({
     return () => clearTimeout(timer);
   }, [isOpen, openAccordion, wsSearch]);
 
+  // Cleanup Leaflet Map on close or unmount
+  useEffect(() => {
+    if (!isOpen) {
+      if (mapInstanceRef.current) {
+        try {
+          mapInstanceRef.current.remove();
+        } catch (e) {
+          console.error(e);
+        }
+        mapInstanceRef.current = null;
+        markerRef.current = null;
+        savedMarkersRef.current = {};
+      }
+    }
+  }, [isOpen]);
+
   // Leaflet Map Initialization & Updates
   useEffect(() => {
     if (!isOpen || !mapContainerRef.current) return;
@@ -406,6 +491,21 @@ export const NoteModal: React.FC<Props> = ({
 
       const initLat = location?.lat || 41.0082;
       const initLng = location?.lng || 28.9784;
+
+      // Reset map if container element changed or map instance is stale
+      if (mapInstanceRef.current) {
+        const container = mapInstanceRef.current.getContainer();
+        if (!container || !mapContainerRef.current.contains(container)) {
+          try {
+            mapInstanceRef.current.remove();
+          } catch (e) {
+            console.error(e);
+          }
+          mapInstanceRef.current = null;
+          markerRef.current = null;
+          savedMarkersRef.current = {};
+        }
+      }
 
       if (!mapInstanceRef.current) {
         const map = L.map(mapContainerRef.current, {
@@ -453,15 +553,44 @@ export const NoteModal: React.FC<Props> = ({
       const map = mapInstanceRef.current;
       if (!map) return;
 
+      // Render existing location markers as green pins
+      Object.values(savedMarkersRef.current).forEach((m) => m.remove());
+      savedMarkersRef.current = {};
+
+      const savedIcon = L.divIcon({
+        className: 'saved-note-pin',
+        html: `<div style="background-color: #059669; width: 22px; height: 22px; border-radius: 50%; border: 2px solid white; box-shadow: 0 2px 4px rgba(0,0,0,0.25); display: flex; align-items: center; justify-content: center;">
+                <div style="width: 6px; height: 6px; background-color: white; border-radius: 50%;"></div>
+              </div>`,
+        iconSize: [22, 22],
+        iconAnchor: [11, 11],
+      });
+
+      allPreviousLocations.forEach((loc) => {
+        if (location && (location.id === loc.id || location.name.toLowerCase() === loc.name.toLowerCase())) {
+          return;
+        }
+
+        const marker = L.marker([loc.lat, loc.lng], { icon: savedIcon })
+          .addTo(map)
+          .bindTooltip(loc.name, { permanent: false, direction: 'top' });
+
+        marker.on('click', () => {
+          handleSelectPreviousLocation(loc);
+        });
+
+        savedMarkersRef.current[loc.id || loc.name] = marker;
+      });
+
       if (location) {
-        map.setView([location.lat, location.lng], 13);
+        map.setView([location.lat, location.lng], 14);
         const activeIcon = L.divIcon({
           className: 'custom-note-pin-active',
-          html: `<div style="background-color: #4f46e5; width: 26px; height: 26px; border-radius: 50%; border: 3px solid white; box-shadow: 0 4px 8px rgba(79, 70, 229, 0.4); display: flex; align-items: center; justify-content: center;">
+          html: `<div style="background-color: #4f46e5; width: 28px; height: 28px; border-radius: 50%; border: 3px solid white; box-shadow: 0 4px 8px rgba(79, 70, 229, 0.4); display: flex; align-items: center; justify-content: center;">
                   <div style="width: 8px; height: 8px; background-color: white; border-radius: 50%;"></div>
                 </div>`,
-          iconSize: [26, 26],
-          iconAnchor: [13, 13],
+          iconSize: [28, 28],
+          iconAnchor: [14, 14],
         });
 
         if (!markerRef.current) {
@@ -476,7 +605,7 @@ export const NoteModal: React.FC<Props> = ({
     }, 150);
 
     return () => clearTimeout(timer);
-  }, [isOpen, location]);
+  }, [isOpen, location, allPreviousLocations]);
 
   // Place Search Autocomplete Handler
   const handleSearchPlaces = async (query: string) => {
@@ -662,8 +791,12 @@ export const NoteModal: React.FC<Props> = ({
   };
 
   // Handle Drawing Canvas Change
-  const handleDrawingCanvasChange = (dataUrl: string) => {
+  const handleDrawingCanvasChange = (dataUrl: string, elems?: DrawingElement[]) => {
     setDrawingDataUrl(dataUrl);
+    if (elems) {
+      setDrawingElements(elems);
+      setCustomFields((prev) => ({ ...prev, drawingElements: elems }));
+    }
     setContent((prev) => {
       if (!dataUrl) return prev;
       if (prev.includes('![Çizim Notu](')) {
@@ -981,13 +1114,27 @@ export const NoteModal: React.FC<Props> = ({
               </div>
             </div>
 
-            {/* Note Content - 3 MODES (Düzenle, Önizleme, Çizim) */}
-            <div className="flex-1 flex flex-col min-h-[280px]">
+            {/* Note Content - 3 MODES (Düzenle, Önizleme, Çizim) & FULL FOCUS MODE */}
+            <div
+              className={
+                isFullFocus
+                  ? 'fixed inset-0 z-[100] bg-white p-4 md:p-6 flex flex-col h-screen w-screen overflow-hidden shadow-2xl animate-in fade-in duration-200'
+                  : 'flex-1 flex flex-col min-h-[280px]'
+              }
+            >
               <div className="flex flex-wrap items-center justify-between gap-2 mb-2">
-                <label className="block text-xs font-bold text-slate-700 flex items-center gap-1.5">
-                  <FileText className="w-3.5 h-3.5 text-indigo-600" />
-                  Not İçeriği Modu
-                </label>
+                <div className="flex items-center gap-2">
+                  <label className="block text-xs font-bold text-slate-700 flex items-center gap-1.5">
+                    <FileText className="w-3.5 h-3.5 text-indigo-600" />
+                    {isFullFocus ? (
+                      <span className="text-xs font-bold text-indigo-900 bg-indigo-50 px-2.5 py-1 rounded-xl border border-indigo-200 flex items-center gap-1.5">
+                        ✨ Odak Modu: <strong className="text-slate-900">{title || 'Başlıksız Not'}</strong>
+                      </span>
+                    ) : (
+                      'Not İçeriği Modu'
+                    )}
+                  </label>
+                </div>
 
                 <div className="flex items-center gap-1.5 flex-wrap">
                   {/* Image Upload Button */}
@@ -1055,6 +1202,30 @@ export const NoteModal: React.FC<Props> = ({
                       <Pencil className="w-3 h-3" /> 🎨 Çizim
                     </button>
                   </div>
+
+                  {/* Full Focus Toggle Button */}
+                  <button
+                    type="button"
+                    onClick={() => setIsFullFocus((prev) => !prev)}
+                    className={`px-2.5 py-1 text-[11px] font-bold rounded-xl border flex items-center gap-1.5 transition-all cursor-pointer shadow-2xs ${
+                      isFullFocus
+                        ? 'bg-amber-500 hover:bg-amber-600 text-white border-amber-600 ring-2 ring-amber-300'
+                        : 'bg-white hover:bg-slate-50 text-slate-700 border-slate-200 hover:border-slate-300'
+                    }`}
+                    title={isFullFocus ? 'Tam Ekran Odak Modundan Çık (Esc)' : 'Not İçeriğini Tam Ekran Yap'}
+                  >
+                    {isFullFocus ? (
+                      <>
+                        <Minimize2 className="w-3.5 h-3.5 text-white" />
+                        <span>Odaktan Çık (Esc)</span>
+                      </>
+                    ) : (
+                      <>
+                        <Maximize2 className="w-3.5 h-3.5 text-indigo-600" />
+                        <span>Tam Ekran Odak</span>
+                      </>
+                    )}
+                  </button>
                 </div>
               </div>
 
@@ -1070,7 +1241,7 @@ export const NoteModal: React.FC<Props> = ({
 
               {/* Tab Content Display */}
               {activeTab === 'edit' && (
-                <div className="flex-1 flex flex-col space-y-1.5">
+                <div className="flex-1 flex flex-col space-y-1.5 min-h-0">
                   <textarea
                     ref={textareaRef}
                     value={content}
@@ -1079,7 +1250,9 @@ export const NoteModal: React.FC<Props> = ({
                     onDragOver={(e) => e.preventDefault()}
                     onDrop={handleDrop}
                     placeholder="Notunuzu yazın... (# Başlık, - Liste, **Kalın metin**). Resim yapıştırabilir (Ctrl+V) veya sürükleyebilirsiniz."
-                    className="w-full flex-1 p-3.5 text-xs font-mono bg-slate-50 border border-slate-200 rounded-2xl focus:outline-hidden focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 text-slate-900 leading-relaxed resize-none shadow-inner min-h-[220px]"
+                    className={`w-full flex-1 p-3.5 font-mono bg-slate-50 border border-slate-200 rounded-2xl focus:outline-hidden focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 text-slate-900 leading-relaxed resize-none shadow-inner ${
+                      isFullFocus ? 'text-sm p-5 min-h-0' : 'text-xs min-h-[220px]'
+                    }`}
                   />
                   <p className="text-[10px] text-slate-400 italic px-1 flex items-center justify-between">
                     <span>💡 İpucu: Panodan resim yapıştırabilir (Ctrl+V) veya buraya sürükleyebilirsiniz. Yüklenen görseller Google Drive'a kaydedilir.</span>
@@ -1088,9 +1261,11 @@ export const NoteModal: React.FC<Props> = ({
               )}
 
               {activeTab === 'preview' && (
-                <div className="w-full flex-1 p-4 text-xs bg-slate-50 border border-slate-200 rounded-2xl overflow-y-auto">
+                <div className={`w-full flex-1 p-4 bg-slate-50 border border-slate-200 rounded-2xl overflow-y-auto ${
+                  isFullFocus ? 'text-sm p-6 min-h-0' : 'text-xs min-h-[220px]'
+                }`}>
                   {content.trim() ? (
-                    <MarkdownPreview content={content} imgMaxHeight="max-h-72" />
+                    <MarkdownPreview content={content} imgMaxHeight={isFullFocus ? 'max-h-[600px]' : 'max-h-72'} />
                   ) : (
                     <span className="text-slate-400 italic">Önizleme için metin giriniz...</span>
                   )}
@@ -1098,9 +1273,10 @@ export const NoteModal: React.FC<Props> = ({
               )}
 
               {activeTab === 'drawing' && (
-                <div className="flex-1 min-h-[300px]">
+                <div className={`flex-1 ${isFullFocus ? 'h-full min-h-0' : 'min-h-[300px]'}`}>
                   <DrawingCanvas
                     initialDataUrl={drawingDataUrl}
+                    initialElements={drawingElements}
                     onChange={handleDrawingCanvasChange}
                   />
                 </div>
@@ -1204,12 +1380,105 @@ export const NoteModal: React.FC<Props> = ({
                   )}
                 </div>
 
+                {/* Önceki Mekan İsimleri Hızlı Seçimi (Chips & Dropdown) */}
+                {allPreviousLocations.length > 0 && (
+                  <div className="bg-indigo-50/60 p-2 rounded-xl border border-indigo-100/80 space-y-1.5">
+                    <div className="flex items-center justify-between text-[11px] font-bold text-indigo-950">
+                      <span className="flex items-center gap-1">
+                        <MapPin className="w-3 h-3 text-indigo-600" />
+                        Daha Önceki Mekanlar ({allPreviousLocations.length})
+                      </span>
+                      {location && (
+                        <span className="text-[10px] text-emerald-700 bg-emerald-100 px-1.5 py-0.5 rounded-md font-extrabold flex items-center gap-0.5">
+                          <Check className="w-3 h-3" /> Pinlendi
+                        </span>
+                      )}
+                    </div>
+
+                    {/* Chips / Badges */}
+                    <div className="flex items-center gap-1.5 overflow-x-auto py-0.5 no-scrollbar">
+                      {allPreviousLocations.map((loc) => {
+                        const isSelected =
+                          location?.id === loc.id ||
+                          (locationName && locationName.trim().toLowerCase() === loc.name.trim().toLowerCase());
+                        return (
+                          <div
+                            key={loc.id || loc.name}
+                            className={`rounded-xl border flex items-center overflow-hidden shrink-0 transition-all ${
+                              isSelected
+                                ? 'bg-indigo-600 text-white border-indigo-600 shadow-2xs'
+                                : 'bg-white hover:bg-indigo-100/80 text-indigo-900 border-indigo-200/80 shadow-2xs'
+                            }`}
+                          >
+                            <button
+                              type="button"
+                              onClick={() => handleSelectPreviousLocation(loc)}
+                              className="px-2.5 py-1 text-[11px] font-bold flex items-center gap-1 cursor-pointer"
+                            >
+                              <MapPin className={`w-3 h-3 ${isSelected ? 'text-white' : 'text-indigo-600'}`} />
+                              <span>{loc.name}</span>
+                            </button>
+                            {onDeleteLocation && loc.id && (
+                              <button
+                                type="button"
+                                onClick={async (e) => {
+                                  e.stopPropagation();
+                                  if (confirm(`"${loc.name}" lokasyonunu silmek istediğinize emin misiniz?`)) {
+                                    await onDeleteLocation(loc.id);
+                                    if (location?.id === loc.id) {
+                                      setLocation(null);
+                                      setLocationName('');
+                                    }
+                                  }
+                                }}
+                                className={`px-1.5 py-1 text-[10px] transition-colors cursor-pointer ${
+                                  isSelected
+                                    ? 'hover:bg-indigo-700 text-indigo-200 hover:text-white'
+                                    : 'hover:bg-rose-50 text-slate-400 hover:text-rose-600'
+                                }`}
+                                title="Lokasyonu Sil"
+                              >
+                                <Trash2 className="w-3 h-3" />
+                              </button>
+                            )}
+                          </div>
+                        );
+                      })}
+                    </div>
+
+                    {/* Dropdown for list selection */}
+                    {allPreviousLocations.length > 3 && (
+                      <select
+                        onChange={(e) => {
+                          const found = allPreviousLocations.find((l) => (l.id || l.name) === e.target.value);
+                          if (found) handleSelectPreviousLocation(found);
+                        }}
+                        value={
+                          location?.id ||
+                          allPreviousLocations.find((l) => l.name.toLowerCase() === locationName.toLowerCase())?.id ||
+                          ''
+                        }
+                        className="w-full px-2.5 py-1 text-xs bg-white border border-indigo-200/80 rounded-xl focus:outline-hidden text-indigo-900 font-bold cursor-pointer"
+                      >
+                        <option value="">-- Listeden Önceki Mekan Seç --</option>
+                        {allPreviousLocations.map((loc) => (
+                          <option key={loc.id || loc.name} value={loc.id || loc.name}>
+                            📍 {loc.name}
+                          </option>
+                        ))}
+                      </select>
+                    )}
+                  </div>
+                )}
+
+                {/* Mekan & Adres Arama Kutusu */}
                 <div className="flex items-center gap-1.5 relative z-10">
                   <div className="relative flex-1">
                     <Search className="w-3.5 h-3.5 text-slate-400 absolute left-2.5 top-1/2 -translate-y-1/2" />
                     <input
                       type="text"
                       value={placeQuery}
+                      onFocus={() => setShowPlaceDropdown(true)}
                       onChange={(e) => handleSearchPlaces(e.target.value)}
                       placeholder="Mekan veya Adres Ara..."
                       className="w-full pl-8 pr-2 py-1.5 text-xs bg-slate-50 border border-slate-200 rounded-xl focus:outline-hidden focus:ring-2 focus:ring-indigo-500/20 text-slate-800"
@@ -1218,25 +1487,59 @@ export const NoteModal: React.FC<Props> = ({
                       <Loader2 className="w-3.5 h-3.5 text-indigo-600 animate-spin absolute right-2 top-1/2 -translate-y-1/2" />
                     )}
 
-                    {showPlaceDropdown && placeResults.length > 0 && (
-                      <div className="absolute top-full left-0 right-0 mt-1 bg-white border border-slate-200 rounded-xl shadow-xl max-h-40 overflow-y-auto z-30 divide-y divide-slate-100">
-                        {placeResults.map((p) => (
-                          <div
-                            key={p.place_id}
-                            onClick={() => handleSelectPlace(p)}
-                            className="p-2 text-xs hover:bg-indigo-50 cursor-pointer flex items-start gap-1.5"
-                          >
-                            <MapPin className="w-3.5 h-3.5 text-indigo-600 shrink-0 mt-0.5" />
-                            <div className="min-w-0">
-                              <div className="font-bold text-slate-900 truncate">
-                                {p.display_name.split(',')[0]}
-                              </div>
-                              <div className="text-[10px] text-slate-400 truncate">
-                                {p.display_name}
-                              </div>
+                    {showPlaceDropdown && (matchedSavedLocations.length > 0 || placeResults.length > 0) && (
+                      <div className="absolute top-full left-0 right-0 mt-1 bg-white border border-slate-200 rounded-xl shadow-xl max-h-48 overflow-y-auto z-30 divide-y divide-slate-100">
+                        {/* Pre-saved locations matching search */}
+                        {matchedSavedLocations.length > 0 && (
+                          <div className="bg-indigo-50/40">
+                            <div className="px-2 py-1 text-[10px] font-extrabold text-indigo-600 uppercase tracking-wider">
+                              Önceki Mekanlar
                             </div>
+                            {matchedSavedLocations.map((loc) => (
+                              <div
+                                key={`saved-${loc.id || loc.name}`}
+                                onClick={() => handleSelectPreviousLocation(loc)}
+                                className="p-2 text-xs hover:bg-indigo-100/70 cursor-pointer flex items-center justify-between"
+                              >
+                                <div className="flex items-center gap-1.5 min-w-0">
+                                  <MapPin className="w-3.5 h-3.5 text-indigo-600 shrink-0" />
+                                  <span className="font-bold text-indigo-950 truncate">{loc.name}</span>
+                                </div>
+                                <span className="text-[9px] font-extrabold bg-indigo-200/80 text-indigo-800 px-1.5 py-0.5 rounded-md shrink-0">
+                                  Kayıtlı
+                                </span>
+                              </div>
+                            ))}
                           </div>
-                        ))}
+                        )}
+
+                        {/* OpenStreetMap Nominatim results */}
+                        {placeResults.length > 0 && (
+                          <div>
+                            {matchedSavedLocations.length > 0 && (
+                              <div className="px-2 py-1 text-[10px] font-extrabold text-slate-400 uppercase tracking-wider">
+                                Harita Sonuçları
+                              </div>
+                            )}
+                            {placeResults.map((p) => (
+                              <div
+                                key={p.place_id}
+                                onClick={() => handleSelectPlace(p)}
+                                className="p-2 text-xs hover:bg-slate-50 cursor-pointer flex items-start gap-1.5"
+                              >
+                                <MapPin className="w-3.5 h-3.5 text-slate-500 shrink-0 mt-0.5" />
+                                <div className="min-w-0">
+                                  <div className="font-bold text-slate-900 truncate">
+                                    {p.display_name.split(',')[0]}
+                                  </div>
+                                  <div className="text-[10px] text-slate-400 truncate">
+                                    {p.display_name}
+                                  </div>
+                                </div>
+                              </div>
+                            ))}
+                          </div>
+                        )}
                       </div>
                     )}
                   </div>
@@ -1260,12 +1563,23 @@ export const NoteModal: React.FC<Props> = ({
                 <input
                   type="text"
                   value={locationName}
-                  onChange={(e) => setLocationName(e.target.value)}
+                  onChange={(e) => {
+                    const val = e.target.value;
+                    setLocationName(val);
+                    const matched = allPreviousLocations.find(
+                      (l) => l.name.trim().toLowerCase() === val.trim().toLowerCase()
+                    );
+                    if (matched) {
+                      handleSelectPreviousLocation(matched);
+                    } else if (location) {
+                      setLocation({ ...location, name: val });
+                    }
+                  }}
                   placeholder="Lokasyon Adı (Örn: Kadıköy Ofis)"
                   className="w-full px-2.5 py-1 text-xs bg-slate-50 border border-slate-200 rounded-xl focus:outline-hidden text-slate-800 font-medium"
                 />
 
-                <div className="h-24 w-full rounded-xl overflow-hidden border border-slate-200 relative bg-slate-100 shadow-inner">
+                <div className="h-28 w-full rounded-xl overflow-hidden border border-slate-200 relative bg-slate-100 shadow-inner">
                   <div ref={mapContainerRef} className="w-full h-full z-0" />
                 </div>
               </div>

@@ -793,14 +793,11 @@ export const TimeManagementApp: React.FC<TimeManagementAppProps> = ({
               className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl text-xs text-slate-800 focus:outline-none focus:ring-2 focus:ring-emerald-500 disabled:opacity-75"
             >
               <option value="">{isTr ? '-- Kanban Kartı Seçin --' : '-- Select Kanban Card --'}</option>
-              {projectTasks.map((task) => {
-                const proj = projects.find((p) => p.id === task.projectId);
-                return (
-                  <option key={task.id} value={task.id}>
-                    {proj ? `[${proj.name}] ` : ''}{task.title}
-                  </option>
-                );
-              })}
+              {projectTasks.map((task) => (
+                <option key={task.id} value={task.id}>
+                  {task.title}
+                </option>
+              ))}
             </select>
             {!activeCardId && (
               <input
@@ -1260,14 +1257,11 @@ export const TimeManagementApp: React.FC<TimeManagementAppProps> = ({
                   className="w-full px-3.5 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-xs text-slate-800 focus:outline-none focus:ring-2 focus:ring-emerald-500"
                 >
                   <option value="">{isTr ? '-- Kanban Kartı Seçin --' : '-- Select Kanban Card --'}</option>
-                  {projectTasks.map((task) => {
-                    const proj = projects.find((p) => p.id === task.projectId);
-                    return (
-                      <option key={task.id} value={task.id}>
-                        {proj ? `[${proj.name}] ` : ''}{task.title}
-                      </option>
-                    );
-                  })}
+                  {projectTasks.map((task) => (
+                    <option key={task.id} value={task.id}>
+                      {task.title}
+                    </option>
+                  ))}
                 </select>
                 {!formCardId && (
                   <input

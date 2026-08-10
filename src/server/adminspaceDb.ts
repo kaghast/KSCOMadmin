@@ -147,7 +147,25 @@ export async function getAdminSpaceDb(): Promise<Database> {
 
   ensureTablesExist(dbInstance);
 
-  // Seed default demo project if table is empty
+  // If project_tasks table is empty, attempt to populate from data.json
+  try {
+    const taskCheck = dbInstance.prepare('SELECT COUNT(*) as cnt FROM project_tasks');
+    if (taskCheck.step() && taskCheck.getAsObject().cnt === 0) {
+      taskCheck.free();
+      if (fs.existsSync(DATA_JSON_FILE)) {
+        try {
+          const parsed = JSON.parse(fs.readFileSync(DATA_JSON_FILE, 'utf-8'));
+          if (parsed.projectTasks && Array.isArray(parsed.projectTasks)) {
+            parsed.projectTasks.forEach((t: any) => saveProjectTaskToDb(t));
+          }
+        } catch {}
+      }
+    } else {
+      taskCheck.free();
+    }
+  } catch (err) {
+    console.error('Error restoring project_tasks from data.json:', err);
+  }
   try {
     const projCheck = dbInstance.prepare('SELECT COUNT(*) as cnt FROM projects');
     if (projCheck.step() && projCheck.getAsObject().cnt === 0) {
@@ -183,11 +201,9 @@ export async function getAdminSpaceDb(): Promise<Database> {
     console.error('Error seeding demo projects:', err);
   }
 
-  // Clean any legacy dummy notes/locations/tasks from SQLite table
+  // Clean any legacy dummy notes/locations from SQLite table
   try {
     dbInstance.run("DELETE FROM notes WHERE id LIKE 'note-demo-%'");
-    dbInstance.run("DELETE FROM locations WHERE id LIKE 'loc-%'");
-    dbInstance.run("DELETE FROM project_tasks WHERE id LIKE 'pt-%' OR id LIKE 'demo-%'");
   } catch (err) {
     console.error('Error cleaning dummy data from SQLite:', err);
   }
@@ -258,7 +274,7 @@ export function migrateTimelogsToNotes(db: Database) {
   }
 }
 
-// Persist SQLite DB to ./adminspace/adminspace.sqlite and backup data.json
+// Persist SQLite DB to ./adminspace/adminspace.sqlite, data.json, adminspace_notes.md, and individual card markdown files
 export function saveDbToDisk() {
   if (!dbInstance) return;
   try {
@@ -266,7 +282,7 @@ export function saveDbToDisk() {
     const buffer = Buffer.from(data);
     fs.writeFileSync(SQLITE_FILE, buffer);
 
-    // Also maintain readable JSON dump in ./adminspace/data.json for double verification
+    // Also maintain readable JSON dump in ./adminspace/data.json
     const locations = getAllLocationsFromDb();
     const notes = getAllNotesFromDb();
     const projects = getAllProjectsFromDb();
@@ -293,6 +309,57 @@ export function saveDbToDisk() {
     }
     const NOTES_MD_FILE = path.join(ADMINSPACE_DIR, 'adminspace_notes.md');
     fs.writeFileSync(NOTES_MD_FILE, notesMd);
+
+    // Save each Kanban card (projectTask) as an individual Markdown file in ./adminspace/cards/
+    const CARDS_DIR = path.join(ADMINSPACE_DIR, 'cards');
+    if (!fs.existsSync(CARDS_DIR)) {
+      fs.mkdirSync(CARDS_DIR, { recursive: true });
+    }
+
+    const activeCardFiles = new Set<string>();
+    projectTasks.forEach((task: any) => {
+      const fileName = `card_${task.id}.md`;
+      activeCardFiles.add(fileName);
+      const cardPath = path.join(CARDS_DIR, fileName);
+
+      const cardMd = `# 📋 Kanban Kartı: ${task.title || 'Başlıksız Kart'}
+
+- **Kart ID:** \`${task.id}\`
+- **Proje ID:** \`${task.projectId || '-'}\`
+- **Kolon ID:** \`${task.columnId || '-'}\`
+- **Öncelik:** \`${task.priority || 'medium'}\`
+- **Son Tarih:** \`${task.dueDate || 'Belirtilmedi'}\`
+- **Atanan Kişi:** \`${task.assignee || 'Atanmadı'}\`
+- **Oluşturulma Tarihi:** \`${task.createdAt || '-'}\`
+
+---
+
+## 📝 Açıklama
+
+${task.description || '*Açıklama girilmedi.*'}
+
+---
+
+## 🔗 Bağlantılar & Entegrasyonlar
+
+- **E-postalar:** ${task.linkedEmailIds && task.linkedEmailIds.length > 0 ? task.linkedEmailIds.join(', ') : 'Yok'}
+- **Etkinlikler:** ${task.linkedEventIds && task.linkedEventIds.length > 0 ? task.linkedEventIds.join(', ') : 'Yok'}
+- **Drive Dosyaları:** ${task.linkedDriveFileIds && task.linkedDriveFileIds.length > 0 ? task.linkedDriveFileIds.join(', ') : 'Yok'}
+- **Kişiler:** ${task.linkedContactResourceNames && task.linkedContactResourceNames.length > 0 ? task.linkedContactResourceNames.join(', ') : 'Yok'}
+- **Görevler:** ${task.linkedTaskIds && task.linkedTaskIds.length > 0 ? task.linkedTaskIds.join(', ') : 'Yok'}
+`;
+
+      fs.writeFileSync(cardPath, cardMd);
+    });
+
+    // Clean up markdown files for deleted cards
+    const existingCardFiles = fs.readdirSync(CARDS_DIR);
+    existingCardFiles.forEach((file) => {
+      if (file.startsWith('card_') && file.endsWith('.md') && !activeCardFiles.has(file)) {
+        try { fs.unlinkSync(path.join(CARDS_DIR, file)); } catch {}
+      }
+    });
+
   } catch (err) {
     console.error('Error saving SQLite DB to disk in adminspace:', err);
   }
@@ -326,6 +393,17 @@ export function saveLocationToDb(loc: { id: string; name: string; lat: number; l
     'INSERT OR REPLACE INTO locations (id, name, lat, lng) VALUES (?, ?, ?, ?)',
     [loc.id, loc.name, loc.lat, loc.lng]
   );
+  saveDbToDisk();
+}
+
+export function deleteLocationFromDb(id: string) {
+  if (!dbInstance) return;
+  dbInstance.run('DELETE FROM locations WHERE id = ?', [id]);
+  try {
+    dbInstance.run('UPDATE notes SET locationId = NULL WHERE locationId = ?', [id]);
+  } catch (err) {
+    console.error('Error unlinking location from notes:', err);
+  }
   saveDbToDisk();
 }
 
@@ -734,6 +812,89 @@ export function deleteNoteFromDb(id: string) {
   saveDbToDisk();
 }
 
+// Helper function to find or create a single 'adminspace' folder in Google Drive
+// Prevents duplicate folder creation due to race conditions and cleans up any existing duplicate folders in Drive
+let cachedAdminSpaceFolderId: string | null = null;
+let cachedAdminSpaceFolderLink: string | null = null;
+let pendingFolderPromise: Promise<{ folderId: string; folderLink?: string } | null> | null = null;
+
+export async function getOrCreateAdminSpaceFolder(drive: any): Promise<{ folderId: string; folderLink?: string } | null> {
+  if (cachedAdminSpaceFolderId) {
+    return { folderId: cachedAdminSpaceFolderId, folderLink: cachedAdminSpaceFolderLink || undefined };
+  }
+
+  if (pendingFolderPromise) {
+    return pendingFolderPromise;
+  }
+
+  pendingFolderPromise = (async () => {
+    try {
+      // Search for all non-trashed 'adminspace' folders in Google Drive
+      const searchRes = await drive.files.list({
+        q: "mimeType = 'application/vnd.google-apps.folder' and name = 'adminspace' and trashed = false",
+        fields: 'files(id, name, webViewLink, createdTime)',
+        orderBy: 'createdTime desc',
+      });
+
+      const files = searchRes.data.files || [];
+
+      if (files.length > 0) {
+        const primaryFolder = files[0];
+        cachedAdminSpaceFolderId = primaryFolder.id!;
+        cachedAdminSpaceFolderLink = primaryFolder.webViewLink || null;
+
+        // Clean up any duplicate 'adminspace' folders in Google Drive
+        if (files.length > 1) {
+          console.warn(`[Drive Sync] Found ${files.length} 'adminspace' folders in Google Drive. Keeping primary (${primaryFolder.id}) and trashing duplicates...`);
+          for (let i = 1; i < files.length; i++) {
+            const dup = files[i];
+            if (dup.id) {
+              try {
+                await drive.files.update({
+                  fileId: dup.id,
+                  requestBody: { trashed: true },
+                });
+                console.log(`[Drive Sync] Moved duplicate 'adminspace' folder (${dup.id}) to trash.`);
+              } catch (e) {
+                console.error(`[Drive Sync] Could not trash duplicate folder ${dup.id}:`, e);
+              }
+            }
+          }
+        }
+
+        return { folderId: primaryFolder.id!, folderLink: primaryFolder.webViewLink || undefined };
+      }
+
+      // If no 'adminspace' folder exists, create one
+      const createFolderRes = await drive.files.create({
+        requestBody: {
+          name: 'adminspace',
+          mimeType: 'application/vnd.google-apps.folder',
+        },
+        fields: 'id, webViewLink',
+      });
+
+      const folderId = createFolderRes.data.id;
+      const folderLink = createFolderRes.data.webViewLink;
+
+      if (folderId) {
+        cachedAdminSpaceFolderId = folderId;
+        cachedAdminSpaceFolderLink = folderLink || null;
+        return { folderId, folderLink: folderLink || undefined };
+      }
+
+      return null;
+    } catch (err) {
+      console.error('Error getting or creating adminspace folder in Google Drive:', err);
+      return null;
+    } finally {
+      pendingFolderPromise = null;
+    }
+  })();
+
+  return pendingFolderPromise;
+}
+
 // Ensure Google Drive folder 'adminspace' exists and sync SQLite/JSON/MD data into it
 export async function syncWithGoogleDriveAdminSpace(authClient: any) {
   if (!authClient) return null;
@@ -742,29 +903,10 @@ export async function syncWithGoogleDriveAdminSpace(authClient: any) {
     saveDbToDisk();
     const drive = google.drive({ version: 'v3', auth: authClient });
 
-    // 1. Search if 'adminspace' folder exists
-    const searchRes = await drive.files.list({
-      q: "mimeType = 'application/vnd.google-apps.folder' and name = 'adminspace' and trashed = false",
-      fields: 'files(id, name, webViewLink)',
-    });
-
-    let folderId = searchRes.data.files?.[0]?.id;
-    let folderLink = searchRes.data.files?.[0]?.webViewLink;
-
-    // 2. If not found, create folder 'adminspace'
-    if (!folderId) {
-      const createFolderRes = await drive.files.create({
-        requestBody: {
-          name: 'adminspace',
-          mimeType: 'application/vnd.google-apps.folder',
-        },
-        fields: 'id, webViewLink',
-      });
-      folderId = createFolderRes.data.id || undefined;
-      folderLink = createFolderRes.data.webViewLink || undefined;
-    }
-
-    if (!folderId) return null;
+    // 1. Get or create single 'adminspace' folder (with duplicate cleanup)
+    const folderInfo = await getOrCreateAdminSpaceFolder(drive);
+    if (!folderInfo?.folderId) return null;
+    const { folderId, folderLink } = folderInfo;
 
     // 3. Sync adminspace.sqlite binary file into Drive
     if (fs.existsSync(SQLITE_FILE)) {
@@ -857,6 +999,80 @@ export async function syncWithGoogleDriveAdminSpace(authClient: any) {
       }
     }
 
+    // 6. Sync individual Kanban card Markdown files in cards/ subfolder into Drive
+    const CARDS_DIR = path.join(ADMINSPACE_DIR, 'cards');
+    if (fs.existsSync(CARDS_DIR)) {
+      const cardsFolderSearch = await drive.files.list({
+        q: `'${folderId}' in parents and name = 'cards' and mimeType = 'application/vnd.google-apps.folder' and trashed = false`,
+        fields: 'files(id, name)',
+      });
+      const cardFolders = cardsFolderSearch.data.files || [];
+      let cardsFolderId = cardFolders[0]?.id;
+
+      if (cardFolders.length > 1) {
+        console.warn(`[Drive Sync] Cleaning up ${cardFolders.length - 1} duplicate 'cards' folders in Google Drive...`);
+        for (let i = 1; i < cardFolders.length; i++) {
+          if (cardFolders[i].id) {
+            try {
+              await drive.files.update({ fileId: cardFolders[i].id, requestBody: { trashed: true } });
+            } catch {}
+          }
+        }
+      }
+
+      if (!cardsFolderId) {
+        const createCardsFolder = await drive.files.create({
+          requestBody: {
+            name: 'cards',
+            parents: [folderId],
+            mimeType: 'application/vnd.google-apps.folder',
+          },
+          fields: 'id',
+        });
+        cardsFolderId = createCardsFolder.data.id || undefined;
+      }
+
+      if (cardsFolderId) {
+        const existingCardsRes = await drive.files.list({
+          q: `'${cardsFolderId}' in parents and trashed = false`,
+          fields: 'files(id, name)',
+        });
+        const driveCardFilesMap = new Map<string, string>();
+        (existingCardsRes.data.files || []).forEach((f) => {
+          if (f.name && f.id) driveCardFilesMap.set(f.name, f.id);
+        });
+
+        const localCardFiles = fs.readdirSync(CARDS_DIR);
+        for (const cardFileName of localCardFiles) {
+          if (!cardFileName.endsWith('.md')) continue;
+          const cardFilePath = path.join(CARDS_DIR, cardFileName);
+          const existingDriveFileId = driveCardFilesMap.get(cardFileName);
+
+          if (existingDriveFileId) {
+            await drive.files.update({
+              fileId: existingDriveFileId,
+              media: {
+                mimeType: 'text/markdown',
+                body: fs.createReadStream(cardFilePath),
+              },
+            });
+          } else {
+            await drive.files.create({
+              requestBody: {
+                name: cardFileName,
+                parents: [cardsFolderId],
+                mimeType: 'text/markdown',
+              },
+              media: {
+                mimeType: 'text/markdown',
+                body: fs.createReadStream(cardFilePath),
+              },
+            });
+          }
+        }
+      }
+    }
+
     return {
       folderId,
       folderLink,
@@ -869,24 +1085,20 @@ export async function syncWithGoogleDriveAdminSpace(authClient: any) {
   }
 }
 
-// Restore SQLite DB / data.json from Google Drive 'adminspace' folder into local SQLite engine
+// Restore SQLite DB / data.json / cards from Google Drive 'adminspace' folder into local SQLite engine
 export async function restoreFromGoogleDriveAdminSpace(authClient: any) {
   if (!authClient) return null;
 
   try {
     const drive = google.drive({ version: 'v3', auth: authClient });
 
-    // 1. Search if 'adminspace' folder exists
-    const searchRes = await drive.files.list({
-      q: "mimeType = 'application/vnd.google-apps.folder' and name = 'adminspace' and trashed = false",
-      fields: 'files(id, name, webViewLink)',
-    });
-
-    const folderId = searchRes.data.files?.[0]?.id;
-    if (!folderId) {
+    // 1. Get or create single 'adminspace' folder (with duplicate cleanup)
+    const folderInfo = await getOrCreateAdminSpaceFolder(drive);
+    if (!folderInfo?.folderId) {
       console.log('No adminspace folder found in Google Drive to restore from.');
       return { restored: false, reason: 'No adminspace folder in Drive' };
     }
+    const folderId = folderInfo.folderId;
 
     // 2. Search for adminspace.sqlite or data.json inside 'adminspace' folder
     const sqliteSearch = await drive.files.list({
@@ -902,6 +1114,7 @@ export async function restoreFromGoogleDriveAdminSpace(authClient: any) {
     const jsonFile = jsonSearch.data.files?.[0];
 
     const SQL = await initSqlJs();
+    let isRestored = false;
 
     if (sqliteFile?.id) {
       console.log('Restoring adminspace.sqlite from Google Drive...');
@@ -915,7 +1128,7 @@ export async function restoreFromGoogleDriveAdminSpace(authClient: any) {
       dbInstance = new SQL.Database(buffer);
       ensureTablesExist(dbInstance);
       saveDbToDisk();
-      return { restored: true, source: 'sqlite', modifiedTime: sqliteFile.modifiedTime };
+      isRestored = true;
     } else if (jsonFile?.id) {
       console.log('Restoring data.json from Google Drive...');
       const fileRes = await drive.files.get(
@@ -946,10 +1159,39 @@ export async function restoreFromGoogleDriveAdminSpace(authClient: any) {
       }
 
       saveDbToDisk();
-      return { restored: true, source: 'json', modifiedTime: jsonFile.modifiedTime };
+      isRestored = true;
     }
 
-    return { restored: false, reason: 'No sqlite or json file in adminspace folder' };
+    // 3. Restore card markdown files from cards/ folder in Drive
+    const cardsFolderSearch = await drive.files.list({
+      q: `'${folderId}' in parents and name = 'cards' and mimeType = 'application/vnd.google-apps.folder' and trashed = false`,
+      fields: 'files(id, name)',
+    });
+    const cardsFolderId = cardsFolderSearch.data.files?.[0]?.id;
+    if (cardsFolderId) {
+      const driveCardsRes = await drive.files.list({
+        q: `'${cardsFolderId}' in parents and trashed = false`,
+        fields: 'files(id, name)',
+      });
+      const CARDS_DIR = path.join(ADMINSPACE_DIR, 'cards');
+      if (!fs.existsSync(CARDS_DIR)) {
+        fs.mkdirSync(CARDS_DIR, { recursive: true });
+      }
+
+      for (const f of driveCardsRes.data.files || []) {
+        if (f.id && f.name && f.name.endsWith('.md')) {
+          try {
+            const cardRes = await drive.files.get(
+              { fileId: f.id, alt: 'media' },
+              { responseType: 'text' }
+            );
+            fs.writeFileSync(path.join(CARDS_DIR, f.name), String(cardRes.data));
+          } catch {}
+        }
+      }
+    }
+
+    return { restored: isRestored, modifiedTime: sqliteFile?.modifiedTime || jsonFile?.modifiedTime };
   } catch (err: any) {
     console.error('Error restoring from Google Drive:', err);
     return { restored: false, error: err?.message || String(err) };
@@ -1104,20 +1346,9 @@ export async function exportProjectToMarkdownAndDrive(
     try {
       const drive = google.drive({ version: 'v3', auth: authClient });
 
-      // Find or create 'adminspace' folder
-      const folderSearch = await drive.files.list({
-        q: "mimeType = 'application/vnd.google-apps.folder' and name = 'adminspace' and trashed = false",
-        fields: 'files(id, webViewLink)',
-      });
-
-      let folderId = folderSearch.data.files?.[0]?.id;
-      if (!folderId) {
-        const newFolder = await drive.files.create({
-          requestBody: { name: 'adminspace', mimeType: 'application/vnd.google-apps.folder' },
-          fields: 'id',
-        });
-        folderId = newFolder.data.id || undefined;
-      }
+      // Get or create single 'adminspace' folder
+      const folderInfo = await getOrCreateAdminSpaceFolder(drive);
+      const folderId = folderInfo?.folderId;
 
       if (folderId) {
         // Check if markdown file already exists in 'adminspace' folder

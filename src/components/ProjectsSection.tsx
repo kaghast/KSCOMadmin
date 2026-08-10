@@ -95,6 +95,13 @@ export const ProjectsSection: React.FC<Props> = ({
     projects[0]?.id || ''
   );
 
+  // Sync selectedProjectId when projects array loads or changes
+  useEffect(() => {
+    if (projects.length > 0 && (!selectedProjectId || !projects.some((p) => p.id === selectedProjectId))) {
+      setSelectedProjectId(projects[0].id);
+    }
+  }, [projects, selectedProjectId]);
+
   // Priority Filter on Kanban Board
   const [selectedPriorityFilter, setSelectedPriorityFilter] = useState<'all' | 'high' | 'medium' | 'low' | 'none'>('all');
 
@@ -176,12 +183,14 @@ export const ProjectsSection: React.FC<Props> = ({
 
   useEffect(() => {
     if (detailTask) {
-      setEditDescriptionText(detailTask.description || '');
-      setIsEditingDescription(false);
-      setEditTitleText(detailTask.title || '');
-      setIsEditingTitle(false);
+      const updated = tasks.find((t) => t.id === detailTask.id);
+      if (updated) {
+        setDetailTask(updated);
+        setEditDescriptionText(updated.description || '');
+        setEditTitleText(updated.title || '');
+      }
     }
-  }, [detailTask?.id]);
+  }, [tasks, detailTask?.id]);
 
   // Countdown Helper
   const getCountdown = (dueDateStr?: string) => {
@@ -738,6 +747,7 @@ export const ProjectsSection: React.FC<Props> = ({
       assignee: taskAssignee.trim() || undefined,
     });
 
+    setSelectedPriorityFilter('all');
     setTaskTitle('');
     setTaskDesc('');
     setTaskDueDate('');
@@ -984,6 +994,16 @@ export const ProjectsSection: React.FC<Props> = ({
                         <div className="flex items-center gap-1">
                           <button
                             onClick={() => {
+                              setTargetColumnId(col.id);
+                              setIsNewTaskModalOpen(true);
+                            }}
+                            className="p-1 text-purple-600 hover:text-purple-800 hover:bg-purple-100/70 rounded-lg cursor-pointer transition-colors"
+                            title="Bu Sütuna Kart Ekle"
+                          >
+                            <Plus className="w-4 h-4 font-bold" />
+                          </button>
+                          <button
+                            onClick={() => {
                               setEditingColumn(col);
                               setEditColumnTitle(col.title);
                             }}
@@ -1167,6 +1187,23 @@ export const ProjectsSection: React.FC<Props> = ({
             </div>
 
             <form onSubmit={handleCreateTask} className="space-y-3.5">
+              <div>
+                <label className="block text-xs font-bold text-slate-700 mb-1">
+                  Sütun *
+                </label>
+                <select
+                  value={targetColumnId}
+                  onChange={(e) => setTargetColumnId(e.target.value)}
+                  className="w-full px-4 py-2.5 text-xs bg-slate-50 border border-slate-200 rounded-2xl focus:outline-hidden text-slate-900 font-bold cursor-pointer"
+                >
+                  {(activeProject?.columns || []).map((col) => (
+                    <option key={col.id} value={col.id}>
+                      {col.title}
+                    </option>
+                  ))}
+                </select>
+              </div>
+
               <div>
                 <label className="block text-xs font-bold text-slate-700 mb-1">
                   Görev Başlığı *

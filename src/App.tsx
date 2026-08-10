@@ -118,8 +118,6 @@ export default function App() {
     if (window.location.pathname !== path) {
       window.history.pushState({}, '', path);
     }
-    // Sol sidebar item'ına her basıldığında anlık Google Drive senkronizasyonu başlat
-    handleSyncToDrive();
   };
 
   const handleSelectTaskSlug = (task: ProjectTask | null) => {
@@ -218,6 +216,7 @@ export default function App() {
   const [isMapPickerOpen, setIsMapPickerOpen] = useState(false);
   const [mapPickerInitLocation, setMapPickerInitLocation] = useState<NoteLocation | null>(null);
   const [selectedLocationFromMap, setSelectedLocationFromMap] = useState<NoteLocation | null>(null);
+  const [noteSearchTerm, setNoteSearchTerm] = useState('');
 
   // Check Auth Status on Mount & Listen for Popup Callback
   useEffect(() => {
@@ -649,12 +648,17 @@ export default function App() {
       body: JSON.stringify(taskData),
     });
     if (res.ok) {
+      const data = await res.json();
+      if (data.task) {
+        setProjectTasks((prev) => [...prev.filter((t) => t.id !== data.task.id), data.task]);
+      }
       await fetchProjects();
       triggerAutoDriveSync(projectId);
     }
   };
 
   const handleUpdateProjectTask = async (task: ProjectTask) => {
+    setProjectTasks((prev) => prev.map((t) => (t.id === task.id ? task : t)));
     const res = await fetch(`/api/projects/tasks/${task.id}`, {
       method: 'PUT',
       headers: { 'Content-Type': 'application/json' },
@@ -668,6 +672,7 @@ export default function App() {
 
   const handleDeleteProjectTask = async (taskId: string) => {
     const task = projectTasks.find((t) => t.id === taskId);
+    setProjectTasks((prev) => prev.filter((t) => t.id !== taskId));
     const res = await fetch(`/api/projects/tasks/${taskId}`, {
       method: 'DELETE',
     });
@@ -945,6 +950,18 @@ export default function App() {
     fetchNotes();
   };
 
+  const handleDeleteLocation = async (id: string) => {
+    await fetch(`/api/locations/${id}`, { method: 'DELETE' });
+    setLocations((prev) => prev.filter((l) => l.id !== id));
+    fetchNotes();
+  };
+
+  const handleFilterNotesByLocation = (loc: NoteLocation) => {
+    setNoteSearchTerm(loc.name);
+    setSidebarTab('notes');
+    setIsMapPickerOpen(false);
+  };
+
   if (!authStatus.isAuthenticated) {
     return <LoginGate onLogin={handleLogin} language={language} />;
   }
@@ -1014,6 +1031,7 @@ export default function App() {
               locations={locations}
               timeLogs={timeLogs}
               noteTypes={noteTypes}
+              initialSearchTerm={noteSearchTerm}
               onAddNote={() => {
                 setEditingNote(null);
                 setSelectedLocationFromMap(null);
@@ -1312,6 +1330,7 @@ export default function App() {
         projectTasks={projectTasks}
         allExistingTags={allTags}
         noteTypes={noteTypes}
+        onDeleteLocation={handleDeleteLocation}
         onClose={() => {
           setIsNoteModalOpen(false);
           setEditingNote(null);
@@ -1324,12 +1343,15 @@ export default function App() {
         isOpen={isMapPickerOpen}
         selectedLocation={mapPickerInitLocation}
         existingLocations={locations}
+        notes={notes}
         onClose={() => setIsMapPickerOpen(false)}
         onSelectLocation={(loc) => {
           setSelectedLocationFromMap(loc);
           setIsMapPickerOpen(false);
         }}
         onRenameLocation={handleRenameLocation}
+        onDeleteLocation={handleDeleteLocation}
+        onFilterByLocation={handleFilterNotesByLocation}
       />
     </div>
   );

@@ -2,6 +2,7 @@ import 'dotenv/config';
 import express from 'express';
 import cookieParser from 'cookie-parser';
 import path from 'path';
+import fs from 'fs';
 import { Readable } from 'stream';
 import { google } from 'googleapis';
 import { createServer as createViteServer } from 'vite';
@@ -11,12 +12,14 @@ import {
   getAllLocationsFromDb,
   saveNoteToDb,
   saveLocationToDb,
+  deleteLocationFromDb,
   deleteNoteFromDb,
   getAllNoteTypesFromDb,
   saveNoteTypeToDb,
   deleteNoteTypeFromDb,
   syncWithGoogleDriveAdminSpace,
   restoreFromGoogleDriveAdminSpace,
+  getOrCreateAdminSpaceFolder,
   getAllProjectsFromDb,
   saveProjectToDb,
   deleteProjectFromDb,
@@ -35,21 +38,38 @@ const app = express();
 const PORT = 3000;
 
 let hasAutoRestoredFromDrive = false;
+let autoRestorePromise: Promise<any> | null = null;
 
 async function ensureRestoredFromDrive(req: express.Request) {
   if (hasAutoRestoredFromDrive) return;
+
   const authClient = getAuthenticatedClient(req);
-  if (authClient) {
+  if (!authClient) return;
+
+  if (autoRestorePromise) {
+    return autoRestorePromise;
+  }
+
+  hasAutoRestoredFromDrive = true;
+  autoRestorePromise = (async () => {
     try {
-      const res = await restoreFromGoogleDriveAdminSpace(authClient);
-      if (res) {
-        console.log('Auto-restore check from Google Drive completed:', res);
-        hasAutoRestoredFromDrive = true;
+      const SQLITE_FILE = path.join(process.cwd(), 'adminspace', 'adminspace.sqlite');
+      if (!fs.existsSync(SQLITE_FILE)) {
+        console.log('Local SQLite database does not exist. Restoring from Google Drive adminspace folder...');
+        const res = await restoreFromGoogleDriveAdminSpace(authClient);
+        console.log('Initial restore from Google Drive completed:', res);
+      } else {
+        console.log('Local SQLite database exists. Performing sync with Google Drive adminspace folder...');
+        await syncWithGoogleDriveAdminSpace(authClient);
       }
     } catch (err) {
-      console.error('Error during auto-restore from Drive:', err);
+      console.error('Error during Google Drive adminspace auto-restore/sync:', err);
+    } finally {
+      autoRestorePromise = null;
     }
-  }
+  })();
+
+  return autoRestorePromise;
 }
 
 app.set('trust proxy', true);
@@ -1085,27 +1105,9 @@ app.post('/api/drive/upload-image', async (req, res) => {
     try {
       const drive = google.drive({ version: 'v3', auth: authClient });
 
-      // 1. Find or create 'adminspace' folder in Google Drive
-      let folderId = 'root';
-      const folderSearch = await drive.files.list({
-        q: "name = 'adminspace' and mimeType = 'application/vnd.google-apps.folder' and trashed = false",
-        fields: 'files(id, name)',
-      });
-
-      if (folderSearch.data.files && folderSearch.data.files.length > 0) {
-        folderId = folderSearch.data.files[0].id!;
-      } else {
-        const newFolder = await drive.files.create({
-          requestBody: {
-            name: 'adminspace',
-            mimeType: 'application/vnd.google-apps.folder',
-          },
-          fields: 'id',
-        });
-        if (newFolder.data.id) {
-          folderId = newFolder.data.id;
-        }
-      }
+      // 1. Get or create single 'adminspace' folder in Google Drive
+      const folderInfo = await getOrCreateAdminSpaceFolder(drive);
+      const folderId = folderInfo?.folderId || 'root';
 
       // 2. Upload image file
       const requestBody: any = {
@@ -2144,6 +2146,19 @@ app.patch('/api/locations/:id', async (req, res) => {
   }
 
   res.json({ success: true, location: loc });
+});
+
+app.delete('/api/locations/:id', async (req, res) => {
+  await getAdminSpaceDb();
+  const { id } = req.params;
+  deleteLocationFromDb(id);
+
+  const authClient = getAuthenticatedClient(req);
+  if (authClient) {
+    syncWithGoogleDriveAdminSpace(authClient).catch(() => {});
+  }
+
+  res.json({ success: true });
 });
 
 app.post('/api/adminspace/sync', async (req, res) => {
