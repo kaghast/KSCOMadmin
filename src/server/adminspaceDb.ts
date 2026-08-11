@@ -705,6 +705,34 @@ export function saveNoteToDb(note: any) {
     ]
   );
 
+  // If noteType is timelog or durationMinutes is provided, sync to timelogs table as well
+  if (note.noteType === 'timelog' || (note.durationMinutes && Number(note.durationMinutes) > 0)) {
+    dbInstance.run(
+      `INSERT OR REPLACE INTO timelogs
+       (id, cardId, cardTitle, projectId, projectName, linkType, linkId, linkTitle, eventId, eventSummary, startTime, endTime, durationMinutes, description, tags, locationId, createdAt)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      [
+        note.id,
+        note.cardId || null,
+        note.cardTitle || note.title || '',
+        note.projectId || null,
+        note.projectName || null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        note.startTime || note.date || '',
+        note.endTime || '',
+        Number(note.durationMinutes) || 0,
+        note.content || '',
+        tagsJson,
+        locationId,
+        note.createdAt || new Date().toISOString(),
+      ]
+    );
+  }
+
   markLocalDataModified();
   saveDbToDisk();
 }
@@ -900,6 +928,8 @@ export function deleteProjectTaskFromDb(id: string) {
 export function deleteNoteFromDb(id: string) {
   if (!dbInstance) return;
   dbInstance.run('DELETE FROM notes WHERE id = ?', [id]);
+  dbInstance.run('DELETE FROM timelogs WHERE id = ?', [id]);
+  markLocalDataModified();
   saveDbToDisk();
 }
 
@@ -1829,7 +1859,7 @@ export function saveTimelogToDb(log: any) {
     [
       log.id,
       log.cardId || null,
-      log.cardTitle,
+      log.cardTitle || '',
       log.projectId || null,
       log.projectName || null,
       log.linkType || null,
@@ -1837,8 +1867,8 @@ export function saveTimelogToDb(log: any) {
       log.linkTitle || null,
       log.eventId || null,
       log.eventSummary || null,
-      log.startTime,
-      log.endTime,
+      log.startTime || '',
+      log.endTime || '',
       log.durationMinutes || 0,
       log.description || '',
       tagsJson,
@@ -1846,6 +1876,43 @@ export function saveTimelogToDb(log: any) {
       log.createdAt || new Date().toISOString(),
     ]
   );
+
+  // Sync to notes table as well so it appears in Notes Management as a note
+  const title = log.cardTitle || log.eventSummary || log.linkTitle || (log.description ? (log.description.length > 30 ? log.description.slice(0, 30) + '...' : log.description) : 'Zaman Kaydı');
+  const dateStr = log.startTime ? String(log.startTime).slice(0, 16) : (log.createdAt ? String(log.createdAt).slice(0, 16) : new Date().toISOString().slice(0, 16));
+
+  dbInstance.run(
+    `INSERT OR REPLACE INTO notes 
+     (id, title, content, noteType, startTime, endTime, durationMinutes, customFields, contactResourceName, contactDisplayName, contacts, linkedEmails, linkedEvents, linkedDriveFiles, linkedTasks, tags, locationId, date, createdAt, updatedAt, pinned, projectId, cardId, cardTitle)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    [
+      log.id,
+      title,
+      log.description || '',
+      'timelog',
+      log.startTime || '',
+      log.endTime || '',
+      Number(log.durationMinutes) || 0,
+      JSON.stringify({}),
+      '',
+      '',
+      JSON.stringify([]),
+      JSON.stringify([]),
+      JSON.stringify(log.eventId ? [{ id: log.eventId, summary: log.eventSummary || '' }] : []),
+      JSON.stringify([]),
+      JSON.stringify([]),
+      tagsJson,
+      locationId,
+      dateStr,
+      log.createdAt || new Date().toISOString(),
+      new Date().toISOString(),
+      0,
+      log.projectId || null,
+      log.cardId || null,
+      log.cardTitle || null,
+    ]
+  );
+
   markLocalDataModified();
   saveDbToDisk();
 }
@@ -1853,6 +1920,7 @@ export function saveTimelogToDb(log: any) {
 export function deleteTimelogFromDb(id: string) {
   if (!dbInstance) return;
   dbInstance.run('DELETE FROM timelogs WHERE id = ?', [id]);
+  dbInstance.run('DELETE FROM notes WHERE id = ? AND noteType = "timelog"', [id]);
   markLocalDataModified();
   saveDbToDisk();
 }

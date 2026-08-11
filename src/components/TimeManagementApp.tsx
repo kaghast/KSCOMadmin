@@ -67,6 +67,7 @@ interface TimeManagementAppProps {
   onOpenMapForLocation?: (location: NoteLocation) => void;
   onDeleteLocation?: (id: string) => Promise<void>;
   onRenameLocation?: (id: string, newName: string) => Promise<void>;
+  onRefreshNotes?: () => void;
 }
 
 type GoogleLinkType = 'tasks' | 'calendar' | 'gmail' | 'drive' | '';
@@ -87,6 +88,7 @@ export const TimeManagementApp: React.FC<TimeManagementAppProps> = ({
   onOpenMapForLocation,
   onDeleteLocation,
   onRenameLocation,
+  onRefreshNotes,
 }) => {
   const isTr = language === 'tr';
 
@@ -525,7 +527,7 @@ export const TimeManagementApp: React.FC<TimeManagementAppProps> = ({
     if (activeCardId) {
       const foundTask = projectTasks.find((t) => t.id === activeCardId);
       if (foundTask) {
-        cardTitle = foundTask.title;
+        if (!cardTitle) cardTitle = foundTask.title;
         projId = foundTask.projectId || '';
         const foundProj = projects.find((p) => p.id === projId);
         if (foundProj) projName = foundProj.name;
@@ -588,6 +590,7 @@ export const TimeManagementApp: React.FC<TimeManagementAppProps> = ({
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(newLog),
       });
+      if (onRefreshNotes) onRefreshNotes();
     } catch (err) {
       console.error('Error saving timelog:', err);
     }
@@ -629,7 +632,7 @@ export const TimeManagementApp: React.FC<TimeManagementAppProps> = ({
     const pad = (n: number) => n.toString().padStart(2, '0');
     const todayStr = `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())}`;
 
-    setFormCardId(projectTasks[0]?.id || '');
+    setFormCardId('');
     setFormCustomTitle('');
     setFormLinkType('calendar');
     setFormLinkId('');
@@ -646,7 +649,7 @@ export const TimeManagementApp: React.FC<TimeManagementAppProps> = ({
   const handleOpenEditModal = (log: TimeLog) => {
     setEditingLog(log);
     setFormCardId(log.cardId || '');
-    setFormCustomTitle(log.cardId ? '' : log.cardTitle);
+    setFormCustomTitle(log.cardTitle || '');
     setFormLinkType((log.linkType as GoogleLinkType) || (log.eventId ? 'calendar' : ''));
     setFormLinkId(log.linkId || log.eventId || '');
     setFormStartTime(log.startTime || '');
@@ -670,7 +673,7 @@ export const TimeManagementApp: React.FC<TimeManagementAppProps> = ({
     if (formCardId) {
       const foundTask = projectTasks.find((t) => t.id === formCardId);
       if (foundTask) {
-        cardTitle = foundTask.title;
+        if (!cardTitle) cardTitle = foundTask.title;
         projId = foundTask.projectId || '';
         const foundProj = projects.find((p) => p.id === projId);
         if (foundProj) projName = foundProj.name;
@@ -733,6 +736,7 @@ export const TimeManagementApp: React.FC<TimeManagementAppProps> = ({
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(logToSave),
       });
+      if (onRefreshNotes) onRefreshNotes();
     } catch (err) {
       console.error('Error saving timelog to backend:', err);
     }
@@ -746,6 +750,7 @@ export const TimeManagementApp: React.FC<TimeManagementAppProps> = ({
     setTimeLogs((prev) => prev.filter((l) => l.id !== id));
     try {
       await fetch(`/api/timelogs/${id}`, { method: 'DELETE' });
+      if (onRefreshNotes) onRefreshNotes();
     } catch (err) {
       console.error('Error deleting timelog:', err);
     }
@@ -1081,17 +1086,20 @@ export const TimeManagementApp: React.FC<TimeManagementAppProps> = ({
 
         {/* Live Timer Fields */}
         <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-          {/* 1. Kanban Card Selection */}
+          {/* 1. Kanban Card Selection & Not Başlığı */}
           <div>
             <label className="block text-xs font-semibold text-slate-700 mb-1 flex items-center gap-1.5">
               <FolderKanban className="w-3.5 h-3.5 text-indigo-600" />
-              {isTr ? 'İlişkili Kanban Kartı' : 'Related Kanban Card'}
+              {isTr ? 'İlişkili Kanban Kartı (Opsiyonel)' : 'Related Kanban Card (Optional)'}
             </label>
             <select
               value={activeCardId}
               onChange={(e) => {
                 setActiveCardId(e.target.value);
-                if (e.target.value) setActiveCustomTitle('');
+                if (e.target.value) {
+                  const found = projectTasks.find((t) => t.id === e.target.value);
+                  if (found) setActiveCustomTitle(found.title);
+                }
               }}
               disabled={isTimerRunning}
               className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl text-xs text-slate-800 focus:outline-none focus:ring-2 focus:ring-emerald-500 disabled:opacity-75"
@@ -1103,16 +1111,21 @@ export const TimeManagementApp: React.FC<TimeManagementAppProps> = ({
                 </option>
               ))}
             </select>
-            {!activeCardId && (
-              <input
-                type="text"
-                placeholder={isTr ? 'veya Özel Kart/Görev Başlığı...' : 'or Custom Task Title...'}
-                value={activeCustomTitle}
-                onChange={(e) => setActiveCustomTitle(e.target.value)}
-                disabled={isTimerRunning}
-                className="w-full mt-2 px-3 py-1.5 bg-white border border-slate-200 rounded-xl text-xs text-slate-800 placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-emerald-500"
-              />
-            )}
+          </div>
+
+          <div>
+            <label className="block text-xs font-semibold text-slate-700 mb-1 flex items-center gap-1.5">
+              <FileText className="w-3.5 h-3.5 text-emerald-600" />
+              {isTr ? 'Not / Kayıt Başlığı' : 'Note / Log Title'}
+            </label>
+            <input
+              type="text"
+              placeholder={isTr ? 'Zaman kaydı ve not başlığı girin...' : 'Enter note title...'}
+              value={activeCustomTitle}
+              onChange={(e) => setActiveCustomTitle(e.target.value)}
+              disabled={isTimerRunning}
+              className="w-full px-3 py-2 bg-white border border-slate-200 rounded-xl text-xs text-slate-800 placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-emerald-500 font-medium"
+            />
           </div>
 
           {/* 2. Linked Google Workspace Service Options (Tasks, Calendar, Gmail, Drive) */}
@@ -1645,35 +1658,48 @@ export const TimeManagementApp: React.FC<TimeManagementAppProps> = ({
             </div>
 
             <form onSubmit={handleSaveModal} className="space-y-4">
+              {/* Not / Kayıt Başlığı */}
+              <div>
+                <label className="block text-xs font-semibold text-slate-700 mb-1 flex items-center gap-1.5">
+                  <FileText className="w-3.5 h-3.5 text-emerald-600" />
+                  {isTr ? 'Not / Kayıt Başlığı' : 'Note / Log Title'}
+                </label>
+                <input
+                  type="text"
+                  required
+                  placeholder={isTr ? 'Zaman kaydı ve not başlığı girin...' : 'Enter note title...'}
+                  value={formCustomTitle}
+                  onChange={(e) => setFormCustomTitle(e.target.value)}
+                  className="w-full px-3.5 py-2.5 bg-white border border-slate-200 rounded-xl text-xs text-slate-800 focus:outline-none focus:ring-2 focus:ring-emerald-500 font-medium"
+                />
+              </div>
+
               {/* Kanban Card Selector */}
               <div>
-                <label className="block text-xs font-semibold text-slate-700 mb-1">
-                  {isTr ? 'İlişkili Kanban Kartı' : 'Related Kanban Card'}
+                <label className="block text-xs font-semibold text-slate-700 mb-1 flex items-center gap-1.5">
+                  <FolderKanban className="w-3.5 h-3.5 text-indigo-600" />
+                  {isTr ? 'İlişkili Kanban Kartı (Opsiyonel)' : 'Related Kanban Card (Optional)'}
                 </label>
                 <select
                   value={formCardId}
                   onChange={(e) => {
                     setFormCardId(e.target.value);
-                    if (e.target.value) setFormCustomTitle('');
+                    if (e.target.value) {
+                      const found = projectTasks.find((t) => t.id === e.target.value);
+                      if (found && !formCustomTitle.trim()) {
+                        setFormCustomTitle(found.title);
+                      }
+                    }
                   }}
                   className="w-full px-3.5 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-xs text-slate-800 focus:outline-none focus:ring-2 focus:ring-emerald-500"
                 >
-                  <option value="">{isTr ? '-- Kanban Kartı Seçin --' : '-- Select Kanban Card --'}</option>
+                  <option value="">{isTr ? '-- Kanban Kartı Yok --' : '-- No Kanban Card --'}</option>
                   {projectTasks.map((task) => (
                     <option key={task.id} value={task.id}>
                       {task.title}
                     </option>
                   ))}
                 </select>
-                {!formCardId && (
-                  <input
-                    type="text"
-                    placeholder={isTr ? 'veya Özel Kart / Görev Başlığı...' : 'or Custom Card Title...'}
-                    value={formCustomTitle}
-                    onChange={(e) => setFormCustomTitle(e.target.value)}
-                    className="w-full mt-2 px-3.5 py-2 bg-white border border-slate-200 rounded-xl text-xs text-slate-800 focus:outline-none focus:ring-2 focus:ring-emerald-500"
-                  />
-                )}
               </div>
 
               {/* Google Service Options for Link */}

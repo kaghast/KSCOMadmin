@@ -1072,6 +1072,7 @@ export default function App() {
       });
     }
     fetchNotes();
+    fetchTimelogs();
   };
 
   const handleSaveTimelog = async (logData: any) => {
@@ -1089,6 +1090,7 @@ export default function App() {
     setNeedsSync(true);
     await fetch(`/api/notes/${id}`, { method: 'DELETE' });
     fetchNotes();
+    fetchTimelogs();
   };
 
   const handleTogglePinNote = async (note: NoteItem) => {
@@ -1342,6 +1344,10 @@ export default function App() {
               }}
               onDeleteLocation={handleDeleteLocation}
               onRenameLocation={handleRenameLocation}
+              onRefreshNotes={() => {
+                fetchNotes();
+                fetchTimelogs();
+              }}
             />
           )}
 
