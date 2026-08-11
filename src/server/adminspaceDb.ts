@@ -137,6 +137,13 @@ export function ensureTablesExist(db: Database) {
   try { db.run("ALTER TABLE project_tasks ADD COLUMN linkedDriveFileIds TEXT"); } catch {}
   try { db.run("ALTER TABLE project_tasks ADD COLUMN linkedContactResourceNames TEXT"); } catch {}
   try { db.run("ALTER TABLE project_tasks ADD COLUMN linkedTaskIds TEXT"); } catch {}
+
+  db.run(`
+    CREATE TABLE IF NOT EXISTS settings (
+      key TEXT PRIMARY KEY,
+      value TEXT
+    );
+  `);
 }
 
 // Initialize SQLite with sql.js
@@ -151,8 +158,10 @@ export async function getAdminSpaceDb(): Promise<Database> {
       if (fileBuffer.length < 100) {
         throw new Error('SQLite file is too small or truncated');
       }
-      dbInstance = new SQL.Database(fileBuffer);
-      ensureTablesExist(dbInstance);
+      const testDb = new SQL.Database(fileBuffer);
+      ensureTablesExist(testDb);
+      testDb.exec("SELECT COUNT(*) FROM sqlite_master");
+      dbInstance = testDb;
     } catch (err) {
       console.warn('SQLite database file is corrupted or invalid. Initializing fresh database. Error:', err);
       try {
@@ -296,13 +305,15 @@ export function migrateTimelogsToNotes(db: Database) {
   }
 }
 
-// Persist SQLite DB to ./adminspace/adminspace.sqlite, data.json, adminspace_notes.md, and individual card markdown files
+// Persist SQLite DB to ./adminspace/adminspace.sqlite, data.json, adminspace_notes.md, notes/note_*.md, and cards/card_*.md
 export function saveDbToDisk() {
   if (!dbInstance) return;
   try {
     const data = dbInstance.export();
     const buffer = Buffer.from(data);
-    fs.writeFileSync(SQLITE_FILE, buffer);
+    const tmpSqliteFile = `${SQLITE_FILE}.tmp`;
+    fs.writeFileSync(tmpSqliteFile, buffer);
+    fs.renameSync(tmpSqliteFile, SQLITE_FILE);
 
     // Also maintain readable JSON dump in ./adminspace/data.json
     const locations = getAllLocationsFromDb();
@@ -310,12 +321,13 @@ export function saveDbToDisk() {
     const projects = getAllProjectsFromDb();
     const projectTasks = getAllProjectTasksFromDb();
     const timelogs = getAllTimelogsFromDb();
+    const settings = getAllSettingsFromDb();
     fs.writeFileSync(
       DATA_JSON_FILE,
-      JSON.stringify({ locations, notes, projects, projectTasks, timelogs, updatedAt: new Date().toISOString() }, null, 2)
+      JSON.stringify({ locations, notes, projects, projectTasks, timelogs, settings, updatedAt: new Date().toISOString() }, null, 2)
     );
 
-    // Save notes as Markdown file in ./adminspace/adminspace_notes.md
+    // Save main notes Markdown summary in ./adminspace/adminspace_notes.md
     let notesMd = `# AdminSpace Notlar\n\n- **Son Güncelleme:** ${new Date().toLocaleString('tr-TR')}\n\n---\n\n`;
     if (notes.length === 0) {
       notesMd += `*Henüz kayıtlı not bulunmuyor.*\n`;
@@ -325,12 +337,63 @@ export function saveDbToDisk() {
         notesMd += `- **Tarih:** ${n.date || n.createdAt}\n`;
         if (n.pinned) notesMd += `- **Sabitlenmiş:** Evet 📌\n`;
         if (n.contactDisplayName) notesMd += `- **İlişkili Kişi:** ${n.contactDisplayName}\n`;
-        if (n.tags && n.tags.length > 0) notesMd += `- **Etiketler:** ${n.tags.join(', ')}\n`;
+        if (n.tags && Array.isArray(n.tags) && n.tags.length > 0) notesMd += `- **Etiketler:** ${n.tags.join(', ')}\n`;
         notesMd += `\n${n.content || ''}\n\n---\n\n`;
       });
     }
     const NOTES_MD_FILE = path.join(ADMINSPACE_DIR, 'adminspace_notes.md');
     fs.writeFileSync(NOTES_MD_FILE, notesMd);
+
+    // Save individual Note Markdown files in ./adminspace/notes/
+    const NOTES_DIR = path.join(ADMINSPACE_DIR, 'notes');
+    if (!fs.existsSync(NOTES_DIR)) {
+      fs.mkdirSync(NOTES_DIR, { recursive: true });
+    }
+    const activeNoteFiles = new Set<string>();
+    notes.forEach((n: any) => {
+      const fileName = `note_${n.id}.md`;
+      activeNoteFiles.add(fileName);
+      const notePath = path.join(NOTES_DIR, fileName);
+
+      const noteSingleMd = `# 📝 Not: ${n.title || 'Başlıksız Not'}
+
+- **Not ID:** \`${n.id}\`
+- **Tarih:** \`${n.date || n.createdAt || '-'}\`
+- **Not Tipi:** \`${n.noteType || 'note'}\`
+- **Sabitlenmiş:** \`${n.pinned ? 'Evet 📌' : 'Hayır'}\`
+- **İlişkili Kişi:** \`${n.contactDisplayName || 'Yok'}\`
+- **İlişkili Proje:** \`${n.projectId || 'Yok'}\`
+- **Etiketler:** \`${n.tags && Array.isArray(n.tags) && n.tags.length > 0 ? n.tags.join(', ') : 'Yok'}\`
+- **Oluşturulma Tarihi:** \`${n.createdAt || '-'}\`
+- **Güncellenme Tarihi:** \`${n.updatedAt || '-'}\`
+
+---
+
+## 📝 Not İçeriği
+
+${n.content || '*İçerik boş.*'}
+
+---
+
+## 🔗 Bağlantılar & Entegrasyonlar
+
+- **Kişiler:** ${n.contacts && Array.isArray(n.contacts) && n.contacts.length > 0 ? n.contacts.join(', ') : 'Yok'}
+- **E-postalar:** ${n.linkedEmails && Array.isArray(n.linkedEmails) && n.linkedEmails.length > 0 ? n.linkedEmails.join(', ') : 'Yok'}
+- **Etkinlikler:** ${n.linkedEvents && Array.isArray(n.linkedEvents) && n.linkedEvents.length > 0 ? n.linkedEvents.join(', ') : 'Yok'}
+- **Drive Dosyaları:** ${n.linkedDriveFiles && Array.isArray(n.linkedDriveFiles) && n.linkedDriveFiles.length > 0 ? n.linkedDriveFiles.join(', ') : 'Yok'}
+- **Görevler:** ${n.linkedTasks && Array.isArray(n.linkedTasks) && n.linkedTasks.length > 0 ? n.linkedTasks.join(', ') : 'Yok'}
+`;
+
+      fs.writeFileSync(notePath, noteSingleMd);
+    });
+
+    // Cleanup deleted note files
+    const existingNoteFiles = fs.readdirSync(NOTES_DIR);
+    existingNoteFiles.forEach((file) => {
+      if (file.startsWith('note_') && file.endsWith('.md') && !activeNoteFiles.has(file)) {
+        try { fs.unlinkSync(path.join(NOTES_DIR, file)); } catch {}
+      }
+    });
 
     // Save each Kanban card (projectTask) as an individual Markdown file in ./adminspace/cards/
     const CARDS_DIR = path.join(ADMINSPACE_DIR, 'cards');
@@ -364,11 +427,11 @@ ${task.description || '*Açıklama girilmedi.*'}
 
 ## 🔗 Bağlantılar & Entegrasyonlar
 
-- **E-postalar:** ${task.linkedEmailIds && task.linkedEmailIds.length > 0 ? task.linkedEmailIds.join(', ') : 'Yok'}
-- **Etkinlikler:** ${task.linkedEventIds && task.linkedEventIds.length > 0 ? task.linkedEventIds.join(', ') : 'Yok'}
-- **Drive Dosyaları:** ${task.linkedDriveFileIds && task.linkedDriveFileIds.length > 0 ? task.linkedDriveFileIds.join(', ') : 'Yok'}
-- **Kişiler:** ${task.linkedContactResourceNames && task.linkedContactResourceNames.length > 0 ? task.linkedContactResourceNames.join(', ') : 'Yok'}
-- **Görevler:** ${task.linkedTaskIds && task.linkedTaskIds.length > 0 ? task.linkedTaskIds.join(', ') : 'Yok'}
+- **E-postalar:** ${task.linkedEmailIds && Array.isArray(task.linkedEmailIds) && task.linkedEmailIds.length > 0 ? task.linkedEmailIds.join(', ') : 'Yok'}
+- **Etkinlikler:** ${task.linkedEventIds && Array.isArray(task.linkedEventIds) && task.linkedEventIds.length > 0 ? task.linkedEventIds.join(', ') : 'Yok'}
+- **Drive Dosyaları:** ${task.linkedDriveFileIds && Array.isArray(task.linkedDriveFileIds) && task.linkedDriveFileIds.length > 0 ? task.linkedDriveFileIds.join(', ') : 'Yok'}
+- **Kişiler:** ${task.linkedContactResourceNames && Array.isArray(task.linkedContactResourceNames) && task.linkedContactResourceNames.length > 0 ? task.linkedContactResourceNames.join(', ') : 'Yok'}
+- **Görevler:** ${task.linkedTaskIds && Array.isArray(task.linkedTaskIds) && task.linkedTaskIds.length > 0 ? task.linkedTaskIds.join(', ') : 'Yok'}
 `;
 
       fs.writeFileSync(cardPath, cardMd);
@@ -923,6 +986,133 @@ export async function getOrCreateAdminSpaceFolder(drive: any): Promise<{ folderI
   return pendingFolderPromise;
 }
 
+// Helper to sync local subfolder Markdown files to Google Drive subfolder
+async function syncSubfolderMarkdownFiles(drive: any, parentFolderId: string, subfolderName: string, localDir: string) {
+  if (!fs.existsSync(localDir)) return;
+
+  const folderSearch = await drive.files.list({
+    q: `'${parentFolderId}' in parents and name = '${subfolderName}' and mimeType = 'application/vnd.google-apps.folder' and trashed = false`,
+    fields: 'files(id, name)',
+  });
+  const folders = folderSearch.data.files || [];
+  let subfolderId = folders[0]?.id;
+
+  if (folders.length > 1) {
+    for (let i = 1; i < folders.length; i++) {
+      if (folders[i].id) {
+        try { await drive.files.update({ fileId: folders[i].id, requestBody: { trashed: true } }); } catch {}
+      }
+    }
+  }
+
+  if (!subfolderId) {
+    const createRes = await drive.files.create({
+      requestBody: {
+        name: subfolderName,
+        parents: [parentFolderId],
+        mimeType: 'application/vnd.google-apps.folder',
+      },
+      fields: 'id',
+    });
+    subfolderId = createRes.data.id || undefined;
+  }
+
+  if (!subfolderId) return;
+
+  const existingRes = await drive.files.list({
+    q: `'${subfolderId}' in parents and trashed = false`,
+    fields: 'files(id, name)',
+  });
+
+  const filesByName = new Map<string, string[]>();
+  (existingRes.data.files || []).forEach((f: any) => {
+    if (f.name && f.id) {
+      if (!filesByName.has(f.name)) filesByName.set(f.name, []);
+      filesByName.get(f.name)!.push(f.id);
+    }
+  });
+
+  const driveFilesMap = new Map<string, string>();
+  for (const [fileName, fileIds] of filesByName.entries()) {
+    if (fileIds.length > 1) {
+      for (let i = 1; i < fileIds.length; i++) {
+        try { await drive.files.update({ fileId: fileIds[i], requestBody: { trashed: true } }); } catch {}
+      }
+    }
+    driveFilesMap.set(fileName, fileIds[0]);
+  }
+
+  const localFiles = fs.readdirSync(localDir);
+  const localFileSet = new Set(localFiles);
+
+  for (const fileName of localFiles) {
+    if (!fileName.endsWith('.md')) continue;
+    const filePath = path.join(localDir, fileName);
+    const existingDriveFileId = driveFilesMap.get(fileName);
+
+    if (existingDriveFileId) {
+      await drive.files.update({
+        fileId: existingDriveFileId,
+        media: {
+          mimeType: 'text/markdown',
+          body: fs.createReadStream(filePath),
+        },
+      });
+    } else {
+      await drive.files.create({
+        requestBody: {
+          name: fileName,
+          parents: [subfolderId],
+          mimeType: 'text/markdown',
+        },
+        media: {
+          mimeType: 'text/markdown',
+          body: fs.createReadStream(filePath),
+        },
+      });
+    }
+  }
+
+  for (const [driveFileName, driveFileId] of driveFilesMap.entries()) {
+    if (!localFileSet.has(driveFileName) && driveFileName.endsWith('.md')) {
+      try { await drive.files.update({ fileId: driveFileId, requestBody: { trashed: true } }); } catch {}
+    }
+  }
+}
+
+// Helper to restore subfolder Markdown files from Google Drive
+async function restoreSubfolderMarkdownFiles(drive: any, parentFolderId: string, subfolderName: string, localDir: string) {
+  if (!fs.existsSync(localDir)) {
+    fs.mkdirSync(localDir, { recursive: true });
+  }
+
+  const folderSearch = await drive.files.list({
+    q: `'${parentFolderId}' in parents and name = '${subfolderName}' and mimeType = 'application/vnd.google-apps.folder' and trashed = false`,
+    fields: 'files(id, name)',
+  });
+  const subfolderId = folderSearch.data.files?.[0]?.id;
+  if (!subfolderId) return;
+
+  const driveFilesRes = await drive.files.list({
+    q: `'${subfolderId}' in parents and trashed = false`,
+    fields: 'files(id, name)',
+  });
+
+  for (const f of driveFilesRes.data.files || []) {
+    if (f.id && f.name && f.name.endsWith('.md')) {
+      try {
+        const fileRes = await drive.files.get(
+          { fileId: f.id, alt: 'media' },
+          { responseType: 'text' }
+        );
+        fs.writeFileSync(path.join(localDir, f.name), String(fileRes.data));
+      } catch (err) {
+        console.error(`Error downloading ${subfolderName}/${f.name} from Drive:`, err);
+      }
+    }
+  }
+}
+
 let pendingSyncPromise: Promise<any> | null = null;
 
 // Ensure Google Drive folder 'adminspace' exists and sync SQLite/JSON/MD data into it
@@ -942,7 +1132,7 @@ export async function syncWithGoogleDriveAdminSpace(authClient: any) {
       if (!folderInfo?.folderId) return null;
       const { folderId, folderLink } = folderInfo;
 
-      // 3. Sync adminspace.sqlite binary file into Drive (cleaning duplicates)
+      // 2. Sync adminspace.sqlite binary file into Drive
       if (fs.existsSync(SQLITE_FILE)) {
         const sqliteSearch = await drive.files.list({
           q: `'${folderId}' in parents and name = 'adminspace.sqlite' and trashed = false`,
@@ -983,7 +1173,7 @@ export async function syncWithGoogleDriveAdminSpace(authClient: any) {
         }
       }
 
-      // 4. Sync data.json dump file into Drive (cleaning duplicates)
+      // 3. Sync data.json dump file into Drive
       if (fs.existsSync(DATA_JSON_FILE)) {
         const jsonSearch = await drive.files.list({
           q: `'${folderId}' in parents and name = 'data.json' and trashed = false`,
@@ -1024,7 +1214,7 @@ export async function syncWithGoogleDriveAdminSpace(authClient: any) {
         }
       }
 
-      // 5. Sync adminspace_notes.md Markdown file into Drive (cleaning duplicates)
+      // 4. Sync adminspace_notes.md Markdown file into Drive
       const NOTES_MD_FILE = path.join(ADMINSPACE_DIR, 'adminspace_notes.md');
       if (fs.existsSync(NOTES_MD_FILE)) {
         const mdSearch = await drive.files.list({
@@ -1066,93 +1256,11 @@ export async function syncWithGoogleDriveAdminSpace(authClient: any) {
         }
       }
 
+      // 5. Sync individual Note Markdown files in notes/ subfolder into Drive
+      await syncSubfolderMarkdownFiles(drive, folderId, 'notes', path.join(ADMINSPACE_DIR, 'notes'));
+
       // 6. Sync individual Kanban card Markdown files in cards/ subfolder into Drive
-      const CARDS_DIR = path.join(ADMINSPACE_DIR, 'cards');
-      if (fs.existsSync(CARDS_DIR)) {
-        const cardsFolderSearch = await drive.files.list({
-          q: `'${folderId}' in parents and name = 'cards' and mimeType = 'application/vnd.google-apps.folder' and trashed = false`,
-          fields: 'files(id, name)',
-        });
-        const cardFolders = cardsFolderSearch.data.files || [];
-        let cardsFolderId = cardFolders[0]?.id;
-
-        if (cardFolders.length > 1) {
-          console.warn(`[Drive Sync] Cleaning up ${cardFolders.length - 1} duplicate 'cards' folders in Google Drive...`);
-          for (let i = 1; i < cardFolders.length; i++) {
-            if (cardFolders[i].id) {
-              try {
-                await drive.files.update({ fileId: cardFolders[i].id, requestBody: { trashed: true } });
-              } catch {}
-            }
-          }
-        }
-
-        if (!cardsFolderId) {
-          const createCardsFolder = await drive.files.create({
-            requestBody: {
-              name: 'cards',
-              parents: [folderId],
-              mimeType: 'application/vnd.google-apps.folder',
-            },
-            fields: 'id',
-          });
-          cardsFolderId = createCardsFolder.data.id || undefined;
-        }
-
-        if (cardsFolderId) {
-          const existingCardsRes = await drive.files.list({
-            q: `'${cardsFolderId}' in parents and trashed = false`,
-            fields: 'files(id, name)',
-          });
-
-          const cardFilesByName = new Map<string, string[]>();
-          (existingCardsRes.data.files || []).forEach((f) => {
-            if (f.name && f.id) {
-              if (!cardFilesByName.has(f.name)) cardFilesByName.set(f.name, []);
-              cardFilesByName.get(f.name)!.push(f.id);
-            }
-          });
-
-          const driveCardFilesMap = new Map<string, string>();
-          for (const [fileName, fileIds] of cardFilesByName.entries()) {
-            if (fileIds.length > 1) {
-              for (let i = 1; i < fileIds.length; i++) {
-                try { await drive.files.update({ fileId: fileIds[i], requestBody: { trashed: true } }); } catch {}
-              }
-            }
-            driveCardFilesMap.set(fileName, fileIds[0]);
-          }
-
-          const localCardFiles = fs.readdirSync(CARDS_DIR);
-          for (const cardFileName of localCardFiles) {
-            if (!cardFileName.endsWith('.md')) continue;
-            const cardFilePath = path.join(CARDS_DIR, cardFileName);
-            const existingDriveFileId = driveCardFilesMap.get(cardFileName);
-
-            if (existingDriveFileId) {
-              await drive.files.update({
-                fileId: existingDriveFileId,
-                media: {
-                  mimeType: 'text/markdown',
-                  body: fs.createReadStream(cardFilePath),
-                },
-              });
-            } else {
-              await drive.files.create({
-                requestBody: {
-                  name: cardFileName,
-                  parents: [cardsFolderId],
-                  mimeType: 'text/markdown',
-                },
-                media: {
-                  mimeType: 'text/markdown',
-                  body: fs.createReadStream(cardFilePath),
-                },
-              });
-            }
-          }
-        }
-      }
+      await syncSubfolderMarkdownFiles(drive, folderId, 'cards', path.join(ADMINSPACE_DIR, 'cards'));
 
       lastDriveSyncTimestamp = Date.now();
       return {
@@ -1373,8 +1481,11 @@ export async function restoreFromGoogleDriveAdminSpace(authClient: any) {
         }
         const tempDb = new SQL.Database(buffer);
         ensureTablesExist(tempDb);
+        tempDb.exec("SELECT COUNT(*) FROM sqlite_master");
         dbInstance = tempDb;
-        fs.writeFileSync(SQLITE_FILE, buffer);
+        const tmpSqliteFile = `${SQLITE_FILE}.tmp`;
+        fs.writeFileSync(tmpSqliteFile, buffer);
+        fs.renameSync(tmpSqliteFile, SQLITE_FILE);
         saveDbToDisk();
         isRestored = true;
       } catch (err) {
@@ -1418,34 +1529,9 @@ export async function restoreFromGoogleDriveAdminSpace(authClient: any) {
       isRestored = true;
     }
 
-    // 3. Restore card markdown files from cards/ folder in Drive
-    const cardsFolderSearch = await drive.files.list({
-      q: `'${folderId}' in parents and name = 'cards' and mimeType = 'application/vnd.google-apps.folder' and trashed = false`,
-      fields: 'files(id, name)',
-    });
-    const cardsFolderId = cardsFolderSearch.data.files?.[0]?.id;
-    if (cardsFolderId) {
-      const driveCardsRes = await drive.files.list({
-        q: `'${cardsFolderId}' in parents and trashed = false`,
-        fields: 'files(id, name)',
-      });
-      const CARDS_DIR = path.join(ADMINSPACE_DIR, 'cards');
-      if (!fs.existsSync(CARDS_DIR)) {
-        fs.mkdirSync(CARDS_DIR, { recursive: true });
-      }
-
-      for (const f of driveCardsRes.data.files || []) {
-        if (f.id && f.name && f.name.endsWith('.md')) {
-          try {
-            const cardRes = await drive.files.get(
-              { fileId: f.id, alt: 'media' },
-              { responseType: 'text' }
-            );
-            fs.writeFileSync(path.join(CARDS_DIR, f.name), String(cardRes.data));
-          } catch {}
-        }
-      }
-    }
+    // 3. Restore notes and cards markdown subfolders from Drive
+    await restoreSubfolderMarkdownFiles(drive, folderId, 'notes', path.join(ADMINSPACE_DIR, 'notes'));
+    await restoreSubfolderMarkdownFiles(drive, folderId, 'cards', path.join(ADMINSPACE_DIR, 'cards'));
 
     lastDriveSyncTimestamp = Date.now();
     if (sqliteFile?.modifiedTime) {
@@ -1743,13 +1829,63 @@ export function saveTimelogToDb(log: any) {
       log.createdAt || new Date().toISOString(),
     ]
   );
+  markLocalDataModified();
   saveDbToDisk();
 }
 
 export function deleteTimelogFromDb(id: string) {
   if (!dbInstance) return;
   dbInstance.run('DELETE FROM timelogs WHERE id = ?', [id]);
+  markLocalDataModified();
   saveDbToDisk();
+}
+
+// ================= SETTINGS DB OPERATIONS =================
+
+export function getSettingFromDb(key: string): string | null {
+  if (!dbInstance) return null;
+  try {
+    const stmt = dbInstance.prepare('SELECT value FROM settings WHERE key = ?');
+    stmt.bind([key]);
+    if (stmt.step()) {
+      const row = stmt.getAsObject();
+      stmt.free();
+      return String(row.value || '');
+    }
+    stmt.free();
+    return null;
+  } catch {
+    return null;
+  }
+}
+
+export function saveSettingToDb(key: string, value: string) {
+  if (!dbInstance) return;
+  try {
+    dbInstance.run('INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)', [key, value]);
+    markLocalDataModified();
+    saveDbToDisk();
+  } catch (err) {
+    console.error('Error saving setting to DB:', err);
+  }
+}
+
+export function getAllSettingsFromDb(): Record<string, string> {
+  if (!dbInstance) return {};
+  try {
+    const stmt = dbInstance.prepare('SELECT * FROM settings');
+    const result: Record<string, string> = {};
+    while (stmt.step()) {
+      const row = stmt.getAsObject();
+      if (row.key) {
+        result[String(row.key)] = String(row.value || '');
+      }
+    }
+    stmt.free();
+    return result;
+  } catch {
+    return {};
+  }
 }
 
 

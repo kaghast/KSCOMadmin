@@ -182,12 +182,15 @@ export default function App() {
     return () => window.removeEventListener('popstate', handlePopState);
   }, []);
 
-  // Settings State: Theme & Language
+  // Settings State: Theme, Language & Timezone
   const [theme, setTheme] = useState<'light' | 'dark'>(() => {
     return (localStorage.getItem('adminspace_theme') as 'light' | 'dark') || 'light';
   });
   const [language, setLanguage] = useState<'tr' | 'en'>(() => {
     return (localStorage.getItem('adminspace_language') as 'tr' | 'en') || 'tr';
+  });
+  const [timezone, setTimezone] = useState<string>(() => {
+    return localStorage.getItem('adminspace_timezone') || 'Europe/Istanbul';
   });
 
   useEffect(() => {
@@ -202,6 +205,16 @@ export default function App() {
   useEffect(() => {
     localStorage.setItem('adminspace_language', language);
   }, [language]);
+
+  useEffect(() => {
+    localStorage.setItem('adminspace_timezone', timezone);
+    // Persist timezone setting to backend DB
+    fetch('/api/adminspace/settings', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ key: 'timezone', value: timezone }),
+    }).catch(() => {});
+  }, [timezone]);
 
   // Auth State
   const [authStatus, setAuthStatus] = useState<AuthStatus>({
@@ -1375,6 +1388,8 @@ export default function App() {
               onThemeChange={setTheme}
               language={language}
               onLanguageChange={setLanguage}
+              timezone={timezone}
+              onTimezoneChange={setTimezone}
               noteTypes={noteTypes}
               onSaveNoteType={handleSaveNoteType}
               onDeleteNoteType={handleDeleteNoteType}

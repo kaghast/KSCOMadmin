@@ -33,6 +33,8 @@ import {
   getAllTimelogsFromDb,
   saveTimelogToDb,
   deleteTimelogFromDb,
+  getAllSettingsFromDb,
+  saveSettingToDb,
 } from './src/server/adminspaceDb.js';
 
 type TaskPriority = 'high' | 'medium' | 'low';
@@ -2190,6 +2192,20 @@ app.post('/api/adminspace/restore', async (req, res) => {
   } else {
     res.status(500).json({ error: 'Failed to restore adminspace from Google Drive' });
   }
+});
+
+app.get('/api/adminspace/settings', async (req, res) => {
+  await getAdminSpaceDb();
+  const settings = getAllSettingsFromDb();
+  res.json({ settings });
+});
+
+app.post('/api/adminspace/settings', async (req, res) => {
+  await getAdminSpaceDb();
+  const { key, value } = req.body || {};
+  if (!key) return res.status(400).json({ error: 'Key is required' });
+  saveSettingToDb(key, String(value ?? ''));
+  res.json({ success: true, key, value });
 });
 
 // Global Express Error Handler

@@ -34,6 +34,8 @@ interface Props {
   onThemeChange: (theme: 'light' | 'dark') => void;
   language: 'tr' | 'en';
   onLanguageChange: (language: 'tr' | 'en') => void;
+  timezone?: string;
+  onTimezoneChange?: (tz: string) => void;
   noteTypes?: NoteType[];
   onSaveNoteType?: (typeData: NoteType) => Promise<void> | void;
   onDeleteNoteType?: (id: string) => Promise<void> | void;
@@ -54,6 +56,8 @@ export const SettingsSection: React.FC<Props> = ({
   onThemeChange,
   language,
   onLanguageChange,
+  timezone = 'Europe/Istanbul',
+  onTimezoneChange,
   noteTypes = [
     { id: 'note', name: 'Düz Not', isSystem: true },
     { id: 'timelog', name: 'Timelog', isSystem: true },
@@ -466,6 +470,104 @@ export const SettingsSection: React.FC<Props> = ({
                 <Check className="w-4 h-4 stroke-[3]" />
               </div>
             )}
+          </div>
+        </div>
+      </div>
+
+      {/* 2.5 ZAMAN DİLİMİ (TIMEZONE PARAMETER) SELECTION */}
+      <div className="bg-white dark:bg-slate-800 rounded-3xl p-6 border border-slate-200/80 dark:border-slate-700 shadow-2xs space-y-4">
+        <div className="flex items-center justify-between border-b border-slate-100 dark:border-slate-700/80 pb-4">
+          <div className="flex items-center gap-2.5">
+            <div className="p-2 bg-emerald-100 dark:bg-emerald-950/60 text-emerald-700 dark:text-emerald-400 rounded-xl">
+              <Clock className="w-5 h-5" />
+            </div>
+            <div>
+              <h3 className="font-extrabold text-slate-900 dark:text-white text-base">
+                {isTr ? 'Zaman Dilimi (Timezone) Parametresi' : 'Timezone Parameter'}
+              </h3>
+              <p className="text-xs text-slate-500 dark:text-slate-400">
+                {isTr
+                  ? 'https://app.kemalsahin.com/ adresindeki Zaman Damgası ile senkronizasyon için zaman dilimini tanımlayın'
+                  : 'Set timezone parameter to match timestamps with app.kemalsahin.com'}
+              </p>
+            </div>
+          </div>
+        </div>
+
+        <div className="space-y-4 pt-1">
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+            {[
+              { id: 'Europe/Istanbul', label: 'İstanbul (Türkiye / UTC+3)', flag: '🇹🇷' },
+              { id: 'UTC', label: 'UTC (Coordinated Universal Time)', flag: '🌐' },
+              { id: 'Europe/London', label: 'Londra (İngiltere / UTC+0)', flag: '🇬🇧' },
+              { id: 'Europe/Berlin', label: 'Berlin (Almanya / UTC+1)', flag: '🇩🇪' },
+              { id: 'America/New_York', label: 'New York (ABD / UTC-5)', flag: '🇺🇸' },
+              { id: 'Asia/Dubai', label: 'Dubai (BAE / UTC+4)', flag: '🇦🇪' },
+            ].map((item) => (
+              <div
+                key={item.id}
+                onClick={() => onTimezoneChange && onTimezoneChange(item.id)}
+                className={`p-4 rounded-2xl border-2 transition-all cursor-pointer flex items-center justify-between ${
+                  timezone === item.id
+                    ? 'border-indigo-600 bg-indigo-50/50 dark:bg-indigo-950/30 text-indigo-900 dark:text-indigo-200 shadow-xs'
+                    : 'border-slate-200 dark:border-slate-700 bg-slate-50/50 dark:bg-slate-800/50 hover:border-slate-300'
+                }`}
+              >
+                <div className="flex items-center gap-3">
+                  <span className="text-xl" role="img">{item.flag}</span>
+                  <div>
+                    <h4 className="font-extrabold text-slate-900 dark:text-white text-xs">{item.label}</h4>
+                    <p className="text-[11px] font-mono text-slate-500 dark:text-slate-400">{item.id}</p>
+                  </div>
+                </div>
+                {timezone === item.id && (
+                  <div className="w-5 h-5 bg-indigo-600 text-white rounded-full flex items-center justify-center shadow-xs">
+                    <Check className="w-3.5 h-3.5 stroke-[3]" />
+                  </div>
+                )}
+              </div>
+            ))}
+          </div>
+
+          <div className="p-4 bg-slate-50 dark:bg-slate-900/60 border border-slate-200/80 dark:border-slate-700/80 rounded-2xl space-y-2">
+            <label className="block text-xs font-bold text-slate-700 dark:text-slate-300">
+              {isTr ? 'Özel IANA Zaman Dilimi kodu girin:' : 'Enter custom IANA Timezone ID:'}
+            </label>
+            <div className="flex gap-2">
+              <input
+                type="text"
+                value={timezone}
+                onChange={(e) => onTimezoneChange && onTimezoneChange(e.target.value)}
+                placeholder="Örn: Europe/Istanbul veya UTC"
+                className="flex-1 px-3 py-2 bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl text-xs font-mono focus:outline-none focus:ring-2 focus:ring-indigo-500 text-slate-800 dark:text-slate-100"
+              />
+            </div>
+            <div className="text-[11px] text-emerald-700 dark:text-emerald-400 font-medium flex items-center gap-1.5 pt-1">
+              <Clock className="w-3.5 h-3.5 text-emerald-500 shrink-0" />
+              <span>
+                {isTr ? 'Mevcut Zaman Damgası: ' : 'Current Timestamp: '}
+                <strong>
+                  {(() => {
+                    try {
+                      return new Date().toLocaleString(isTr ? 'tr-TR' : 'en-US', {
+                        timeZone: timezone,
+                        year: 'numeric',
+                        month: 'long',
+                        day: 'numeric',
+                        hour: '2-digit',
+                        minute: '2-digit',
+                        second: '2-digit',
+                      });
+                    } catch {
+                      return 'Geçersiz Zaman Dilimi';
+                    }
+                  })()}
+                </strong>
+                <span className="font-mono text-[10px] ml-1 bg-emerald-100 dark:bg-emerald-950/80 px-1.5 py-0.5 rounded text-emerald-800 dark:text-emerald-300">
+                  ({timezone})
+                </span>
+              </span>
+            </div>
           </div>
         </div>
       </div>
