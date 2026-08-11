@@ -25,6 +25,7 @@ import {
   FolderKanban,
   Plus,
   Edit2,
+  Edit3,
   Trash2,
   Share2,
   CheckCircle2,
@@ -51,6 +52,7 @@ import {
   BarChart3,
   ChevronDown,
 } from 'lucide-react';
+import { LinkedItemSummary } from './SearchModal';
 import {
   Project,
   ProjectColumn,
@@ -86,6 +88,7 @@ interface Props {
   language?: 'tr' | 'en';
   initialTaskIdOrSlug?: string | null;
   onSelectTaskSlug?: (task: ProjectTask | null) => void;
+  onOpenSearchWithItem?: (item: LinkedItemSummary) => void;
 }
 
 export const ProjectsSection: React.FC<Props> = ({
@@ -111,10 +114,50 @@ export const ProjectsSection: React.FC<Props> = ({
   language = 'tr',
   initialTaskIdOrSlug,
   onSelectTaskSlug,
+  onOpenSearchWithItem,
 }) => {
   const [selectedProjectId, setSelectedProjectId] = useState<string>(
     projects[0]?.id || ''
   );
+
+  // Custom display titles for linked items (saved in localStorage)
+  const [customItemTitles, setCustomItemTitles] = useState<Record<string, string>>(() => {
+    try {
+      const saved = localStorage.getItem('custom_linked_titles');
+      return saved ? JSON.parse(saved) : {};
+    } catch {
+      return {};
+    }
+  });
+
+  const [editingItemInfo, setEditingItemInfo] = useState<{
+    key: string;
+    type: 'task' | 'email' | 'event' | 'drive' | 'contact';
+    typeLabel: string;
+    originalTitle: string;
+    currentTitle: string;
+    url?: string;
+  } | null>(null);
+
+  const [tempEditTitle, setTempEditTitle] = useState('');
+
+  const handleSaveCustomTitle = () => {
+    if (!editingItemInfo) return;
+    const newTitle = tempEditTitle.trim();
+    const updated = { ...customItemTitles };
+    if (newTitle && newTitle !== editingItemInfo.originalTitle) {
+      updated[editingItemInfo.key] = newTitle;
+    } else {
+      delete updated[editingItemInfo.key];
+    }
+    setCustomItemTitles(updated);
+    try {
+      localStorage.setItem('custom_linked_titles', JSON.stringify(updated));
+    } catch (e) {
+      console.error('Failed to save custom linked title:', e);
+    }
+    setEditingItemInfo(null);
+  };
 
   // Sync selectedProjectId when projects array loads or changes
   useEffect(() => {
@@ -1576,6 +1619,21 @@ export const ProjectsSection: React.FC<Props> = ({
           cardId: tl.cardId || detailTask.id,
           cardTitle: tl.cardTitle || detailTask.title,
           customFields: {},
+          linkedEvents: tl.eventId || tl.linkType === 'calendar' || tl.linkType === 'event'
+            ? [{ id: tl.eventId || tl.linkId || '', summary: tl.eventSummary || tl.linkTitle || '' }]
+            : [],
+          linkedEmails: tl.linkType === 'gmail' || tl.linkType === 'email'
+            ? [{ id: tl.linkId || '', subject: tl.linkTitle || '' }]
+            : [],
+          linkedDriveFiles: tl.linkType === 'drive'
+            ? [{ id: tl.linkId || '', name: tl.linkTitle || '' }]
+            : [],
+          contacts: tl.linkType === 'contact'
+            ? [{ resourceName: tl.linkId || '', displayName: tl.linkTitle || tl.linkId || '' }]
+            : [],
+          linkedTasks: tl.linkType === 'tasks' || tl.linkType === 'task'
+            ? [{ id: tl.linkId || '', title: tl.linkTitle || '' }]
+            : [],
         }));
 
         const existingNoteIds = new Set(cardNotes.map((n) => n.id));
@@ -1712,7 +1770,34 @@ export const ProjectsSection: React.FC<Props> = ({
         );
 
         const cardLinkedGoogleTasksList = cardTaskIds
-          .map((id) => allTasksMap.get(id))
+          .map((id) => {
+            const found = allTasksMap.get(id);
+            if (found) return found;
+
+            let title = '';
+            const logMatch = cardTimelogs.find(l => (l.linkId === id || l.entityId === id));
+            if (logMatch) {
+              title = logMatch.linkTitle || '';
+            }
+
+            if (!title) {
+              const noteMatch = cardNotes.find(n => n.linkedTasks?.some((t: any) => (typeof t === 'string' ? t === id : t.id === id)));
+              if (noteMatch) {
+                const foundT = noteMatch.linkedTasks?.find((t: any) => (typeof t === 'string' ? t === id : t.id === id));
+                if (foundT && typeof foundT !== 'string') {
+                  title = foundT.title || '';
+                }
+              }
+            }
+
+            if (!title) title = 'Google Görevi';
+
+            return {
+              id,
+              title,
+              status: 'needsAction',
+            };
+          })
           .filter(Boolean) as TaskItem[];
 
         const cardFilteredGoogleTasksList = cardLinkedGoogleTasksList.filter(
@@ -1727,7 +1812,42 @@ export const ProjectsSection: React.FC<Props> = ({
         );
 
         const cardLinkedEmailsList = cardEmailIds
-          .map((id) => allEmailsMap.get(id))
+          .map((id) => {
+            const found = allEmailsMap.get(id);
+            if (found) return found;
+
+            let subject = '';
+            let sender = '';
+            let date = '';
+
+            const logMatch = cardTimelogs.find(l => (l.linkId === id || l.entityId === id));
+            if (logMatch) {
+              subject = logMatch.linkTitle || '';
+              if (logMatch.startTime) date = logMatch.startTime;
+            }
+
+            if (!subject) {
+              const noteMatch = cardNotes.find(n => n.linkedEmails?.some((e: any) => (typeof e === 'string' ? e === id : e.id === id)));
+              if (noteMatch) {
+                const foundE = noteMatch.linkedEmails?.find((e: any) => (typeof e === 'string' ? e === id : e.id === id));
+                if (foundE && typeof foundE !== 'string') {
+                  subject = foundE.subject || '';
+                  if (foundE.sender) sender = foundE.sender;
+                }
+              }
+            }
+
+            if (!subject) subject = 'E-posta';
+            if (!date) date = new Date().toISOString();
+
+            return {
+              id,
+              subject,
+              sender: sender || '',
+              date,
+              snippet: '',
+            };
+          })
           .filter(Boolean) as EmailItem[];
 
         const cardEventIds = Array.from(
@@ -1738,7 +1858,44 @@ export const ProjectsSection: React.FC<Props> = ({
         );
 
         const cardLinkedEventsList = cardEventIds
-          .map((id) => allEventsMap.get(id))
+          .map((id) => {
+            const found = allEventsMap.get(id);
+            if (found) return found;
+
+            let summary = '';
+            let htmlLink = '';
+            let startStr = '';
+
+            const logMatch = cardTimelogs.find(l => (l.linkId === id || l.eventId === id || l.entityId === id));
+            if (logMatch) {
+              summary = logMatch.eventSummary || logMatch.linkTitle || '';
+              if (logMatch.startTime) startStr = logMatch.startTime;
+            }
+
+            if (!summary) {
+              const noteMatch = cardNotes.find(n => n.linkedEvents?.some((ev: any) => (typeof ev === 'string' ? ev === id : ev.id === id)));
+              if (noteMatch) {
+                const foundEv = noteMatch.linkedEvents?.find((ev: any) => (typeof ev === 'string' ? ev === id : ev.id === id));
+                if (foundEv && typeof foundEv !== 'string') {
+                  summary = foundEv.summary || '';
+                  if (foundEv.start) startStr = foundEv.start;
+                  if (foundEv.htmlLink) htmlLink = foundEv.htmlLink;
+                }
+              }
+            }
+
+            if (!summary) summary = 'Takvim Etkinliği';
+            if (!startStr) startStr = new Date().toISOString();
+            if (!htmlLink) htmlLink = id.startsWith('http') ? id : 'https://calendar.google.com';
+
+            return {
+              id,
+              summary,
+              start: startStr,
+              end: startStr,
+              htmlLink,
+            };
+          })
           .filter(Boolean) as CalendarEvent[];
 
         const cardDriveIds = Array.from(
@@ -1749,13 +1906,36 @@ export const ProjectsSection: React.FC<Props> = ({
         );
 
         const cardLinkedDriveFilesList = cardDriveIds
-          .map((id) => allDriveFilesMap.get(id) || {
-            id,
-            name: 'Google Drive Dosyası',
-            mimeType: 'application/vnd.google-apps.document',
-            webViewLink: id.startsWith('http') ? id : `https://drive.google.com/file/d/${id}/view`,
-            modifiedTime: new Date().toISOString(),
-            isFolder: false,
+          .map((id) => {
+            const found = allDriveFilesMap.get(id);
+            if (found) return found;
+
+            let name = '';
+            const logMatch = cardTimelogs.find(l => (l.linkId === id || l.entityId === id));
+            if (logMatch) {
+              name = logMatch.linkTitle || '';
+            }
+
+            if (!name) {
+              const noteMatch = cardNotes.find(n => n.linkedDriveFiles?.some((f: any) => (typeof f === 'string' ? f === id : f.id === id)));
+              if (noteMatch) {
+                const foundF = noteMatch.linkedDriveFiles?.find((f: any) => (typeof f === 'string' ? f === id : f.id === id));
+                if (foundF && typeof foundF !== 'string') {
+                  name = foundF.name || '';
+                }
+              }
+            }
+
+            if (!name) name = 'Google Drive Dosyası';
+
+            return {
+              id,
+              name,
+              mimeType: 'application/vnd.google-apps.document',
+              webViewLink: id.startsWith('http') ? id : `https://drive.google.com/file/d/${id}/view`,
+              modifiedTime: new Date().toISOString(),
+              isFolder: false,
+            };
           })
           .filter(Boolean) as DriveFile[];
 
@@ -1770,11 +1950,32 @@ export const ProjectsSection: React.FC<Props> = ({
           .map((resName) => {
             const found = allContactsMap.get(resName);
             if (found) return found;
+
+            let displayName = '';
+            const logMatch = cardTimelogs.find(l => (l.linkId === resName || l.entityId === resName));
+            if (logMatch) {
+              displayName = logMatch.linkTitle || '';
+            }
+
+            if (!displayName) {
+              const noteMatch = cardNotes.find(n => n.contacts?.some((c: any) => (typeof c === 'string' ? c === resName : c.resourceName === resName)));
+              if (noteMatch) {
+                const foundC = noteMatch.contacts?.find((c: any) => (typeof c === 'string' ? c === resName : c.resourceName === resName));
+                if (foundC && typeof foundC !== 'string') {
+                  displayName = foundC.displayName || '';
+                }
+              }
+            }
+
+            if (!displayName) {
+              displayName = resName.startsWith('people/')
+                ? `Kişi (${resName.replace('people/', '')})`
+                : resName;
+            }
+
             return {
               resourceName: resName,
-              displayName: resName.startsWith('people/')
-                ? `Kişi (${resName.replace('people/', '')})`
-                : resName,
+              displayName,
               email: '',
               phone: '',
             };
@@ -2363,6 +2564,8 @@ export const ProjectsSection: React.FC<Props> = ({
                       ) : (
                         cardFilteredGoogleTasksList.map((gTask) => {
                           const durationMins = getItemTimelogMinutes('task', gTask.id);
+                          const taskKey = `task_${gTask.id}`;
+                          const displayTitle = customItemTitles[taskKey] || gTask.title;
                           return (
                             <div
                               key={gTask.id}
@@ -2384,7 +2587,7 @@ export const ProjectsSection: React.FC<Props> = ({
                                     }`}
                                   />
                                   <span className={gTask.status === 'completed' ? 'line-through text-slate-400' : ''}>
-                                    {gTask.title}
+                                    {displayTitle}
                                   </span>
                                   <ExternalLink className="w-3 h-3 text-slate-400 opacity-0 group-hover:opacity-100 transition-opacity shrink-0 ml-1" />
                                 </a>
@@ -2399,6 +2602,49 @@ export const ProjectsSection: React.FC<Props> = ({
                                   <Clock className="w-3 h-3 text-purple-600" />
                                   {formatMinutesToText(durationMins)}
                                 </span>
+
+                                {/* Quick Edit Name Button */}
+                                <button
+                                  type="button"
+                                  onClick={() => {
+                                    setEditingItemInfo({
+                                      key: taskKey,
+                                      type: 'task',
+                                      typeLabel: 'Google Görevi',
+                                      originalTitle: gTask.title,
+                                      currentTitle: displayTitle,
+                                      url: 'https://tasks.google.com',
+                                    });
+                                    setTempEditTitle(displayTitle);
+                                  }}
+                                  className="p-1 text-slate-400 hover:text-amber-600 hover:bg-amber-100/60 rounded-md transition-colors cursor-pointer"
+                                  title="Öğe İsmini Düzenle"
+                                >
+                                  <Edit3 className="w-3.5 h-3.5 text-amber-600" />
+                                </button>
+
+                                {/* Filter in Advanced Search Shortcut */}
+                                <button
+                                  type="button"
+                                  onClick={() => {
+                                    if (onOpenSearchWithItem) {
+                                      onOpenSearchWithItem({
+                                        id: gTask.id,
+                                        type: 'task',
+                                        typeLabel: 'Kanban Kartı / Görev',
+                                        title: displayTitle,
+                                        url: 'https://tasks.google.com',
+                                        connectedNotes: [],
+                                        count: 0,
+                                      });
+                                    }
+                                  }}
+                                  className="p-1 text-slate-400 hover:text-purple-600 hover:bg-purple-100/60 rounded-md transition-colors cursor-pointer"
+                                  title="Gelişmiş Not & İçerik Aramada Filtrele"
+                                >
+                                  <Search className="w-3.5 h-3.5 text-purple-600" />
+                                </button>
+
                                 <button
                                   onClick={() => handleToggleEntityLink('task', gTask.id)}
                                   className="p-1 text-slate-400 hover:text-rose-600 hover:bg-rose-100/60 rounded-md transition-colors cursor-pointer"
@@ -2439,6 +2685,8 @@ export const ProjectsSection: React.FC<Props> = ({
                         cardLinkedEmailsList.map((email) => {
                           const durationMins = getItemTimelogMinutes('email', email.id);
                           const gmailUrl = `https://mail.google.com/mail/u/0/#search/${encodeURIComponent(email.subject)}`;
+                          const emailKey = `email_${email.id}`;
+                          const displayTitle = customItemTitles[emailKey] || email.subject;
                           return (
                             <div
                               key={email.id}
@@ -2452,7 +2700,7 @@ export const ProjectsSection: React.FC<Props> = ({
                                   className="font-bold text-slate-900 hover:text-rose-600 truncate flex items-center gap-1 group"
                                   title="Gmail'de Aç ↗"
                                 >
-                                  <span className="truncate">{email.subject}</span>
+                                  <span className="truncate">{displayTitle}</span>
                                   <ExternalLink className="w-3 h-3 text-slate-400 opacity-0 group-hover:opacity-100 transition-opacity shrink-0" />
                                 </a>
                                 <p className="text-[10px] text-slate-500 truncate">{email.sender}</p>
@@ -2462,6 +2710,49 @@ export const ProjectsSection: React.FC<Props> = ({
                                   <Clock className="w-3 h-3 text-rose-600" />
                                   {formatMinutesToText(durationMins)}
                                 </span>
+
+                                {/* Quick Edit Name Button */}
+                                <button
+                                  type="button"
+                                  onClick={() => {
+                                    setEditingItemInfo({
+                                      key: emailKey,
+                                      type: 'email',
+                                      typeLabel: 'E-posta',
+                                      originalTitle: email.subject,
+                                      currentTitle: displayTitle,
+                                      url: gmailUrl,
+                                    });
+                                    setTempEditTitle(displayTitle);
+                                  }}
+                                  className="p-1 text-slate-400 hover:text-amber-600 hover:bg-amber-100/60 rounded-md transition-colors cursor-pointer"
+                                  title="Öğe İsmini Düzenle"
+                                >
+                                  <Edit3 className="w-3.5 h-3.5 text-amber-600" />
+                                </button>
+
+                                {/* Filter in Advanced Search Shortcut */}
+                                <button
+                                  type="button"
+                                  onClick={() => {
+                                    if (onOpenSearchWithItem) {
+                                      onOpenSearchWithItem({
+                                        id: email.id,
+                                        type: 'email',
+                                        typeLabel: 'E-posta',
+                                        title: displayTitle,
+                                        url: gmailUrl,
+                                        connectedNotes: [],
+                                        count: 0,
+                                      });
+                                    }
+                                  }}
+                                  className="p-1 text-slate-400 hover:text-rose-600 hover:bg-rose-100/60 rounded-md transition-colors cursor-pointer"
+                                  title="Gelişmiş Not & İçerik Aramada Filtrele"
+                                >
+                                  <Search className="w-3.5 h-3.5 text-rose-600" />
+                                </button>
+
                                 <button
                                   onClick={() => handleToggleEntityLink('email', email.id)}
                                   className="p-1 text-slate-400 hover:text-rose-600 hover:bg-rose-100/60 rounded-md transition-colors cursor-pointer"
@@ -2502,6 +2793,8 @@ export const ProjectsSection: React.FC<Props> = ({
                         cardLinkedEventsList.map((evt) => {
                           const durationMins = getItemTimelogMinutes('event', evt.id);
                           const calUrl = evt.htmlLink || 'https://calendar.google.com';
+                          const eventKey = `event_${evt.id}`;
+                          const displayTitle = customItemTitles[eventKey] || evt.summary;
                           return (
                             <div
                               key={evt.id}
@@ -2515,7 +2808,7 @@ export const ProjectsSection: React.FC<Props> = ({
                                   className="font-bold text-slate-900 hover:text-blue-600 truncate flex items-center gap-1 group"
                                   title="Google Takvim'de Aç ↗"
                                 >
-                                  <span className="truncate">{evt.summary}</span>
+                                  <span className="truncate">{displayTitle}</span>
                                   <ExternalLink className="w-3 h-3 text-slate-400 opacity-0 group-hover:opacity-100 transition-opacity shrink-0" />
                                 </a>
                                 <p className="text-[10px] text-slate-500 truncate">{new Date(evt.start).toLocaleString('tr-TR')}</p>
@@ -2525,6 +2818,49 @@ export const ProjectsSection: React.FC<Props> = ({
                                   <Clock className="w-3 h-3 text-blue-600" />
                                   {formatMinutesToText(durationMins)}
                                 </span>
+
+                                {/* Quick Edit Name Button */}
+                                <button
+                                  type="button"
+                                  onClick={() => {
+                                    setEditingItemInfo({
+                                      key: eventKey,
+                                      type: 'event',
+                                      typeLabel: 'Takvim Etkinliği',
+                                      originalTitle: evt.summary,
+                                      currentTitle: displayTitle,
+                                      url: calUrl,
+                                    });
+                                    setTempEditTitle(displayTitle);
+                                  }}
+                                  className="p-1 text-slate-400 hover:text-amber-600 hover:bg-amber-100/60 rounded-md transition-colors cursor-pointer"
+                                  title="Öğe İsmini Düzenle"
+                                >
+                                  <Edit3 className="w-3.5 h-3.5 text-amber-600" />
+                                </button>
+
+                                {/* Filter in Advanced Search Shortcut */}
+                                <button
+                                  type="button"
+                                  onClick={() => {
+                                    if (onOpenSearchWithItem) {
+                                      onOpenSearchWithItem({
+                                        id: evt.id,
+                                        type: 'event',
+                                        typeLabel: 'Takvim Etkinliği',
+                                        title: displayTitle,
+                                        url: calUrl,
+                                        connectedNotes: [],
+                                        count: 0,
+                                      });
+                                    }
+                                  }}
+                                  className="p-1 text-slate-400 hover:text-blue-600 hover:bg-blue-100/60 rounded-md transition-colors cursor-pointer"
+                                  title="Gelişmiş Not & İçerik Aramada Filtrele"
+                                >
+                                  <Search className="w-3.5 h-3.5 text-blue-600" />
+                                </button>
+
                                 <button
                                   onClick={() => handleToggleEntityLink('event', evt.id)}
                                   className="p-1 text-slate-400 hover:text-rose-600 hover:bg-rose-100/60 rounded-md transition-colors cursor-pointer"
@@ -2565,6 +2901,8 @@ export const ProjectsSection: React.FC<Props> = ({
                         cardLinkedDriveFilesList.map((file) => {
                           const durationMins = getItemTimelogMinutes('drive', file.id);
                           const fileUrl = file.webViewLink && file.webViewLink !== '#' ? file.webViewLink : `https://drive.google.com/file/d/${file.id}/view`;
+                          const driveKey = `drive_${file.id}`;
+                          const displayTitle = customItemTitles[driveKey] || file.name;
                           return (
                             <div
                               key={file.id}
@@ -2578,7 +2916,7 @@ export const ProjectsSection: React.FC<Props> = ({
                                   className="font-bold text-slate-900 hover:text-emerald-600 truncate flex items-center gap-1 group"
                                   title="Google Drive'da Aç ↗"
                                 >
-                                  <span className="truncate">{file.name}</span>
+                                  <span className="truncate">{displayTitle}</span>
                                   <ExternalLink className="w-3 h-3 text-emerald-600 shrink-0 inline ml-0.5" />
                                 </a>
                               </div>
@@ -2587,6 +2925,49 @@ export const ProjectsSection: React.FC<Props> = ({
                                   <Clock className="w-3 h-3 text-emerald-600" />
                                   {formatMinutesToText(durationMins)}
                                 </span>
+
+                                {/* Quick Edit Name Button */}
+                                <button
+                                  type="button"
+                                  onClick={() => {
+                                    setEditingItemInfo({
+                                      key: driveKey,
+                                      type: 'drive',
+                                      typeLabel: 'Drive Dosyası',
+                                      originalTitle: file.name,
+                                      currentTitle: displayTitle,
+                                      url: fileUrl,
+                                    });
+                                    setTempEditTitle(displayTitle);
+                                  }}
+                                  className="p-1 text-slate-400 hover:text-amber-600 hover:bg-amber-100/60 rounded-md transition-colors cursor-pointer"
+                                  title="Öğe İsmini Düzenle"
+                                >
+                                  <Edit3 className="w-3.5 h-3.5 text-amber-600" />
+                                </button>
+
+                                {/* Filter in Advanced Search Shortcut */}
+                                <button
+                                  type="button"
+                                  onClick={() => {
+                                    if (onOpenSearchWithItem) {
+                                      onOpenSearchWithItem({
+                                        id: file.id,
+                                        type: 'drive',
+                                        typeLabel: 'Drive Dosyası',
+                                        title: displayTitle,
+                                        url: fileUrl,
+                                        connectedNotes: [],
+                                        count: 0,
+                                      });
+                                    }
+                                  }}
+                                  className="p-1 text-slate-400 hover:text-emerald-600 hover:bg-emerald-100/60 rounded-md transition-colors cursor-pointer"
+                                  title="Gelişmiş Not & İçerik Aramada Filtrele"
+                                >
+                                  <Search className="w-3.5 h-3.5 text-emerald-600" />
+                                </button>
+
                                 <button
                                   onClick={() => handleToggleEntityLink('drive', file.id)}
                                   className="p-1 text-slate-400 hover:text-rose-600 hover:bg-rose-100/60 rounded-md transition-colors cursor-pointer"
@@ -2627,6 +3008,8 @@ export const ProjectsSection: React.FC<Props> = ({
                         cardLinkedContactsList.map((c) => {
                           const durationMins = getItemTimelogMinutes('contact', c.resourceName);
                           const contactUrl = c.email ? `mailto:${c.email}` : `https://contacts.google.com/search/${encodeURIComponent(c.displayName)}`;
+                          const contactKey = `contact_${c.resourceName}`;
+                          const displayTitle = customItemTitles[contactKey] || c.displayName;
                           return (
                             <div
                               key={c.resourceName}
@@ -2640,7 +3023,7 @@ export const ProjectsSection: React.FC<Props> = ({
                                   className="font-bold text-indigo-950 hover:text-indigo-600 truncate flex items-center gap-1 group"
                                   title="Kişiler / E-posta Gönder ↗"
                                 >
-                                  <span className="truncate">{c.displayName}</span>
+                                  <span className="truncate">{displayTitle}</span>
                                   <ExternalLink className="w-3 h-3 text-indigo-500 shrink-0 inline ml-0.5" />
                                 </a>
                                 <span className="text-[10px] text-slate-500 block truncate">{c.email || c.phone}</span>
@@ -2650,6 +3033,49 @@ export const ProjectsSection: React.FC<Props> = ({
                                   <Clock className="w-3 h-3 text-indigo-600" />
                                   {formatMinutesToText(durationMins)}
                                 </span>
+
+                                {/* Quick Edit Name Button */}
+                                <button
+                                  type="button"
+                                  onClick={() => {
+                                    setEditingItemInfo({
+                                      key: contactKey,
+                                      type: 'contact',
+                                      typeLabel: 'Kişi / İletişim',
+                                      originalTitle: c.displayName,
+                                      currentTitle: displayTitle,
+                                      url: contactUrl,
+                                    });
+                                    setTempEditTitle(displayTitle);
+                                  }}
+                                  className="p-1 text-slate-400 hover:text-amber-600 hover:bg-amber-100/60 rounded-md transition-colors cursor-pointer"
+                                  title="Öğe İsmini Düzenle"
+                                >
+                                  <Edit3 className="w-3.5 h-3.5 text-amber-600" />
+                                </button>
+
+                                {/* Filter in Advanced Search Shortcut */}
+                                <button
+                                  type="button"
+                                  onClick={() => {
+                                    if (onOpenSearchWithItem) {
+                                      onOpenSearchWithItem({
+                                        id: c.resourceName,
+                                        type: 'contact',
+                                        typeLabel: 'Kişi / İletişim',
+                                        title: displayTitle,
+                                        url: contactUrl,
+                                        connectedNotes: [],
+                                        count: 0,
+                                      });
+                                    }
+                                  }}
+                                  className="p-1 text-slate-400 hover:text-indigo-600 hover:bg-indigo-100/60 rounded-md transition-colors cursor-pointer"
+                                  title="Gelişmiş Not & İçerik Aramada Filtrele"
+                                >
+                                  <Search className="w-3.5 h-3.5 text-indigo-600" />
+                                </button>
+
                                 <button
                                   onClick={() => handleToggleEntityLink('contact', c.resourceName)}
                                   className="p-1 text-slate-400 hover:text-rose-600 hover:bg-rose-100/60 rounded-md transition-colors cursor-pointer"
@@ -3440,6 +3866,109 @@ export const ProjectsSection: React.FC<Props> = ({
                 </button>
               </div>
             </form>
+          </div>
+        </div>
+      )}
+
+      {/* EDIT LINKED ITEM NAME MODAL */}
+      {editingItemInfo && (
+        <div className="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-xs flex items-center justify-center p-4">
+          <div className="bg-white rounded-2xl p-5 shadow-2xl border border-slate-200 max-w-md w-full space-y-4 animate-in zoom-in-95 duration-150">
+            <div className="flex items-center justify-between border-b border-slate-100 pb-2.5">
+              <div className="flex items-center gap-2 text-slate-900 font-extrabold text-sm">
+                <Edit3 className="w-4 h-4 text-amber-600" />
+                <span>Bağlanan Öğenin İsmini Düzenle</span>
+              </div>
+              <button
+                type="button"
+                onClick={() => setEditingItemInfo(null)}
+                className="p-1 text-slate-400 hover:text-slate-600 rounded-lg hover:bg-slate-100 transition-colors cursor-pointer"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            <div className="space-y-3 text-xs">
+              <div>
+                <label className="block text-slate-500 font-semibold mb-1">
+                  Öğe Türü
+                </label>
+                <span className="px-2.5 py-1 bg-slate-100 rounded-lg font-bold text-slate-700 inline-block">
+                  {editingItemInfo.typeLabel}
+                </span>
+              </div>
+
+              {editingItemInfo.originalTitle !== editingItemInfo.currentTitle && (
+                <div>
+                  <label className="block text-slate-400 font-semibold mb-0.5">
+                    Orijinal İsim
+                  </label>
+                  <p className="text-slate-500 font-medium italic bg-slate-50 p-2 rounded-lg border border-slate-100 truncate">
+                    {editingItemInfo.originalTitle}
+                  </p>
+                </div>
+              )}
+
+              <div>
+                <label className="block text-slate-700 font-bold mb-1">
+                  Özel Gösterim Adı
+                </label>
+                <input
+                  type="text"
+                  value={tempEditTitle}
+                  onChange={(e) => setTempEditTitle(e.target.value)}
+                  placeholder="Örn: Google Drive Özel Doküman Başlığı"
+                  className="w-full px-3 py-2 border border-slate-300 rounded-xl font-bold text-slate-900 focus:outline-hidden focus:border-amber-500 focus:ring-2 focus:ring-amber-200"
+                  autoFocus
+                />
+                <p className="text-[10px] text-slate-400 mt-1">
+                  Bu isim Google Drive / sistem isminden farklı olarak gösterilir. Orijinal dosya veya bağlantı etkilenmez.
+                </p>
+              </div>
+
+              {editingItemInfo.url && (
+                <div className="pt-1">
+                  <a
+                    href={editingItemInfo.url}
+                    target="_blank"
+                    rel="noreferrer"
+                    className="text-indigo-600 hover:text-indigo-800 text-[11px] font-bold inline-flex items-center gap-1 group"
+                  >
+                    <span>Google Drive / Sistem Bağlantısında Aç</span>
+                    <ExternalLink className="w-3 h-3 group-hover:translate-x-0.5 transition-transform" />
+                  </a>
+                </div>
+              )}
+            </div>
+
+            <div className="flex items-center justify-end gap-2 pt-2.5 border-t border-slate-100">
+              {editingItemInfo.currentTitle !== editingItemInfo.originalTitle && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    setTempEditTitle(editingItemInfo.originalTitle);
+                  }}
+                  className="px-3 py-1.5 text-xs font-bold text-rose-600 hover:bg-rose-50 rounded-xl transition-colors mr-auto cursor-pointer"
+                >
+                  Orijinal İse Sıfırla
+                </button>
+              )}
+              <button
+                type="button"
+                onClick={() => setEditingItemInfo(null)}
+                className="px-3.5 py-1.5 text-xs font-bold text-slate-600 hover:bg-slate-100 rounded-xl transition-colors cursor-pointer"
+              >
+                İptal
+              </button>
+              <button
+                type="button"
+                onClick={handleSaveCustomTitle}
+                className="px-4 py-1.5 text-xs font-bold text-white bg-amber-600 hover:bg-amber-700 rounded-xl shadow-xs transition-colors cursor-pointer flex items-center gap-1.5"
+              >
+                <Save className="w-3.5 h-3.5" />
+                <span>Kaydet</span>
+              </button>
+            </div>
           </div>
         </div>
       )}

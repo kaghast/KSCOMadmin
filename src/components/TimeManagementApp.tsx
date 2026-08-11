@@ -609,10 +609,13 @@ export const TimeManagementApp: React.FC<TimeManagementAppProps> = ({
       if (found) linkTitle = found.title;
     } else if (type === 'calendar') {
       const found = calendarEvents.find((e) => e.id === id);
+      eventId = id;
       if (found) {
         linkTitle = found.summary;
-        eventId = found.id;
         eventSummary = found.summary;
+      } else {
+        linkTitle = eventSummary || 'Takvim Etkinliği';
+        eventSummary = linkTitle;
       }
     } else if (type === 'gmail') {
       const found = emails.find((m) => m.id === id);
@@ -620,6 +623,9 @@ export const TimeManagementApp: React.FC<TimeManagementAppProps> = ({
     } else if (type === 'drive') {
       const found = driveFiles.find((f) => f.id === id);
       if (found) linkTitle = found.name;
+    } else if (type === 'contact') {
+      const found = contacts.find((c) => c.resourceName === id);
+      if (found) linkTitle = found.displayName;
     }
 
     return { linkTitle, eventId, eventSummary };

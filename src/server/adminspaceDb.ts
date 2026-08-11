@@ -707,6 +707,41 @@ export function saveNoteToDb(note: any) {
 
   // If noteType is timelog or durationMinutes is provided, sync to timelogs table as well
   if (note.noteType === 'timelog' || (note.durationMinutes && Number(note.durationMinutes) > 0)) {
+    let linkType: string | null = null;
+    let linkId: string | null = null;
+    let linkTitle: string | null = null;
+    let eventId: string | null = null;
+    let eventSummary: string | null = null;
+
+    if (note.linkedEvents && Array.isArray(note.linkedEvents) && note.linkedEvents.length > 0) {
+      const ev = note.linkedEvents[0];
+      linkType = 'calendar';
+      linkId = typeof ev === 'string' ? ev : ev.id;
+      eventId = linkId;
+      linkTitle = typeof ev === 'string' ? '' : ev.summary || '';
+      eventSummary = linkTitle;
+    } else if (note.linkedEmails && Array.isArray(note.linkedEmails) && note.linkedEmails.length > 0) {
+      const em = note.linkedEmails[0];
+      linkType = 'gmail';
+      linkId = typeof em === 'string' ? em : em.id;
+      linkTitle = typeof em === 'string' ? '' : em.subject || '';
+    } else if (note.linkedDriveFiles && Array.isArray(note.linkedDriveFiles) && note.linkedDriveFiles.length > 0) {
+      const df = note.linkedDriveFiles[0];
+      linkType = 'drive';
+      linkId = typeof df === 'string' ? df : df.id;
+      linkTitle = typeof df === 'string' ? '' : df.name || '';
+    } else if (note.contacts && Array.isArray(note.contacts) && note.contacts.length > 0) {
+      const ct = note.contacts[0];
+      linkType = 'contact';
+      linkId = typeof ct === 'string' ? ct : ct.resourceName;
+      linkTitle = typeof ct === 'string' ? '' : ct.displayName || '';
+    } else if (note.linkedTasks && Array.isArray(note.linkedTasks) && note.linkedTasks.length > 0) {
+      const tk = note.linkedTasks[0];
+      linkType = 'tasks';
+      linkId = typeof tk === 'string' ? tk : tk.id;
+      linkTitle = typeof tk === 'string' ? '' : tk.title || '';
+    }
+
     dbInstance.run(
       `INSERT OR REPLACE INTO timelogs
        (id, cardId, cardTitle, projectId, projectName, linkType, linkId, linkTitle, eventId, eventSummary, startTime, endTime, durationMinutes, description, tags, locationId, createdAt)
@@ -717,11 +752,11 @@ export function saveNoteToDb(note: any) {
         note.cardTitle || note.title || '',
         note.projectId || null,
         note.projectName || null,
-        null,
-        null,
-        null,
-        null,
-        null,
+        linkType,
+        linkId,
+        linkTitle,
+        eventId,
+        eventSummary,
         note.startTime || note.date || '',
         note.endTime || '',
         Number(note.durationMinutes) || 0,
@@ -1881,6 +1916,12 @@ export function saveTimelogToDb(log: any) {
   const title = log.cardTitle || log.eventSummary || log.linkTitle || (log.description ? (log.description.length > 30 ? log.description.slice(0, 30) + '...' : log.description) : 'Zaman Kaydı');
   const dateStr = log.startTime ? String(log.startTime).slice(0, 16) : (log.createdAt ? String(log.createdAt).slice(0, 16) : new Date().toISOString().slice(0, 16));
 
+  const syncedContacts = log.linkType === 'contact' && log.linkId ? [{ resourceName: log.linkId, displayName: log.linkTitle || log.linkId }] : [];
+  const syncedEmails = (log.linkType === 'gmail' || log.linkType === 'email') && log.linkId ? [{ id: log.linkId, subject: log.linkTitle || '' }] : [];
+  const syncedEvents = (log.eventId || log.linkType === 'calendar' || log.linkType === 'event') ? [{ id: log.eventId || log.linkId || '', summary: log.eventSummary || log.linkTitle || '' }] : [];
+  const syncedDriveFiles = log.linkType === 'drive' && log.linkId ? [{ id: log.linkId, name: log.linkTitle || '' }] : [];
+  const syncedTasks = (log.linkType === 'tasks' || log.linkType === 'task') && log.linkId ? [{ id: log.linkId, title: log.linkTitle || '' }] : [];
+
   dbInstance.run(
     `INSERT OR REPLACE INTO notes 
      (id, title, content, noteType, startTime, endTime, durationMinutes, customFields, contactResourceName, contactDisplayName, contacts, linkedEmails, linkedEvents, linkedDriveFiles, linkedTasks, tags, locationId, date, createdAt, updatedAt, pinned, projectId, cardId, cardTitle)
@@ -1894,13 +1935,13 @@ export function saveTimelogToDb(log: any) {
       log.endTime || '',
       Number(log.durationMinutes) || 0,
       JSON.stringify({}),
-      '',
-      '',
-      JSON.stringify([]),
-      JSON.stringify([]),
-      JSON.stringify(log.eventId ? [{ id: log.eventId, summary: log.eventSummary || '' }] : []),
-      JSON.stringify([]),
-      JSON.stringify([]),
+      log.linkType === 'contact' ? log.linkId || '' : '',
+      log.linkType === 'contact' ? log.linkTitle || '' : '',
+      JSON.stringify(syncedContacts),
+      JSON.stringify(syncedEmails),
+      JSON.stringify(syncedEvents),
+      JSON.stringify(syncedDriveFiles),
+      JSON.stringify(syncedTasks),
       tagsJson,
       locationId,
       dateStr,

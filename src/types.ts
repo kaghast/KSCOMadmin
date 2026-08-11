@@ -122,6 +122,7 @@ export interface NoteLocation {
 export interface LinkedContact {
   resourceName: string;
   displayName: string;
+  email?: string;
 }
 
 export interface LinkedEmail {
@@ -135,6 +136,7 @@ export interface LinkedEvent {
   id: string;
   summary: string;
   start?: string;
+  htmlLink?: string;
 }
 
 export interface LinkedDriveFile {

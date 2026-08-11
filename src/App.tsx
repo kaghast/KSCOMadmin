@@ -32,7 +32,7 @@ import { EditContactModal } from './components/EditContactModal';
 import { AddContactModal } from './components/AddContactModal';
 import { NoteModal } from './components/NoteModal';
 import { MapPickerModal } from './components/MapPickerModal';
-import { SearchModal } from './components/SearchModal';
+import { SearchModal, LinkedItemSummary } from './components/SearchModal';
 import { TimeManagementApp } from './components/TimeManagementApp';
 import { SettingsSection } from './components/SettingsSection';
 import { LoginGate } from './components/LoginGate';
@@ -89,6 +89,12 @@ export default function App() {
   const [isSidebarCollapsed, setIsSidebarCollapsed] = useState(false);
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
   const [isSearchModalOpen, setIsSearchModalOpen] = useState(false);
+  const [searchInitialLinkedItem, setSearchInitialLinkedItem] = useState<LinkedItemSummary | null>(null);
+
+  const handleOpenSearchWithItem = (item: LinkedItemSummary) => {
+    setSearchInitialLinkedItem(item);
+    setIsSearchModalOpen(true);
+  };
 
   // Global AdminSpace Google Drive Database & Notes Sync Handlers
   const [isSyncingDrive, setIsSyncingDrive] = useState(false);
@@ -1461,6 +1467,7 @@ export default function App() {
               language={language}
               initialTaskIdOrSlug={initialTaskIdOrSlug}
               onSelectTaskSlug={handleSelectTaskSlug}
+              onOpenSearchWithItem={handleOpenSearchWithItem}
             />
           )}
 
@@ -1566,9 +1573,15 @@ export default function App() {
       {/* Advanced Search & Filtering Modal */}
       <SearchModal
         isOpen={isSearchModalOpen}
-        onClose={() => setIsSearchModalOpen(false)}
+        onClose={() => {
+          setIsSearchModalOpen(false);
+          setSearchInitialLinkedItem(null);
+        }}
+        initialLinkedItem={searchInitialLinkedItem}
         notes={notes}
+        timeLogs={timeLogs}
         noteTypes={noteTypes}
+        projectTasks={projectTasks}
         onSelectNote={(note) => {
           setIsSearchModalOpen(false);
           setEditingNote(note);
@@ -1579,6 +1592,8 @@ export default function App() {
           const target = notes.find((n) => n.id === id);
           if (target) handleTogglePinNote(target);
         }}
+        onSaveNote={handleSaveNote}
+        onRefreshNotes={fetchNotes}
       />
     </div>
   );
