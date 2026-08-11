@@ -29,6 +29,7 @@ import {
   Layers,
   Filter,
   BarChart3,
+  ChevronDown,
 } from 'lucide-react';
 import {
   Project,
@@ -173,6 +174,11 @@ export const ProjectsSection: React.FC<Props> = ({
   const [noteTypeFilter, setNoteTypeFilter] = useState<string>('all');
   const [noteTagFilter, setNoteTagFilter] = useState<string>('all');
   const [noteSortOrder, setNoteSortOrder] = useState<'newest' | 'oldest' | 'title'>('newest');
+  const [cardNotesVisibleCount, setCardNotesVisibleCount] = useState<number>(10);
+
+  useEffect(() => {
+    setCardNotesVisibleCount(10);
+  }, [noteTypeFilter, noteTagFilter, noteSortOrder, detailTask?.id]);
 
   // Live Timer for Deadline Countdown
   const [currentTime, setCurrentTime] = useState(new Date());
@@ -1599,6 +1605,8 @@ export const ProjectsSection: React.FC<Props> = ({
           return 0;
         });
 
+        const displayedCardNotes = filteredNotes.slice(0, cardNotesVisibleCount);
+
         // Timelog notes and combined stats
         const timelogNotes = cardNotes.filter((n) => n.noteType === 'timelog' || (n.durationMinutes && n.durationMinutes > 0));
         
@@ -2134,87 +2142,105 @@ export const ProjectsSection: React.FC<Props> = ({
                             : 'Bu karta ait henüz eklenmiş not yok. "Yeni Not Ekle" butonu ile ekleyebilirsiniz.'}
                         </div>
                       ) : (
-                        filteredNotes.map((note) => {
-                          const isTimelog = note.noteType === 'timelog' || (note.durationMinutes && note.durationMinutes > 0);
-                          const ntObj = noteTypes.find(t => t.id === note.noteType);
+                        <>
+                          {displayedCardNotes.map((note) => {
+                            const isTimelog = note.noteType === 'timelog' || (note.durationMinutes && note.durationMinutes > 0);
+                            const ntObj = noteTypes.find(t => t.id === note.noteType);
 
-                          return (
-                            <div
-                              key={note.id}
-                              className={`p-4 rounded-2xl border transition-all space-y-2.5 ${
-                                isTimelog
-                                  ? 'bg-purple-50/40 hover:bg-purple-50/80 border-purple-200/80'
-                                  : 'bg-amber-50/40 hover:bg-amber-50/80 border-amber-200/80'
-                              }`}
-                            >
-                              <div className="flex items-start justify-between gap-2">
-                                <div className="flex items-center gap-2 flex-wrap">
-                                  <span
-                                    className={`px-2 py-0.5 text-[10px] font-extrabold rounded-md flex items-center gap-1 ${
-                                      isTimelog
-                                        ? 'bg-purple-100 text-purple-900 border border-purple-200'
-                                        : 'bg-amber-100 text-amber-900 border border-amber-200'
-                                    }`}
-                                  >
-                                    {isTimelog ? <Clock className="w-3 h-3 text-purple-600" /> : <FileText className="w-3 h-3 text-amber-600" />}
-                                    <span>{ntObj ? ntObj.name : note.noteType === 'timelog' ? 'Timelog' : 'Düz Not'}</span>
-                                  </span>
-
-                                  {note.durationMinutes && note.durationMinutes > 0 && (
-                                    <span className="px-2 py-0.5 bg-purple-600 text-white text-[10px] font-extrabold rounded-md shadow-2xs flex items-center gap-1">
-                                      <Clock className="w-3 h-3" />
-                                      {formatMinutesToText(note.durationMinutes)}
-                                    </span>
-                                  )}
-
-                                  <h4 className="font-extrabold text-slate-900 text-xs leading-snug">
-                                    {note.title || 'Başlıksız Not'}
-                                  </h4>
-                                </div>
-
-                                <button
-                                  onClick={() => onOpenNoteModal(note)}
-                                  className="px-2.5 py-1 bg-white hover:bg-slate-100 text-slate-800 text-[10px] font-extrabold rounded-lg border border-slate-200 transition-colors cursor-pointer shrink-0 shadow-2xs"
-                                >
-                                  Görüntüle & Düzenle
-                                </button>
-                              </div>
-
-                              {/* Render Custom Fields if present */}
-                              {note.customFields && Object.keys(note.customFields).length > 0 && (
-                                <div className="flex flex-wrap gap-1.5 p-2 bg-white/90 rounded-xl border border-slate-200/70 text-[11px]">
-                                  {Object.entries(note.customFields).map(([k, v]) => {
-                                    const fDef = ntObj?.fields?.find(f => f.id === k);
-                                    const label = fDef ? fDef.name : k;
-                                    return (
-                                      <span key={k} className="px-2 py-0.5 bg-indigo-50 text-indigo-900 border border-indigo-200 rounded-md font-bold">
-                                        {label}: <span className="font-extrabold">{String(v)}</span>
-                                      </span>
-                                    );
-                                  })}
-                                </div>
-                              )}
-
-                              <div className="text-xs text-slate-700 bg-white/80 p-3 rounded-xl border border-slate-200/60">
-                                <MarkdownPreview content={note.content} imgMaxHeight="max-h-60" />
-                              </div>
-
-                              <div className="flex items-center justify-between pt-1 border-t border-slate-200/40 text-[10px] text-slate-400">
-                                <div className="flex items-center gap-1.5 flex-wrap">
-                                  {note.tags?.map((t) => (
+                            return (
+                              <div
+                                key={note.id}
+                                className={`p-4 rounded-2xl border transition-all space-y-2.5 ${
+                                  isTimelog
+                                    ? 'bg-purple-50/40 hover:bg-purple-50/80 border-purple-200/80'
+                                    : 'bg-amber-50/40 hover:bg-amber-50/80 border-amber-200/80'
+                                }`}
+                              >
+                                <div className="flex items-start justify-between gap-2">
+                                  <div className="flex items-center gap-2 flex-wrap">
                                     <span
-                                      key={t}
-                                      className="px-2 py-0.5 bg-slate-200/70 text-slate-800 font-bold rounded-md"
+                                      className={`px-2 py-0.5 text-[10px] font-extrabold rounded-md flex items-center gap-1 ${
+                                        isTimelog
+                                          ? 'bg-purple-100 text-purple-900 border border-purple-200'
+                                          : 'bg-amber-100 text-amber-900 border border-amber-200'
+                                      }`}
                                     >
-                                      #{t}
+                                      {isTimelog ? <Clock className="w-3 h-3 text-purple-600" /> : <FileText className="w-3 h-3 text-amber-600" />}
+                                      <span>{ntObj ? ntObj.name : note.noteType === 'timelog' ? 'Timelog' : 'Düz Not'}</span>
                                     </span>
-                                  ))}
+
+                                    {note.durationMinutes && note.durationMinutes > 0 && (
+                                      <span className="px-2 py-0.5 bg-purple-600 text-white text-[10px] font-extrabold rounded-md shadow-2xs flex items-center gap-1">
+                                        <Clock className="w-3 h-3" />
+                                        {formatMinutesToText(note.durationMinutes)}
+                                      </span>
+                                    )}
+
+                                    <h4 className="font-extrabold text-slate-900 text-xs leading-snug">
+                                      {note.title || 'Başlıksız Not'}
+                                    </h4>
+                                  </div>
+
+                                  <button
+                                    onClick={() => onOpenNoteModal(note)}
+                                    className="px-2.5 py-1 bg-white hover:bg-slate-100 text-slate-800 text-[10px] font-extrabold rounded-lg border border-slate-200 transition-colors cursor-pointer shrink-0 shadow-2xs"
+                                  >
+                                    Görüntüle & Düzenle
+                                  </button>
                                 </div>
-                                <span>{note.date || (note.startTime ? note.startTime.split('T')[0] : '')}</span>
+
+                                {/* Render Custom Fields if present */}
+                                {note.customFields && Object.keys(note.customFields).length > 0 && (
+                                  <div className="flex flex-wrap gap-1.5 p-2 bg-white/90 rounded-xl border border-slate-200/70 text-[11px]">
+                                    {Object.entries(note.customFields).map(([k, v]) => {
+                                      const fDef = ntObj?.fields?.find(f => f.id === k);
+                                      const label = fDef ? fDef.name : k;
+                                      return (
+                                        <span key={k} className="px-2 py-0.5 bg-indigo-50 text-indigo-900 border border-indigo-200 rounded-md font-bold">
+                                          {label}: <span className="font-extrabold">{String(v)}</span>
+                                        </span>
+                                      );
+                                    })}
+                                  </div>
+                                )}
+
+                                <div className="text-xs text-slate-700 bg-white/80 p-3 rounded-xl border border-slate-200/60">
+                                  <MarkdownPreview content={note.content} imgMaxHeight="max-h-60" />
+                                </div>
+
+                                <div className="flex items-center justify-between pt-1 border-t border-slate-200/40 text-[10px] text-slate-400">
+                                  <div className="flex items-center gap-1.5 flex-wrap">
+                                    {note.tags?.map((t) => (
+                                      <span
+                                        key={t}
+                                        className="px-2 py-0.5 bg-slate-200/70 text-slate-800 font-bold rounded-md"
+                                      >
+                                        #{t}
+                                      </span>
+                                    ))}
+                                  </div>
+                                  <span>{note.date || (note.startTime ? note.startTime.split('T')[0] : '')}</span>
+                                </div>
                               </div>
+                            );
+                          })}
+
+                          {cardNotesVisibleCount < filteredNotes.length && (
+                            <div className="pt-3 flex flex-col items-center justify-center gap-2">
+                              <button
+                                type="button"
+                                onClick={() => setCardNotesVisibleCount((prev) => prev + 10)}
+                                className="px-6 py-2.5 bg-indigo-600 hover:bg-indigo-700 active:scale-95 text-white text-xs font-bold rounded-xl shadow-md transition-all cursor-pointer flex items-center gap-2"
+                              >
+                                <ChevronDown className="w-4 h-4" />
+                                <span>Devamını Yükle (+10)</span>
+                              </button>
+                              <span className="text-[11px] font-medium text-slate-500">
+                                Gösterilen: {displayedCardNotes.length} / {filteredNotes.length} Not
+                              </span>
                             </div>
-                          );
-                        })
+                          )}
+                        </>
                       )}
                     </div>
                   </div>

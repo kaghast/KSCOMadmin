@@ -1,4 +1,4 @@
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useEffect } from 'react';
 import {
   Search,
   X,
@@ -20,6 +20,9 @@ import {
   Layers,
   CheckCircle2,
   Sparkles,
+  ChevronLeft,
+  ChevronRight,
+  ChevronDown,
 } from 'lucide-react';
 import { NoteItem, NoteType } from '../types';
 
@@ -61,7 +64,16 @@ export const SearchModal: React.FC<SearchModalProps> = ({
   const [selectedLocation, setSelectedLocation] = useState<string | null>(null);
   const [selectedDate, setSelectedDate] = useState<string | null>(null); // YYYY-MM-DD
   const [isCurrentMonthOnly, setIsCurrentMonthOnly] = useState<boolean>(false);
+  const [isWeekOnly, setIsWeekOnly] = useState<boolean>(false);
   const [sortBy, setSortBy] = useState<'newest' | 'oldest' | 'title-asc' | 'title-desc' | 'updated'>('newest');
+
+  // Week Navigation State (0 = Current Week, -1 = Prev Week, +1 = Next Week)
+  const [weekOffset, setWeekOffset] = useState<number>(0);
+
+  // Month Navigation State (Default = Current Month & Year)
+  const now = new Date();
+  const [viewYear, setViewYear] = useState<number>(now.getFullYear());
+  const [viewMonth, setViewMonth] = useState<number>(now.getMonth()); // 0..11
 
   // Helper to format date in Turkish
   const formatDateTR = (dateStr: string) => {
@@ -92,19 +104,65 @@ export const SearchModal: React.FC<SearchModalProps> = ({
     }
   };
 
-  // Current Date / Current Month calculations
-  const now = new Date();
-  const currentYear = now.getFullYear();
-  const currentMonth = now.getMonth(); // 0..11
-  const currentMonthName = now.toLocaleDateString('tr-TR', { month: 'long', year: 'numeric' });
-  const daysInCurrentMonth = new Date(currentYear, currentMonth + 1, 0).getDate();
+  // --- WEEK CALCULATION HELPERS ---
+  const { weekMonday, weekSunday } = useMemo(() => {
+    const d = new Date();
+    const day = d.getDay(); // 0=Sun, 1=Mon, 2=Tue...
+    const diffToMonday = day === 0 ? -6 : 1 - day;
+
+    const monday = new Date(d);
+    monday.setDate(d.getDate() + diffToMonday + weekOffset * 7);
+    monday.setHours(0, 0, 0, 0);
+
+    const sunday = new Date(monday);
+    sunday.setDate(monday.getDate() + 6);
+    sunday.setHours(23, 59, 59, 999);
+
+    return { weekMonday: monday, weekSunday: sunday };
+  }, [weekOffset]);
+
+  const weekLabel = useMemo(() => {
+    if (weekOffset === 0) return 'Bu Hafta';
+    if (weekOffset === -1) return 'Geçen Hafta';
+    if (weekOffset === 1) return 'Gelecek Hafta';
+
+    const mStr = weekMonday.toLocaleDateString('tr-TR', { day: 'numeric', month: 'short' });
+    const sStr = weekSunday.toLocaleDateString('tr-TR', { day: 'numeric', month: 'short' });
+    return `${mStr} - ${sStr}`;
+  }, [weekOffset, weekMonday, weekSunday]);
+
+  const weekRangeSubLabel = useMemo(() => {
+    const mStr = weekMonday.toLocaleDateString('tr-TR', { day: 'numeric', month: 'short' });
+    const sStr = weekSunday.toLocaleDateString('tr-TR', { day: 'numeric', month: 'short', year: 'numeric' });
+    return `${mStr} - ${sStr}`;
+  }, [weekMonday, weekSunday]);
+
+  // Exact YYYY-MM-DD for a day of week in current weekOffset
+  const getExactDateForDayInWeek = (dayIndex: number) => {
+    const offsetFromMonday = dayIndex === 0 ? 6 : dayIndex - 1;
+    const d = new Date(weekMonday);
+    d.setDate(weekMonday.getDate() + offsetFromMonday);
+    const year = d.getFullYear();
+    const month = String(d.getMonth() + 1).padStart(2, '0');
+    const dayStr = String(d.getDate()).padStart(2, '0');
+    return `${year}-${month}-${dayStr}`;
+  };
+
+  // --- MONTH CALCULATION HELPERS ---
+  const selectedMonthName = useMemo(() => {
+    return new Date(viewYear, viewMonth, 1).toLocaleDateString('tr-TR', { month: 'long', year: 'numeric' });
+  }, [viewYear, viewMonth]);
+
+  const daysInViewMonth = useMemo(() => {
+    return new Date(viewYear, viewMonth + 1, 0).getDate();
+  }, [viewYear, viewMonth]);
 
   // 1. Tag Counts across all notes
   const tagCounts = useMemo(() => {
     const counts: Record<string, number> = {};
     notes.forEach((n) => {
       (n.tags || []).forEach((tag) => {
-        if (tag && tag.trim()) {
+        if (tag && typeof tag === 'string' && tag.trim()) {
           const cleaned = tag.trim().toLowerCase();
           counts[cleaned] = (counts[cleaned] || 0) + 1;
         }
@@ -113,27 +171,38 @@ export const SearchModal: React.FC<SearchModalProps> = ({
     return counts;
   }, [notes]);
 
-  // 2. Days of Week Counts across all notes
+  // 2. Days of Week Counts for the selected Week (weekOffset)
   const dayOfWeekCounts = useMemo(() => {
     const counts: Record<number, number> = { 0: 0, 1: 0, 2: 0, 3: 0, 4: 0, 5: 0, 6: 0 };
+    const mondayTime = weekMonday.getTime();
+    const sundayTime = weekSunday.getTime();
+
     notes.forEach((n) => {
-      const dow = getDayOfWeek(n.createdAt || n.date);
-      if (dow !== null) {
-        counts[dow] = (counts[dow] || 0) + 1;
+      const d = new Date(n.createdAt || n.date);
+      if (!isNaN(d.getTime())) {
+        const time = d.getTime();
+        if (time >= mondayTime && time <= sundayTime) {
+          const dow = d.getDay();
+          counts[dow] = (counts[dow] || 0) + 1;
+        }
       }
     });
     return counts;
-  }, [notes]);
+  }, [notes, weekMonday, weekSunday]);
 
-  // 3. Current Month Stats & Day Breakdown
-  const currentMonthStats = useMemo(() => {
+  const weekTotalNotes = useMemo(() => {
+    return Object.values(dayOfWeekCounts).reduce((a, b) => a + b, 0);
+  }, [dayOfWeekCounts]);
+
+  // 3. Month Stats & Day Breakdown for selected Month (viewYear, viewMonth)
+  const monthStats = useMemo(() => {
     let monthTotal = 0;
     const daysMap: Record<number, number> = {}; // dayOfMonth -> count
 
     notes.forEach((n) => {
       const d = new Date(n.createdAt || n.date);
       if (!isNaN(d.getTime())) {
-        if (d.getFullYear() === currentYear && d.getMonth() === currentMonth) {
+        if (d.getFullYear() === viewYear && d.getMonth() === viewMonth) {
           monthTotal++;
           const dayNum = d.getDate();
           daysMap[dayNum] = (daysMap[dayNum] || 0) + 1;
@@ -142,7 +211,7 @@ export const SearchModal: React.FC<SearchModalProps> = ({
     });
 
     return { monthTotal, daysMap };
-  }, [notes, currentYear, currentMonth]);
+  }, [notes, viewYear, viewMonth]);
 
   // 4. Location Counts across all notes
   const locationCounts = useMemo(() => {
@@ -173,6 +242,9 @@ export const SearchModal: React.FC<SearchModalProps> = ({
 
   // Filtered Notes (works for any note type: note, timelog, custom)
   const filteredNotes = useMemo(() => {
+    const mondayTime = weekMonday.getTime();
+    const sundayTime = weekSunday.getTime();
+
     return notes.filter((n) => {
       // Search term
       if (searchTerm.trim()) {
@@ -217,10 +289,18 @@ export const SearchModal: React.FC<SearchModalProps> = ({
         if (nDateStr !== selectedDate) return false;
       }
 
-      // Current Month Only Filter
+      // Selected Week Only Filter
+      if (isWeekOnly) {
+        const d = new Date(n.createdAt || n.date);
+        if (isNaN(d.getTime())) return false;
+        const time = d.getTime();
+        if (time < mondayTime || time > sundayTime) return false;
+      }
+
+      // Selected Month Only Filter
       if (isCurrentMonthOnly) {
         const d = new Date(n.createdAt || n.date);
-        if (isNaN(d.getTime()) || d.getFullYear() !== currentYear || d.getMonth() !== currentMonth) {
+        if (isNaN(d.getTime()) || d.getFullYear() !== viewYear || d.getMonth() !== viewMonth) {
           return false;
         }
       }
@@ -235,9 +315,12 @@ export const SearchModal: React.FC<SearchModalProps> = ({
     selectedDayOfWeek,
     selectedLocation,
     selectedDate,
+    isWeekOnly,
+    weekMonday,
+    weekSunday,
     isCurrentMonthOnly,
-    currentYear,
-    currentMonth,
+    viewYear,
+    viewMonth,
   ]);
 
   // Sorted Notes (Default: Newest to Oldest)
@@ -271,6 +354,32 @@ export const SearchModal: React.FC<SearchModalProps> = ({
     });
   }, [filteredNotes, sortBy]);
 
+  // Lazy Loading State (10 items initially)
+  const [visibleCount, setVisibleCount] = useState<number>(10);
+
+  // Reset visibleCount whenever search or filter parameters change
+  useEffect(() => {
+    setVisibleCount(10);
+  }, [
+    searchTerm,
+    selectedType,
+    selectedTag,
+    selectedDayOfWeek,
+    selectedLocation,
+    selectedDate,
+    isWeekOnly,
+    isCurrentMonthOnly,
+    weekOffset,
+    viewYear,
+    viewMonth,
+    sortBy,
+    notes.length,
+  ]);
+
+  const displayedNotes = useMemo(() => {
+    return sortedNotes.slice(0, visibleCount);
+  }, [sortedNotes, visibleCount]);
+
   // Clear all filters handler
   const handleClearFilters = () => {
     setSearchTerm('');
@@ -279,7 +388,11 @@ export const SearchModal: React.FC<SearchModalProps> = ({
     setSelectedDayOfWeek(null);
     setSelectedLocation(null);
     setSelectedDate(null);
+    setIsWeekOnly(false);
     setIsCurrentMonthOnly(false);
+    setWeekOffset(0);
+    setViewYear(now.getFullYear());
+    setViewMonth(now.getMonth());
     setSortBy('newest');
   };
 
@@ -290,7 +403,11 @@ export const SearchModal: React.FC<SearchModalProps> = ({
     selectedDayOfWeek !== null ||
     selectedLocation !== null ||
     selectedDate !== null ||
+    isWeekOnly ||
     isCurrentMonthOnly ||
+    weekOffset !== 0 ||
+    viewYear !== now.getFullYear() ||
+    viewMonth !== now.getMonth() ||
     sortBy !== 'newest';
 
   if (!isOpen) return null;
@@ -409,9 +526,16 @@ export const SearchModal: React.FC<SearchModalProps> = ({
                   </span>
                 )}
 
+                {isWeekOnly && (
+                  <span className="px-2 py-0.5 bg-purple-900/80 text-purple-200 border border-purple-700 rounded-lg text-[11px] font-semibold flex items-center gap-1">
+                    📅 Hafta: {weekLabel}
+                    <X className="w-3 h-3 cursor-pointer hover:text-white" onClick={() => setIsWeekOnly(false)} />
+                  </span>
+                )}
+
                 {isCurrentMonthOnly && (
                   <span className="px-2 py-0.5 bg-sky-900/80 text-sky-200 border border-sky-700 rounded-lg text-[11px] font-semibold flex items-center gap-1">
-                    📅 Bu Ay ({currentMonthName})
+                    📅 Ay: {selectedMonthName}
                     <X className="w-3 h-3 cursor-pointer hover:text-white" onClick={() => setIsCurrentMonthOnly(false)} />
                   </span>
                 )}
@@ -462,137 +586,156 @@ export const SearchModal: React.FC<SearchModalProps> = ({
                   )}
                 </div>
               ) : (
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-                  {sortedNotes.map((note) => {
-                    const isTimelog = note.noteType === 'timelog' || (note.durationMinutes && note.durationMinutes > 0);
-                    const formattedDate = formatDateTR(note.date || note.createdAt);
+                <div className="space-y-4">
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                    {displayedNotes.map((note) => {
+                      const isTimelog = note.noteType === 'timelog' || (note.durationMinutes && note.durationMinutes > 0);
+                      const formattedDate = formatDateTR(note.date || note.createdAt);
 
-                    return (
-                      <div
-                        key={note.id}
-                        onClick={() => onSelectNote(note)}
-                        className={`group p-4 bg-slate-950/60 hover:bg-slate-800/90 border rounded-2xl transition-all cursor-pointer relative flex flex-col justify-between space-y-3 shadow-xs hover:shadow-lg ${
-                          note.pinned
-                            ? 'border-indigo-500/60 bg-indigo-950/20'
-                            : 'border-slate-800 hover:border-slate-700'
-                        }`}
-                      >
-                        {/* Note Top Bar */}
-                        <div className="flex items-start justify-between gap-2">
-                          <div className="min-w-0 flex-1">
-                            <div className="flex items-center gap-2 mb-1 flex-wrap">
-                              {/* Type Badge */}
-                              <span
-                                className={`px-2 py-0.5 rounded-md text-[10px] font-black uppercase tracking-wider ${
-                                  isTimelog
-                                    ? 'bg-amber-950 text-amber-300 border border-amber-800/60'
-                                    : 'bg-indigo-950 text-indigo-300 border border-indigo-800/60'
-                                }`}
-                              >
-                                {isTimelog ? '⏱️ Timelog' : '📝 ' + (note.noteType || 'Not')}
-                              </span>
-
-                              {/* Pinned Badge */}
-                              {note.pinned && (
-                                <span className="px-1.5 py-0.5 bg-indigo-600/30 text-indigo-300 text-[10px] font-bold rounded-md border border-indigo-500/40 flex items-center gap-0.5">
-                                  <Pin className="w-2.5 h-2.5 fill-indigo-400" /> İğneli
-                                </span>
-                              )}
-
-                              {/* Duration if Timelog */}
-                              {note.durationMinutes ? (
-                                <span className="text-[11px] font-bold text-amber-400 flex items-center gap-1">
-                                  <Clock className="w-3 h-3" />
-                                  {note.durationMinutes} dk
-                                </span>
-                              ) : null}
-                            </div>
-
-                            <h4 className="text-sm font-extrabold text-white group-hover:text-indigo-300 transition-colors line-clamp-2">
-                              {note.title || 'Başlıksız Not'}
-                            </h4>
-                          </div>
-
-                          {/* Quick Pin / Delete Actions */}
-                          <div
-                            className="flex items-center gap-1 opacity-80 group-hover:opacity-100 transition-opacity"
-                            onClick={(e) => e.stopPropagation()}
-                          >
-                            {onTogglePin && (
-                              <button
-                                type="button"
-                                onClick={() => onTogglePin(note.id)}
-                                className={`p-1.5 rounded-lg transition-colors cursor-pointer ${
-                                  note.pinned
-                                    ? 'text-indigo-400 bg-indigo-950/60'
-                                    : 'text-slate-400 hover:text-white hover:bg-slate-800'
-                                }`}
-                                title={note.pinned ? 'İğneyi Kaldır' : 'Üste İğnele'}
-                              >
-                                <Pin className={`w-3.5 h-3.5 ${note.pinned ? 'fill-indigo-400' : ''}`} />
-                              </button>
-                            )}
-                            {onDeleteNote && (
-                              <button
-                                type="button"
-                                onClick={() => onDeleteNote(note.id)}
-                                className="p-1.5 text-slate-400 hover:text-rose-400 hover:bg-rose-950/50 rounded-lg transition-colors cursor-pointer"
-                                title="Notu Sil"
-                              >
-                                <Trash2 className="w-3.5 h-3.5" />
-                              </button>
-                            )}
-                          </div>
-                        </div>
-
-                        {/* Content Preview */}
-                        {note.content && (
-                          <p className="text-xs text-slate-400 line-clamp-3 font-normal leading-relaxed">
-                            {note.content}
-                          </p>
-                        )}
-
-                        {/* Bottom Metadata: Tags, Location, Project & Date */}
-                        <div className="pt-2 border-t border-slate-800/80 space-y-1.5 text-[11px] text-slate-400">
-                          {/* Tags */}
-                          {note.tags && note.tags.length > 0 && (
-                            <div className="flex flex-wrap gap-1">
-                              {note.tags.map((t, i) => (
+                      return (
+                        <div
+                          key={note.id}
+                          onClick={() => onSelectNote(note)}
+                          className={`group p-4 bg-slate-950/60 hover:bg-slate-800/90 border rounded-2xl transition-all cursor-pointer relative flex flex-col justify-between space-y-3 shadow-xs hover:shadow-lg ${
+                            note.pinned
+                              ? 'border-indigo-500/60 bg-indigo-950/20'
+                              : 'border-slate-800 hover:border-slate-700'
+                          }`}
+                        >
+                          {/* Note Top Bar */}
+                          <div className="flex items-start justify-between gap-2">
+                            <div className="min-w-0 flex-1">
+                              <div className="flex items-center gap-2 mb-1 flex-wrap">
+                                {/* Type Badge */}
                                 <span
-                                  key={i}
-                                  onClick={(e) => {
-                                    e.stopPropagation();
-                                    setSelectedTag(t.trim());
-                                  }}
-                                  className="px-1.5 py-0.5 bg-slate-800 hover:bg-indigo-900 text-slate-300 hover:text-indigo-200 rounded-md text-[10px] font-semibold transition-colors cursor-pointer"
+                                  className={`px-2 py-0.5 rounded-md text-[10px] font-black uppercase tracking-wider ${
+                                    isTimelog
+                                      ? 'bg-amber-950 text-amber-300 border border-amber-800/60'
+                                      : 'bg-indigo-950 text-indigo-300 border border-indigo-800/60'
+                                  }`}
                                 >
-                                  #{t}
+                                  {isTimelog ? '⏱️ Timelog' : '📝 ' + (note.noteType || 'Not')}
                                 </span>
-                              ))}
+
+                                {/* Pinned Badge */}
+                                {note.pinned && (
+                                  <span className="px-1.5 py-0.5 bg-indigo-600/30 text-indigo-300 text-[10px] font-bold rounded-md border border-indigo-500/40 flex items-center gap-0.5">
+                                    <Pin className="w-2.5 h-2.5 fill-indigo-400" /> İğneli
+                                  </span>
+                                )}
+
+                                {/* Duration if Timelog */}
+                                {note.durationMinutes ? (
+                                  <span className="text-[11px] font-bold text-amber-400 flex items-center gap-1">
+                                    <Clock className="w-3 h-3" />
+                                    {note.durationMinutes} dk
+                                  </span>
+                                ) : null}
+                              </div>
+
+                              <h4 className="text-sm font-extrabold text-white group-hover:text-indigo-300 transition-colors line-clamp-2">
+                                {note.title || 'Başlıksız Not'}
+                              </h4>
                             </div>
+
+                            {/* Quick Pin / Delete Actions */}
+                            <div
+                              className="flex items-center gap-1 opacity-80 group-hover:opacity-100 transition-opacity"
+                              onClick={(e) => e.stopPropagation()}
+                            >
+                              {onTogglePin && (
+                                <button
+                                  type="button"
+                                  onClick={() => onTogglePin(note.id)}
+                                  className={`p-1.5 rounded-lg transition-colors cursor-pointer ${
+                                    note.pinned
+                                      ? 'text-indigo-400 bg-indigo-950/60'
+                                      : 'text-slate-400 hover:text-white hover:bg-slate-800'
+                                  }`}
+                                  title={note.pinned ? 'İğneyi Kaldır' : 'Üste İğnele'}
+                                >
+                                  <Pin className={`w-3.5 h-3.5 ${note.pinned ? 'fill-indigo-400' : ''}`} />
+                                </button>
+                              )}
+                              {onDeleteNote && (
+                                <button
+                                  type="button"
+                                  onClick={() => onDeleteNote(note.id)}
+                                  className="p-1.5 text-slate-400 hover:text-rose-400 hover:bg-rose-950/50 rounded-lg transition-colors cursor-pointer"
+                                  title="Notu Sil"
+                                >
+                                  <Trash2 className="w-3.5 h-3.5" />
+                                </button>
+                              )}
+                            </div>
+                          </div>
+
+                          {/* Content Preview */}
+                          {note.content && (
+                            <p className="text-xs text-slate-400 line-clamp-3 font-normal leading-relaxed">
+                              {note.content}
+                            </p>
                           )}
 
-                          <div className="flex flex-wrap items-center justify-between gap-2 text-[10px] text-slate-400">
-                            {/* Location */}
-                            {note.location?.name ? (
-                              <span className="flex items-center gap-1 text-amber-400/90 font-medium truncate max-w-[180px]">
-                                <MapPin className="w-3 h-3 text-amber-400 shrink-0" />
-                                {note.location.name}
-                              </span>
-                            ) : (
-                              <span />
+                          {/* Bottom Metadata: Tags, Location, Project & Date */}
+                          <div className="pt-2 border-t border-slate-800/80 space-y-1.5 text-[11px] text-slate-400">
+                            {/* Tags */}
+                            {note.tags && note.tags.length > 0 && (
+                              <div className="flex flex-wrap gap-1">
+                                {note.tags.map((t, i) => (
+                                  <span
+                                    key={i}
+                                    onClick={(e) => {
+                                      e.stopPropagation();
+                                      setSelectedTag(t.trim());
+                                    }}
+                                    className="px-1.5 py-0.5 bg-slate-800 hover:bg-indigo-900 text-slate-300 hover:text-indigo-200 rounded-md text-[10px] font-semibold transition-colors cursor-pointer"
+                                  >
+                                    #{t}
+                                  </span>
+                                ))}
+                              </div>
                             )}
 
-                            {/* Date */}
-                            <span className="flex items-center gap-1 text-slate-400 font-mono">
-                              <Calendar className="w-3 h-3 text-indigo-400" />
-                              {formattedDate}
-                            </span>
+                            <div className="flex flex-wrap items-center justify-between gap-2 text-[10px] text-slate-400">
+                              {/* Location */}
+                              {note.location?.name ? (
+                                <span className="flex items-center gap-1 text-amber-400/90 font-medium truncate max-w-[180px]">
+                                  <MapPin className="w-3 h-3 text-amber-400 shrink-0" />
+                                  {note.location.name}
+                                </span>
+                              ) : (
+                                <span />
+                              )}
+
+                              {/* Date */}
+                              <span className="flex items-center gap-1 text-slate-400 font-mono">
+                                <Calendar className="w-3 h-3 text-indigo-400" />
+                                {formattedDate}
+                              </span>
+                            </div>
                           </div>
                         </div>
-                      </div>
-                    );
-                  })}
+                      );
+                    })}
+                  </div>
+
+                  {/* Devamını Yükle Button */}
+                  {visibleCount < sortedNotes.length && (
+                    <div className="pt-2 pb-2 flex flex-col items-center justify-center gap-2">
+                      <button
+                        type="button"
+                        onClick={() => setVisibleCount((prev) => prev + 10)}
+                        className="px-6 py-2.5 bg-indigo-600 hover:bg-indigo-500 active:scale-95 text-white text-xs font-bold rounded-xl shadow-lg transition-all cursor-pointer flex items-center gap-2 border border-indigo-400/30"
+                      >
+                        <ChevronDown className="w-4 h-4" />
+                        <span>Devamını Yükle (+10)</span>
+                      </button>
+                      <span className="text-[11px] font-medium text-slate-400">
+                        Gösterilen: {displayedNotes.length} / {sortedNotes.length} Not
+                      </span>
+                    </div>
+                  )}
                 </div>
               )}
             </div>
@@ -652,18 +795,92 @@ export const SearchModal: React.FC<SearchModalProps> = ({
                   <CalendarDays className="w-4 h-4" />
                   <span>Haftanın Günleri</span>
                 </span>
-                <span className="text-[10px] text-slate-400 font-bold">Oluşturulma Günleri</span>
+
+                {/* Prev / Next Week Controls */}
+                <div className="flex items-center gap-1 bg-slate-950 p-1 rounded-xl border border-slate-800">
+                  <button
+                    type="button"
+                    onClick={() => setWeekOffset((prev) => prev - 1)}
+                    className="p-1 hover:bg-slate-800 text-slate-400 hover:text-white rounded-lg transition-colors cursor-pointer"
+                    title="Önceki Hafta"
+                  >
+                    <ChevronLeft className="w-3.5 h-3.5" />
+                  </button>
+
+                  <span className="text-[10px] font-black text-purple-300 px-1 min-w-[65px] text-center truncate">
+                    {weekLabel}
+                  </span>
+
+                  <button
+                    type="button"
+                    onClick={() => setWeekOffset((prev) => prev + 1)}
+                    className="p-1 hover:bg-slate-800 text-slate-400 hover:text-white rounded-lg transition-colors cursor-pointer"
+                    title="Sonraki Hafta"
+                  >
+                    <ChevronRight className="w-3.5 h-3.5" />
+                  </button>
+                </div>
               </div>
 
+              <div className="flex items-center justify-between text-[10px] text-slate-400 font-medium px-0.5">
+                <span>{weekRangeSubLabel}</span>
+                {weekOffset !== 0 && (
+                  <button
+                    type="button"
+                    onClick={() => setWeekOffset(0)}
+                    className="text-purple-400 hover:underline font-bold cursor-pointer"
+                  >
+                    Bu Hafta
+                  </button>
+                )}
+              </div>
+
+              {/* Toggle Week Filter Button */}
+              <button
+                type="button"
+                onClick={() => {
+                  setIsWeekOnly(!isWeekOnly);
+                  setSelectedDate(null);
+                }}
+                className={`w-full p-2.5 rounded-xl text-xs font-bold transition-all cursor-pointer flex items-center justify-between border ${
+                  isWeekOnly
+                    ? 'bg-purple-600 text-white border-purple-500 shadow-md ring-2 ring-purple-500/30'
+                    : 'bg-slate-950 hover:bg-slate-800 text-slate-200 border-slate-800'
+                }`}
+              >
+                <div className="flex items-center gap-2">
+                  <CalendarDays className="w-4 h-4 text-purple-400" />
+                  <span>Sadece Bu Haftaki Notlar</span>
+                </div>
+                <span
+                  className={`px-2 py-0.5 rounded-md text-[10px] font-black ${
+                    isWeekOnly ? 'bg-purple-800 text-white' : 'bg-slate-800 text-purple-300'
+                  }`}
+                >
+                  {weekTotalNotes} Not
+                </span>
+              </button>
+
+              {/* Days List */}
               <div className="space-y-1">
                 {TR_DAYS.map((day) => {
                   const count = dayOfWeekCounts[day.index] || 0;
-                  const isSelected = selectedDayOfWeek === day.index;
+                  const exactDate = getExactDateForDayInWeek(day.index);
+                  const isDateSelected = selectedDate === exactDate;
+                  const isDowSelected = selectedDayOfWeek === day.index;
+                  const isSelected = isDateSelected || isDowSelected;
 
                   return (
                     <div
                       key={day.index}
-                      onClick={() => setSelectedDayOfWeek(isSelected ? null : day.index)}
+                      onClick={() => {
+                        if (isDateSelected) {
+                          setSelectedDate(null);
+                        } else {
+                          setSelectedDate(exactDate);
+                          setIsWeekOnly(false);
+                        }
+                      }}
                       className={`px-3 py-1.5 rounded-xl text-xs font-bold transition-all cursor-pointer flex items-center justify-between border ${
                         isSelected
                           ? 'bg-purple-900/90 text-white border-purple-500 shadow-md'
@@ -677,6 +894,9 @@ export const SearchModal: React.FC<SearchModalProps> = ({
                           }`}
                         />
                         <span>{day.name}</span>
+                        <span className="text-[10px] text-slate-500 font-normal">
+                          ({exactDate.split('-').slice(1).reverse().join('/')})
+                        </span>
                       </span>
 
                       <span
@@ -701,11 +921,63 @@ export const SearchModal: React.FC<SearchModalProps> = ({
               <div className="flex items-center justify-between text-xs font-black text-slate-200">
                 <span className="flex items-center gap-1.5 text-sky-400">
                   <Calendar className="w-4 h-4" />
-                  <span>Güncel Ay Görünümü</span>
+                  <span>Ay Görünümü</span>
                 </span>
-                <span className="px-2 py-0.5 bg-sky-950 border border-sky-800/60 text-sky-300 rounded-full text-[10px] font-black">
-                  {currentMonthName}
-                </span>
+
+                {/* Prev / Next Month Controls */}
+                <div className="flex items-center gap-1 bg-slate-950 p-1 rounded-xl border border-slate-800">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      if (viewMonth === 0) {
+                        setViewMonth(11);
+                        setViewYear((y) => y - 1);
+                      } else {
+                        setViewMonth((m) => m - 1);
+                      }
+                    }}
+                    className="p-1 hover:bg-slate-800 text-slate-400 hover:text-white rounded-lg transition-colors cursor-pointer"
+                    title="Önceki Ay"
+                  >
+                    <ChevronLeft className="w-3.5 h-3.5" />
+                  </button>
+
+                  <span className="text-[10px] font-black text-sky-300 px-1 min-w-[75px] text-center capitalize truncate">
+                    {selectedMonthName}
+                  </span>
+
+                  <button
+                    type="button"
+                    onClick={() => {
+                      if (viewMonth === 11) {
+                        setViewMonth(0);
+                        setViewYear((y) => y + 1);
+                      } else {
+                        setViewMonth((m) => m + 1);
+                      }
+                    }}
+                    className="p-1 hover:bg-slate-800 text-slate-400 hover:text-white rounded-lg transition-colors cursor-pointer"
+                    title="Sonraki Ay"
+                  >
+                    <ChevronRight className="w-3.5 h-3.5" />
+                  </button>
+                </div>
+              </div>
+
+              <div className="flex items-center justify-between text-[10px] text-slate-400 font-medium px-0.5">
+                <span className="capitalize">{selectedMonthName}</span>
+                {(viewYear !== now.getFullYear() || viewMonth !== now.getMonth()) && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setViewYear(now.getFullYear());
+                      setViewMonth(now.getMonth());
+                    }}
+                    className="text-sky-400 hover:underline font-bold cursor-pointer"
+                  >
+                    Güncel Ay
+                  </button>
+                )}
               </div>
 
               {/* Toggle Current Month Filter */}
@@ -730,21 +1002,21 @@ export const SearchModal: React.FC<SearchModalProps> = ({
                     isCurrentMonthOnly ? 'bg-sky-800 text-white' : 'bg-slate-800 text-sky-300'
                   }`}
                 >
-                  {currentMonthStats.monthTotal} Not
+                  {monthStats.monthTotal} Not
                 </span>
               </button>
 
-              {/* Mini Calendar Days Grid for Current Month */}
+              {/* Mini Calendar Days Grid for Selected Month */}
               <div className="bg-slate-950 p-2.5 rounded-xl border border-slate-800/80 space-y-2">
                 <div className="text-[10px] font-bold text-slate-400 flex items-center justify-between">
-                  <span>{currentMonthName} Günleri:</span>
+                  <span className="capitalize">{selectedMonthName} Günleri:</span>
                   <span>Tıkla & Filtrele</span>
                 </div>
 
                 <div className="grid grid-cols-7 gap-1 text-center">
-                  {Array.from({ length: daysInCurrentMonth }, (_, i) => i + 1).map((dayNum) => {
-                    const count = currentMonthStats.daysMap[dayNum] || 0;
-                    const dateStr = `${currentYear}-${String(currentMonth + 1).padStart(2, '0')}-${String(
+                  {Array.from({ length: daysInViewMonth }, (_, i) => i + 1).map((dayNum) => {
+                    const count = monthStats.daysMap[dayNum] || 0;
+                    const dateStr = `${viewYear}-${String(viewMonth + 1).padStart(2, '0')}-${String(
                       dayNum
                     ).padStart(2, '0')}`;
                     const isSelected = selectedDate === dateStr;
@@ -768,7 +1040,7 @@ export const SearchModal: React.FC<SearchModalProps> = ({
                             ? 'bg-sky-950/80 text-sky-200 border border-sky-700/60 hover:bg-sky-900'
                             : 'bg-slate-900 text-slate-500 hover:bg-slate-800'
                         }`}
-                        title={`${dayNum} ${currentMonthName}: ${count} not`}
+                        title={`${dayNum} ${selectedMonthName}: ${count} not`}
                       >
                         <span>{dayNum}</span>
                         {count > 0 && (
