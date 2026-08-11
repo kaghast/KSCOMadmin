@@ -2204,8 +2204,84 @@ app.post('/api/adminspace/settings', async (req, res) => {
   await getAdminSpaceDb();
   const { key, value } = req.body || {};
   if (!key) return res.status(400).json({ error: 'Key is required' });
-  saveSettingToDb(key, String(value ?? ''));
-  res.json({ success: true, key, value });
+
+  const strValue = String(value ?? '').trim();
+  saveSettingToDb(key, strValue);
+
+  if (key === 'driveFolderName' && strValue) {
+    const authClient = getAuthenticatedClient(req);
+    if (authClient) {
+      try {
+        const drive = google.drive({ version: 'v3', auth: authClient });
+
+        // Search for existing non-trashed folder with this name in Google Drive
+        const searchFolderRes = await drive.files.list({
+          q: `mimeType = 'application/vnd.google-apps.folder' and name = '${strValue.replace(/'/g, "\\'")}' and trashed = false`,
+          fields: 'files(id, name, webViewLink)',
+        });
+
+        const existingFolders = searchFolderRes.data.files || [];
+        if (existingFolders.length > 0) {
+          const folderId = existingFolders[0].id;
+
+          // Check if there are any non-trashed files or subfolders inside this folder
+          const filesRes = await drive.files.list({
+            q: `'${folderId}' in parents and trashed = false`,
+            fields: 'files(id, name, mimeType)',
+            pageSize: 50,
+          });
+
+          const filesInFolder = filesRes.data.files || [];
+          let hasData = filesInFolder.length > 0;
+
+          if (!hasData) {
+            // Check subfolders if any
+            for (const item of filesInFolder) {
+              if (item.mimeType === 'application/vnd.google-apps.folder') {
+                const subRes = await drive.files.list({
+                  q: `'${item.id}' in parents and trashed = false`,
+                  fields: 'files(id, name)',
+                  pageSize: 10,
+                });
+                if ((subRes.data.files || []).length > 0) {
+                  hasData = true;
+                  break;
+                }
+              }
+            }
+          }
+
+          if (hasData) {
+            console.log(`[Drive Setting] Folder '${strValue}' exists in Drive and contains data. Pulling files to overwrite local server data...`);
+            const restoreResult = await restoreFromGoogleDriveAdminSpace(authClient);
+            return res.json({
+              success: true,
+              key,
+              value: strValue,
+              restored: true,
+              restoreResult,
+              message: `'${strValue}' klasöründe bulunan Google Drive verileri indirildi ve yerel veritabanı güncellendi.`,
+            });
+          } else {
+            console.log(`[Drive Setting] Folder '${strValue}' exists in Drive but is empty. Syncing local data to it...`);
+            syncWithGoogleDriveAdminSpace(authClient).catch((e) => console.error('Auto sync to empty folder error:', e));
+            return res.json({
+              success: true,
+              key,
+              value: strValue,
+              restored: false,
+              synced: true,
+              message: `'${strValue}' klasörü Google Drive'da boş. Yerel veriler bu klasöre aktarılıyor.`,
+            });
+          }
+        }
+      } catch (err) {
+        console.error('Error checking or restoring drive folder on setting change:', err);
+      }
+    }
+  }
+
+  res.json({ success: true, key, value: strValue, restored: false });
 });
 
 app.get('/api/adminspace/drive-folders', async (req, res) => {

@@ -105,15 +105,15 @@ export const SettingsSection: React.FC<Props> = ({
     }
   }, [authStatus.isAuthenticated]);
 
-  const handleApplyFolderName = (selectedName: string) => {
+  const handleApplyFolderName = async (selectedName: string) => {
     const trimmed = selectedName.trim();
     if (!trimmed) return;
     setFolderInput(trimmed);
     if (onDriveFolderNameChange) {
-      onDriveFolderNameChange(trimmed);
+      await onDriveFolderNameChange(trimmed);
     }
-    setFolderSaveStatus(`Senkronizasyon klasörü "${trimmed}" olarak güncellendi.`);
-    setTimeout(() => setFolderSaveStatus(null), 4000);
+    setFolderSaveStatus(`Senkronizasyon klasörü "${trimmed}" olarak kontrol edildi ve güncellendi.`);
+    setTimeout(() => setFolderSaveStatus(null), 5000);
   };
 
   // Custom Note Type Editor Modal State
@@ -315,11 +315,20 @@ export const SettingsSection: React.FC<Props> = ({
             <button
               type="button"
               onClick={() => handleApplyFolderName(folderInput)}
-              disabled={!folderInput.trim() || folderInput.trim() === driveFolderName}
+              disabled={!folderInput.trim() || (folderInput.trim() === driveFolderName && !isSyncingDrive) || isSyncingDrive}
               className="px-4 py-2 bg-indigo-600 hover:bg-indigo-700 disabled:opacity-40 text-white font-extrabold text-xs rounded-xl shadow-xs transition-all cursor-pointer flex items-center justify-center gap-1.5 shrink-0"
             >
-              <Check className="w-4 h-4" />
-              <span>Klasörü Ayarla</span>
+              {isSyncingDrive ? (
+                <>
+                  <RefreshCw className="w-4 h-4 animate-spin" />
+                  <span>Kontrol Ediliyor...</span>
+                </>
+              ) : (
+                <>
+                  <Check className="w-4 h-4" />
+                  <span>Klasörü Ayarla</span>
+                </>
+              )}
             </button>
           </div>
 

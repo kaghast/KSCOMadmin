@@ -13,13 +13,15 @@ import {
   Palette,
   Move,
   PaintBucket,
+  ArrowRight,
+  MoveRight,
 } from 'lucide-react';
 
-export type ToolType = 'select' | 'pen' | 'eraser' | 'rectangle' | 'circle' | 'line' | 'text';
+export type ToolType = 'select' | 'pen' | 'eraser' | 'rectangle' | 'circle' | 'line' | 'arrowLine' | 'arrow' | 'text';
 
 export interface DrawingElement {
   id: string;
-  type: 'pen' | 'rectangle' | 'circle' | 'line' | 'text';
+  type: 'pen' | 'rectangle' | 'circle' | 'line' | 'arrowLine' | 'arrow' | 'text';
   x: number;
   y: number;
   width: number;
@@ -298,6 +300,77 @@ export const DrawingCanvas: React.FC<Props> = ({
         ctx.strokeStyle = elem.strokeColor;
         ctx.lineWidth = elem.strokeWidth;
         ctx.stroke();
+      } else if (elem.type === 'arrowLine') {
+        // Line with arrowhead at end point
+        const x1 = elem.x;
+        const y1 = elem.y;
+        const x2 = elem.x + elem.width;
+        const y2 = elem.y + elem.height;
+
+        ctx.beginPath();
+        ctx.moveTo(x1, y1);
+        ctx.lineTo(x2, y2);
+        ctx.strokeStyle = elem.strokeColor;
+        ctx.lineWidth = elem.strokeWidth;
+        ctx.stroke();
+
+        const angle = Math.atan2(elem.height, elem.width);
+        const headLen = Math.max(12, elem.strokeWidth * 3.5);
+        const headAngle = Math.PI / 6;
+
+        ctx.beginPath();
+        ctx.moveTo(x2, y2);
+        ctx.lineTo(
+          x2 - headLen * Math.cos(angle - headAngle),
+          y2 - headLen * Math.sin(angle - headAngle)
+        );
+        ctx.lineTo(
+          x2 - headLen * Math.cos(angle + headAngle),
+          y2 - headLen * Math.sin(angle + headAngle)
+        );
+        ctx.closePath();
+        ctx.fillStyle = elem.strokeColor;
+        ctx.fill();
+        ctx.strokeStyle = elem.strokeColor;
+        ctx.lineWidth = elem.strokeWidth;
+        ctx.stroke();
+      } else if (elem.type === 'arrow') {
+        // Geometric block arrow shape
+        const x1 = elem.x;
+        const y1 = elem.y;
+        const dx = elem.width;
+        const dy = elem.height;
+        const len = Math.hypot(dx, dy);
+
+        if (len >= 2) {
+          const angle = Math.atan2(dy, dx);
+          const stemWidth = Math.max(6, elem.strokeWidth * 2.5);
+          const headLen = Math.min(len * 0.45, Math.max(16, elem.strokeWidth * 5));
+          const headWidth = Math.max(14, stemWidth * 2.2);
+
+          ctx.save();
+          ctx.translate(x1, y1);
+          ctx.rotate(angle);
+
+          ctx.beginPath();
+          ctx.moveTo(0, -stemWidth / 2);
+          ctx.lineTo(len - headLen, -stemWidth / 2);
+          ctx.lineTo(len - headLen, -headWidth / 2);
+          ctx.lineTo(len, 0);
+          ctx.lineTo(len - headLen, headWidth / 2);
+          ctx.lineTo(len - headLen, stemWidth / 2);
+          ctx.lineTo(0, stemWidth / 2);
+          ctx.closePath();
+
+          if (elem.fillColor && elem.fillColor !== 'transparent') {
+            ctx.fillStyle = elem.fillColor;
+            ctx.fill();
+          }
+          ctx.strokeStyle = elem.strokeColor;
+          ctx.lineWidth = elem.strokeWidth;
+          ctx.stroke();
+          ctx.restore();
+        }
       } else if (elem.type === 'text' && elem.text) {
         const fontSize = Math.max(12, elem.strokeWidth * 4 + 10);
         ctx.font = `bold ${fontSize}px sans-serif`;
@@ -348,6 +421,8 @@ export const DrawingCanvas: React.FC<Props> = ({
           rectangle: 'Dikdörtgen',
           circle: 'Daire',
           line: 'Çizgi',
+          arrowLine: 'Oklu Çizgi',
+          arrow: 'Düz Ok',
           text: 'Metin',
         };
         const badgeText = `✓ Seçili: ${typeLabels[target.type] || target.type}`;
@@ -506,7 +581,7 @@ export const DrawingCanvas: React.FC<Props> = ({
       return;
     }
 
-    // Creating new element ('pen', 'rectangle', 'circle', 'line')
+    // Creating new element ('pen', 'rectangle', 'circle', 'line', 'arrowLine', 'arrow')
     setIsInteracting(true);
     setInteractionMode('drawing');
     setStartPos({ x, y });
@@ -520,7 +595,7 @@ export const DrawingCanvas: React.FC<Props> = ({
       width: 1,
       height: 1,
       strokeColor: selectedColor,
-      fillColor: activeTool === 'pen' ? 'transparent' : fillColor,
+      fillColor: (activeTool === 'pen' || activeTool === 'line' || activeTool === 'arrowLine') ? 'transparent' : fillColor,
       strokeWidth,
       points: activeTool === 'pen' ? [{ x: 0, y: 0 }] : undefined,
     };
@@ -811,6 +886,36 @@ export const DrawingCanvas: React.FC<Props> = ({
             title="Düz Çizgi"
           >
             <Minus className="w-4 h-4" />
+          </button>
+
+          <button
+            type="button"
+            onClick={() => {
+              setActiveTool('arrowLine');
+            }}
+            className={`p-1.5 rounded-lg transition-all cursor-pointer ${
+              activeTool === 'arrowLine'
+                ? 'bg-indigo-600 text-white shadow-2xs'
+                : 'text-slate-600 hover:text-slate-900'
+            }`}
+            title="Oklu Çizgi (Ucu oklu çizgi)"
+          >
+            <MoveRight className="w-4 h-4" />
+          </button>
+
+          <button
+            type="button"
+            onClick={() => {
+              setActiveTool('arrow');
+            }}
+            className={`p-1.5 rounded-lg transition-all cursor-pointer ${
+              activeTool === 'arrow'
+                ? 'bg-indigo-600 text-white shadow-2xs'
+                : 'text-slate-600 hover:text-slate-900'
+            }`}
+            title="Düz Ok Şekli (Gövdeli ok)"
+          >
+            <ArrowRight className="w-4 h-4" />
           </button>
 
           <button

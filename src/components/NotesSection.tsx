@@ -24,6 +24,24 @@ import { MarkdownPreview } from './MarkdownPreview';
 import { NoteItem, ContactItem, NoteLocation, EmailItem, CalendarEvent, TimeLog, NoteType } from '../types';
 import { NoteCalendarSidebar } from './NoteCalendarSidebar';
 
+const formatDateTimeTR = (dateStr?: string) => {
+  if (!dateStr) return '';
+  try {
+    const iso = dateStr.includes('T') ? dateStr : `${dateStr}T12:00`;
+    const d = new Date(iso);
+    if (isNaN(d.getTime())) return dateStr;
+    const datePart = d.toLocaleDateString('tr-TR', {
+      day: '2-digit',
+      month: '2-digit',
+      year: 'numeric',
+    });
+    const timePart = `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
+    return `${datePart} ${timePart}`;
+  } catch {
+    return dateStr;
+  }
+};
+
 interface Props {
   notes: NoteItem[];
   contacts: ContactItem[];
@@ -137,7 +155,7 @@ export const NotesSection: React.FC<Props> = ({
       n.noteType === selectedTypeFilter;
 
     const matchesTag = !selectedTagFilter || (n.tags && n.tags.includes(selectedTagFilter));
-    const matchesDate = !selectedDateFilter || n.date === selectedDateFilter;
+  const matchesDate = !selectedDateFilter || (n.date && (n.date === selectedDateFilter || n.date.startsWith(selectedDateFilter)));
 
     return matchesSearch && matchesType && matchesTag && matchesDate;
   });
@@ -457,7 +475,7 @@ export const NotesSection: React.FC<Props> = ({
                           {/* Date */}
                           <span className="flex items-center gap-1 text-slate-400 font-medium">
                             <Calendar className="w-3 h-3" />
-                            {note.date}
+                            {formatDateTimeTR(note.date)}
                           </span>
                         </div>
 

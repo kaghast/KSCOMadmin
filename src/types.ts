@@ -186,7 +186,7 @@ export interface NoteItem {
   linkedTasks?: LinkedTask[];
   tags: string[];
   location?: NoteLocation;
-  date: string; // YYYY-MM-DD
+  date: string; // YYYY-MM-DDTHH:mm or ISO string
   createdAt: string;
   updatedAt: string;
   pinned?: boolean;

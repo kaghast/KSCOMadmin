@@ -1,6 +1,26 @@
 import React, { useState, useEffect } from 'react';
 import { MarkdownPreview } from './MarkdownPreview';
 import { createTaskSlug } from '../utils/slug';
+
+const getNowDateTimeLocal = () => {
+  const d = new Date();
+  const pad = (n: number) => String(n).padStart(2, '0');
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
+};
+
+const formatNoteDateTime = (dateStr?: string) => {
+  if (!dateStr) return '';
+  try {
+    const iso = dateStr.includes('T') ? dateStr : `${dateStr}T12:00`;
+    const d = new Date(iso);
+    if (isNaN(d.getTime())) return dateStr;
+    const datePart = d.toLocaleDateString('tr-TR', { day: '2-digit', month: '2-digit', year: 'numeric' });
+    const timePart = `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
+    return `${datePart} ${timePart}`;
+  } catch {
+    return dateStr;
+  }
+};
 import {
   FolderKanban,
   Plus,
@@ -2064,7 +2084,7 @@ export const ProjectsSection: React.FC<Props> = ({
                           cardId: detailTask.id,
                           cardTitle: detailTask.title,
                           noteType: noteTypeFilter !== 'all' ? noteTypeFilter : 'note',
-                          date: new Date().toISOString().split('T')[0],
+                          date: getNowDateTimeLocal(),
                           createdAt: new Date().toISOString(),
                           updatedAt: new Date().toISOString(),
                         } as any)
@@ -2219,7 +2239,7 @@ export const ProjectsSection: React.FC<Props> = ({
                                       </span>
                                     ))}
                                   </div>
-                                  <span>{note.date || (note.startTime ? note.startTime.split('T')[0] : '')}</span>
+                                  <span>{formatNoteDateTime(note.date) || (note.startTime ? note.startTime.replace('T', ' ') : '')}</span>
                                 </div>
                               </div>
                             );

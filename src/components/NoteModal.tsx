@@ -95,6 +95,30 @@ interface PlaceResult {
   lon: string;
 }
 
+const getNowDateTimeLocal = () => {
+  const d = new Date();
+  const pad = (n: number) => String(n).padStart(2, '0');
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
+};
+
+const formatToDateTimeLocal = (dateStr?: string) => {
+  if (!dateStr) return getNowDateTimeLocal();
+  if (dateStr.includes('T')) {
+    return dateStr.slice(0, 16);
+  }
+  if (dateStr.length === 10) {
+    return `${dateStr}T12:00`;
+  }
+  try {
+    const d = new Date(dateStr);
+    if (!isNaN(d.getTime())) {
+      const pad = (n: number) => String(n).padStart(2, '0');
+      return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
+    }
+  } catch {}
+  return getNowDateTimeLocal();
+};
+
 export const NoteModal: React.FC<Props> = ({
   isOpen,
   note,
@@ -116,7 +140,7 @@ export const NoteModal: React.FC<Props> = ({
   // Form State
   const [title, setTitle] = useState('');
   const [content, setContent] = useState('');
-  const [date, setDate] = useState(new Date().toISOString().split('T')[0]);
+  const [date, setDate] = useState(getNowDateTimeLocal());
   const [selectedProjectId, setSelectedProjectId] = useState<string>('');
   const [location, setLocation] = useState<NoteLocation | null>(null);
   const [locationName, setLocationName] = useState('');
@@ -373,7 +397,7 @@ export const NoteModal: React.FC<Props> = ({
         setDrawingElements([]);
       }
 
-      setDate(note.date || new Date().toISOString().split('T')[0]);
+      setDate(formatToDateTimeLocal(note.date));
       setSelectedProjectId(note.projectId || '');
       setLocation(note.location || null);
       setLocationName(note.location?.name || '');
@@ -404,7 +428,7 @@ export const NoteModal: React.FC<Props> = ({
       setContent('');
       setDrawingDataUrl('');
       setDrawingElements([]);
-      setDate(new Date().toISOString().split('T')[0]);
+      setDate(formatToDateTimeLocal());
       setLocation(null);
       setLocationName('');
       setSelectedContacts([]);
@@ -1246,11 +1270,11 @@ export const NoteModal: React.FC<Props> = ({
             {/* Note Date & Project Selection */}
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
               <div>
-                <label className="block text-[11px] font-bold text-slate-700 mb-1">Not Tarihi</label>
+                <label className="block text-[11px] font-bold text-slate-700 mb-1">Not Tarihi ve Saati</label>
                 <div className="relative">
                   <Calendar className="w-3.5 h-3.5 text-slate-400 absolute left-2.5 top-1/2 -translate-y-1/2" />
                   <input
-                    type="date"
+                    type="datetime-local"
                     value={date}
                     onChange={(e) => setDate(e.target.value)}
                     required

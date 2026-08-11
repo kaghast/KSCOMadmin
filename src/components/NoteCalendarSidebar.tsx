@@ -74,7 +74,8 @@ export const NoteCalendarSidebar: React.FC<Props> = ({
   const noteCountsByDate: { [key: string]: number } = {};
   notes.forEach((note) => {
     if (note.date) {
-      noteCountsByDate[note.date] = (noteCountsByDate[note.date] || 0) + 1;
+      const dKey = note.date.includes('T') ? note.date.split('T')[0] : note.date;
+      noteCountsByDate[dKey] = (noteCountsByDate[dKey] || 0) + 1;
     }
   });
 
@@ -136,7 +137,7 @@ export const NoteCalendarSidebar: React.FC<Props> = ({
             noteType: 'note',
             startTime: startTimeStr,
             endTime: endTimeStr,
-            date: activeDateStr,
+            date: `${activeDateStr}T${startTimeStr}`,
             tags: tagArray,
           });
         }
@@ -161,7 +162,7 @@ export const NoteCalendarSidebar: React.FC<Props> = ({
             startTime: startTimeStr,
             endTime: endTimeStr,
             durationMinutes: quickDuration,
-            date: activeDateStr,
+            date: `${activeDateStr}T${startTimeStr}`,
             tags: tagArray,
           });
         }
@@ -413,7 +414,12 @@ export const NoteCalendarSidebar: React.FC<Props> = ({
 
             // Filter items for this slot
             const slotNotes = notes.filter((n) => {
-              if (n.date !== activeDateStr) return false;
+              const noteDateDay = n.date ? (n.date.includes('T') ? n.date.split('T')[0] : n.date) : '';
+              if (noteDateDay !== activeDateStr) return false;
+              if (n.date && n.date.includes('T')) {
+                const h = getItemHour(n.date);
+                if (h === hour) return true;
+              }
               if (n.startTime) {
                 const h = getItemHour(n.startTime);
                 return h === hour;

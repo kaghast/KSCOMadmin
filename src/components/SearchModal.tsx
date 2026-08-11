@@ -75,18 +75,22 @@ export const SearchModal: React.FC<SearchModalProps> = ({
   const [viewYear, setViewYear] = useState<number>(now.getFullYear());
   const [viewMonth, setViewMonth] = useState<number>(now.getMonth()); // 0..11
 
-  // Helper to format date in Turkish
+  // Helper to format date and time in Turkish
   const formatDateTR = (dateStr: string) => {
     if (!dateStr) return '';
     try {
-      const d = new Date(dateStr);
+      const iso = dateStr.includes('T') ? dateStr : `${dateStr}T12:00`;
+      const d = new Date(iso);
       if (isNaN(d.getTime())) return dateStr;
-      return d.toLocaleDateString('tr-TR', {
+      const formattedDate = d.toLocaleDateString('tr-TR', {
         day: 'numeric',
         month: 'short',
         year: 'numeric',
         weekday: 'short',
       });
+      const hours = String(d.getHours()).padStart(2, '0');
+      const minutes = String(d.getMinutes()).padStart(2, '0');
+      return `${formattedDate} ${hours}:${minutes}`;
     } catch {
       return dateStr;
     }
@@ -285,7 +289,8 @@ export const SearchModal: React.FC<SearchModalProps> = ({
 
       // Exact Date Filter
       if (selectedDate) {
-        const nDateStr = n.date || (n.createdAt ? n.createdAt.split('T')[0] : '');
+        const rawDate = n.date || n.createdAt || '';
+        const nDateStr = rawDate.includes('T') ? rawDate.split('T')[0] : rawDate;
         if (nDateStr !== selectedDate) return false;
       }
 

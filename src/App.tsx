@@ -238,14 +238,40 @@ export default function App() {
     }).catch(() => {});
   }, [timezone]);
 
+  const handleDriveFolderNameChange = async (newFolderName: string) => {
+    const trimmed = newFolderName.trim();
+    if (!trimmed) return;
+
+    setDriveFolderName(trimmed);
+    localStorage.setItem('adminspace_drive_folder_name', trimmed);
+    setIsSyncingDrive(true);
+    setDriveSyncMessage(`'${trimmed}' klasöründeki Google Drive verileri kontrol ediliyor...`);
+
+    try {
+      const res = await fetch('/api/adminspace/settings', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ key: 'driveFolderName', value: trimmed }),
+      });
+      const data = await res.json();
+      if (res.ok && data.restored) {
+        setDriveSyncMessage(data.message || `Google Drive'daki '${trimmed}' klasöründen veriler indirildi ve yerel veritabanı güncellendi!`);
+        fetchAllData();
+      } else if (res.ok && data.message) {
+        setDriveSyncMessage(data.message);
+      } else {
+        setDriveSyncMessage(`Senkronizasyon klasörü '${trimmed}' olarak ayarlandı.`);
+      }
+    } catch (err: any) {
+      console.error('Folder change error:', err);
+      setDriveSyncMessage(`Klasör güncelleme hatası: ${err.message}`);
+    } finally {
+      setIsSyncingDrive(false);
+    }
+  };
+
   useEffect(() => {
     localStorage.setItem('adminspace_drive_folder_name', driveFolderName);
-    // Persist driveFolderName setting to backend DB
-    fetch('/api/adminspace/settings', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ key: 'driveFolderName', value: driveFolderName }),
-    }).catch(() => {});
   }, [driveFolderName]);
 
   // Auth State
@@ -1442,7 +1468,7 @@ export default function App() {
               timezone={timezone}
               onTimezoneChange={setTimezone}
               driveFolderName={driveFolderName}
-              onDriveFolderNameChange={setDriveFolderName}
+              onDriveFolderNameChange={handleDriveFolderNameChange}
               noteTypes={noteTypes}
               onSaveNoteType={handleSaveNoteType}
               onDeleteNoteType={handleDeleteNoteType}

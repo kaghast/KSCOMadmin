@@ -274,7 +274,7 @@ export function migrateTimelogsToNotes(db: Database) {
           const cardId = item.cardId || '';
           const cardTitle = item.cardTitle || '';
           const tags = typeof item.tags === 'string' ? item.tags : JSON.stringify(item.tags || []);
-          const date = item.startTime ? String(item.startTime).split('T')[0] : (item.createdAt ? String(item.createdAt).split('T')[0] : new Date().toISOString().split('T')[0]);
+          const date = item.startTime ? String(item.startTime).slice(0, 16) : (item.createdAt ? String(item.createdAt).slice(0, 16) : new Date().toISOString().slice(0, 16));
 
           db.run(
             `INSERT INTO notes (
