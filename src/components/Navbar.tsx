@@ -1,5 +1,5 @@
 import React from 'react';
-import { LogIn, LogOut, Sparkles, Menu, X, RefreshCw } from 'lucide-react';
+import { LogIn, LogOut, Sparkles, Menu, X, RefreshCw, Search } from 'lucide-react';
 import { AuthStatus } from '../types';
 
 interface Props {
@@ -9,6 +9,7 @@ interface Props {
   needsSync?: boolean;
   isSyncing?: boolean;
   onManualSync?: () => void;
+  onOpenSearch?: () => void;
   activeScreen?: 'workspace' | 'timeManagement';
   onScreenChange?: (screen: 'workspace' | 'timeManagement') => void;
   isMobileMenuOpen?: boolean;
@@ -22,6 +23,7 @@ export const Navbar: React.FC<Props> = ({
   needsSync = false,
   isSyncing = false,
   onManualSync,
+  onOpenSearch,
   isMobileMenuOpen = false,
   onToggleMobileMenu,
 }) => {
@@ -94,6 +96,19 @@ export const Navbar: React.FC<Props> = ({
                         <span className="relative inline-flex rounded-full h-2 w-2 bg-amber-200"></span>
                       </span>
                     )}
+                  </button>
+                )}
+
+                {/* Search Modal Trigger Button */}
+                {onOpenSearch && (
+                  <button
+                    type="button"
+                    onClick={onOpenSearch}
+                    title="Gelişmiş Not ve İçerik Arama"
+                    className="px-3 py-1.5 rounded-xl font-extrabold text-xs flex items-center gap-1.5 bg-slate-800 hover:bg-slate-700 text-slate-100 border border-slate-700 shadow-xs transition-all cursor-pointer shrink-0"
+                  >
+                    <Search className="w-3.5 h-3.5 text-indigo-400" />
+                    <span>Arama</span>
                   </button>
                 )}
 

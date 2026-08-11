@@ -32,6 +32,7 @@ import { EditContactModal } from './components/EditContactModal';
 import { AddContactModal } from './components/AddContactModal';
 import { NoteModal } from './components/NoteModal';
 import { MapPickerModal } from './components/MapPickerModal';
+import { SearchModal } from './components/SearchModal';
 import { TimeManagementApp } from './components/TimeManagementApp';
 import { SettingsSection } from './components/SettingsSection';
 import { LoginGate } from './components/LoginGate';
@@ -87,6 +88,7 @@ export default function App() {
   const [initialTaskIdOrSlug, setInitialTaskIdOrSlug] = useState<string | null>(() => getTaskSlugFromUrl());
   const [isSidebarCollapsed, setIsSidebarCollapsed] = useState(false);
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
+  const [isSearchModalOpen, setIsSearchModalOpen] = useState(false);
 
   // Global AdminSpace Google Drive Database & Notes Sync Handlers
   const [isSyncingDrive, setIsSyncingDrive] = useState(false);
@@ -525,7 +527,14 @@ export default function App() {
       const res = await fetch('/api/notes');
       if (res.ok && res.headers.get('content-type')?.includes('application/json')) {
         const data = await res.json();
-        if (data.notes) setNotes(data.notes);
+        if (data.notes) {
+          const sortedNotes = [...data.notes].sort((a: NoteItem, b: NoteItem) => {
+            const timeA = new Date(a.date || a.createdAt || 0).getTime();
+            const timeB = new Date(b.date || b.createdAt || 0).getTime();
+            return timeB - timeA;
+          });
+          setNotes(sortedNotes);
+        }
         if (data.locations) setLocations(data.locations);
       }
     } catch {
@@ -1102,6 +1111,7 @@ export default function App() {
         needsSync={needsSync}
         isSyncing={isSyncingDrive}
         onManualSync={handleManualSync}
+        onOpenSearch={() => setIsSearchModalOpen(true)}
         isMobileMenuOpen={isMobileMenuOpen}
         onToggleMobileMenu={() => setIsMobileMenuOpen(!isMobileMenuOpen)}
       />
@@ -1519,6 +1529,24 @@ export default function App() {
         onRenameLocation={handleRenameLocation}
         onDeleteLocation={handleDeleteLocation}
         onFilterByLocation={handleFilterNotesByLocation}
+      />
+
+      {/* Advanced Search & Filtering Modal */}
+      <SearchModal
+        isOpen={isSearchModalOpen}
+        onClose={() => setIsSearchModalOpen(false)}
+        notes={notes}
+        noteTypes={noteTypes}
+        onSelectNote={(note) => {
+          setIsSearchModalOpen(false);
+          setEditingNote(note);
+          setIsNoteModalOpen(true);
+        }}
+        onDeleteNote={handleDeleteNote}
+        onTogglePin={(id) => {
+          const target = notes.find((n) => n.id === id);
+          if (target) handleTogglePinNote(target);
+        }}
       />
     </div>
   );
