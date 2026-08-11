@@ -207,6 +207,18 @@ export default function App() {
   }, [language]);
 
   useEffect(() => {
+    // Load persisted settings from backend SQLite DB on mount
+    fetch('/api/adminspace/settings')
+      .then((res) => res.json())
+      .then((data) => {
+        if (data && data.settings && data.settings.timezone) {
+          setTimezone(data.settings.timezone);
+        }
+      })
+      .catch(() => {});
+  }, []);
+
+  useEffect(() => {
     localStorage.setItem('adminspace_timezone', timezone);
     // Persist timezone setting to backend DB
     fetch('/api/adminspace/settings', {
