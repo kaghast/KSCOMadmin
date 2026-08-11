@@ -74,50 +74,46 @@ export const NotesSection: React.FC<Props> = ({
   const [selectedTypeFilter, setSelectedTypeFilter] = useState<string>('all');
   const [sortBy, setSortBy] = useState<'newest' | 'oldest' | 'title-asc' | 'title-desc' | 'updated'>('newest');
 
-  // 1. Exclude 'timelog' type notes from Note Management
-  const nonTimelogNotes = notes.filter((n) => n.noteType !== 'timelog');
-
   // Helper to get printable name for note type
   const getNoteTypeName = (typeId?: string) => {
     if (!typeId || typeId === 'note') return 'Standart Not';
+    if (typeId === 'timelog') return 'Timelog';
     const found = noteTypes.find((t) => t.id === typeId);
     return found ? found.name : typeId;
   };
 
-  // Collect available note type options (excluding timelog)
+  // Collect available note type options (including timelog)
   const availableTypeOptions = React.useMemo(() => {
     const optionsMap = new Map<string, string>();
     optionsMap.set('note', 'Standart Not');
 
     // Add custom types from noteTypes prop
     noteTypes.forEach((nt) => {
-      if (nt.id !== 'timelog') {
-        optionsMap.set(nt.id, nt.name);
-      }
+      optionsMap.set(nt.id, nt.name);
     });
 
     // Add any types present in notes
-    nonTimelogNotes.forEach((n) => {
-      if (n.noteType && n.noteType !== 'timelog' && !optionsMap.has(n.noteType)) {
-        optionsMap.set(n.noteType, n.noteType);
+    notes.forEach((n) => {
+      if (n.noteType && !optionsMap.has(n.noteType)) {
+        optionsMap.set(n.noteType, getNoteTypeName(n.noteType));
       }
     });
 
     return Array.from(optionsMap.entries()).map(([id, name]) => ({ id, name }));
-  }, [noteTypes, nonTimelogNotes]);
+  }, [noteTypes, notes]);
 
-  // Extract all unique tags across non-timelog notes and timelogs
+  // Extract all unique tags across notes and timelogs
   const allTags = Array.from(
     new Set(
       [
-        ...nonTimelogNotes.flatMap((n) => n.tags || []),
+        ...notes.flatMap((n) => n.tags || []),
         ...timeLogs.flatMap((tl) => tl.tags || []),
       ].filter((t) => t && typeof t === 'string' && t.trim())
     )
   );
 
   // Filter notes based on search, type, tag, date
-  const filteredNotes = nonTimelogNotes.filter((n) => {
+  const filteredNotes = notes.filter((n) => {
     const term = searchTerm.toLowerCase();
     const matchesSearch =
       n.title.toLowerCase().includes(term) ||
@@ -233,7 +229,7 @@ export const NotesSection: React.FC<Props> = ({
                   onChange={(e) => setSelectedTypeFilter(e.target.value)}
                   className="bg-transparent text-xs font-bold text-slate-800 focus:outline-none cursor-pointer"
                 >
-                  <option value="all">Tüm Türler ({nonTimelogNotes.length})</option>
+                  <option value="all">Tüm Türler ({notes.length})</option>
                   {availableTypeOptions.map((opt) => (
                     <option key={opt.id} value={opt.id}>
                       {opt.name}

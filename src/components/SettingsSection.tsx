@@ -26,6 +26,9 @@ import {
   CheckCircle2,
   AlertCircle,
   ExternalLink,
+  Folder,
+  FolderPlus,
+  FolderCheck,
 } from 'lucide-react';
 import { NoteType, NoteTypeField, AuthStatus } from '../types';
 
@@ -36,6 +39,8 @@ interface Props {
   onLanguageChange: (language: 'tr' | 'en') => void;
   timezone?: string;
   onTimezoneChange?: (tz: string) => void;
+  driveFolderName?: string;
+  onDriveFolderNameChange?: (folderName: string) => void;
   noteTypes?: NoteType[];
   onSaveNoteType?: (typeData: NoteType) => Promise<void> | void;
   onDeleteNoteType?: (id: string) => Promise<void> | void;
@@ -58,6 +63,8 @@ export const SettingsSection: React.FC<Props> = ({
   onLanguageChange,
   timezone = 'Europe/Istanbul',
   onTimezoneChange,
+  driveFolderName = 'adminspace',
+  onDriveFolderNameChange,
   noteTypes = [
     { id: 'note', name: 'Düz Not', isSystem: true },
     { id: 'timelog', name: 'Timelog', isSystem: true },
@@ -72,6 +79,42 @@ export const SettingsSection: React.FC<Props> = ({
   onLogin,
 }) => {
   const isTr = language === 'tr';
+
+  // Google Drive Folder Selection State
+  const [folderInput, setFolderInput] = React.useState(driveFolderName || 'adminspace');
+  const [driveFoldersList, setDriveFoldersList] = React.useState<Array<{ id: string; name: string; link?: string }>>([]);
+  const [isLoadingFolders, setIsLoadingFolders] = React.useState(false);
+  const [folderSaveStatus, setFolderSaveStatus] = React.useState<string | null>(null);
+
+  React.useEffect(() => {
+    setFolderInput(driveFolderName || 'adminspace');
+  }, [driveFolderName]);
+
+  React.useEffect(() => {
+    if (authStatus.isAuthenticated) {
+      setIsLoadingFolders(true);
+      fetch('/api/adminspace/drive-folders')
+        .then((res) => res.json())
+        .then((data) => {
+          if (data && Array.isArray(data.folders)) {
+            setDriveFoldersList(data.folders);
+          }
+        })
+        .catch(() => {})
+        .finally(() => setIsLoadingFolders(false));
+    }
+  }, [authStatus.isAuthenticated]);
+
+  const handleApplyFolderName = (selectedName: string) => {
+    const trimmed = selectedName.trim();
+    if (!trimmed) return;
+    setFolderInput(trimmed);
+    if (onDriveFolderNameChange) {
+      onDriveFolderNameChange(trimmed);
+    }
+    setFolderSaveStatus(`Senkronizasyon klasörü "${trimmed}" olarak güncellendi.`);
+    setTimeout(() => setFolderSaveStatus(null), 4000);
+  };
 
   // Custom Note Type Editor Modal State
   const [isTypeModalOpen, setIsTypeModalOpen] = useState(false);
@@ -230,10 +273,106 @@ export const SettingsSection: React.FC<Props> = ({
                 )}
               </h3>
               <p className="text-xs text-slate-500 dark:text-slate-400 mt-0.5">
-                Veritabanınız (SQLite), Notlarınız, Projeleriniz ve Görselleriniz Google Drive hesabınızdaki <code className="bg-slate-100 dark:bg-slate-900 px-1.5 py-0.5 rounded text-indigo-600 font-mono text-[11px]">adminspace</code> klasörüne otomatik senkronize edilir.
+                Veritabanınız (SQLite), Notlarınız, Projeleriniz ve Görselleriniz Google Drive hesabınızdaki <code className="bg-slate-100 dark:bg-slate-900 px-1.5 py-0.5 rounded text-indigo-600 font-mono text-[11px]">{driveFolderName || 'adminspace'}</code> klasörüne otomatik senkronize edilir.
               </p>
             </div>
           </div>
+        </div>
+
+        {/* GOOGLE DRIVE SYNC FOLDER SELECTOR */}
+        <div className="p-4 bg-indigo-50/50 dark:bg-indigo-950/30 border border-indigo-100 dark:border-indigo-900/60 rounded-2xl space-y-3">
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <div className="flex items-center gap-2">
+              <Folder className="w-5 h-5 text-indigo-600 dark:text-indigo-400" />
+              <h4 className="text-xs font-extrabold text-slate-900 dark:text-white">
+                Google Drive Senkronizasyon Klasörü Seçimi
+              </h4>
+            </div>
+            <span className="px-2.5 py-1 bg-indigo-100 dark:bg-indigo-900/60 text-indigo-700 dark:text-indigo-300 font-mono text-[11px] font-extrabold rounded-lg flex items-center gap-1.5">
+              <FolderCheck className="w-3.5 h-3.5 text-indigo-600 dark:text-indigo-400" />
+              <span>Etkin Klasör: {driveFolderName || 'adminspace'}</span>
+            </span>
+          </div>
+
+          <p className="text-[11px] text-slate-600 dark:text-slate-400">
+            Google Drive hesabınızda verilerinizin senkronize edileceği klasör adını özelleştirin veya mevcut Drive klasörlerinizden seçin.
+          </p>
+
+          <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2 pt-1">
+            <div className="relative flex-1">
+              <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none text-slate-400">
+                <Folder className="w-4 h-4 text-indigo-500" />
+              </div>
+              <input
+                type="text"
+                value={folderInput}
+                onChange={(e) => setFolderInput(e.target.value)}
+                placeholder="Örn: adminspace, ProjeVerileri, Notlarim..."
+                className="w-full pl-9 pr-3 py-2 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-xl text-xs text-slate-900 dark:text-white font-medium focus:outline-none focus:ring-2 focus:ring-indigo-500"
+              />
+            </div>
+
+            <button
+              type="button"
+              onClick={() => handleApplyFolderName(folderInput)}
+              disabled={!folderInput.trim() || folderInput.trim() === driveFolderName}
+              className="px-4 py-2 bg-indigo-600 hover:bg-indigo-700 disabled:opacity-40 text-white font-extrabold text-xs rounded-xl shadow-xs transition-all cursor-pointer flex items-center justify-center gap-1.5 shrink-0"
+            >
+              <Check className="w-4 h-4" />
+              <span>Klasörü Ayarla</span>
+            </button>
+          </div>
+
+          {/* Quick Folder Select Chips from user's Google Drive */}
+          {authStatus.isAuthenticated && (
+            <div className="space-y-1.5 pt-2 border-t border-indigo-100/60 dark:border-indigo-900/40">
+              <div className="flex items-center justify-between text-[11px] font-bold text-slate-600 dark:text-slate-400">
+                <span>Google Drive Hesabınızdaki Klasörler:</span>
+                {isLoadingFolders && (
+                  <span className="text-[10px] text-indigo-500 flex items-center gap-1">
+                    <RefreshCw className="w-3 h-3 animate-spin" /> Yükleniyor...
+                  </span>
+                )}
+              </div>
+
+              {driveFoldersList.length > 0 ? (
+                <div className="flex flex-wrap gap-1.5 max-h-28 overflow-y-auto p-1.5 bg-white/60 dark:bg-slate-900/40 border border-slate-200/60 dark:border-slate-800 rounded-xl">
+                  {driveFoldersList.map((f) => {
+                    const isSelected = f.name === driveFolderName;
+                    return (
+                      <button
+                        key={f.id}
+                        type="button"
+                        onClick={() => handleApplyFolderName(f.name)}
+                        className={`px-2.5 py-1 text-[11px] font-bold rounded-lg border transition-all flex items-center gap-1.5 cursor-pointer ${
+                          isSelected
+                            ? 'bg-indigo-600 text-white border-indigo-600 shadow-xs'
+                            : 'bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300 border-slate-200 dark:border-slate-700 hover:border-indigo-400 hover:text-indigo-600'
+                        }`}
+                      >
+                        <Folder className="w-3 h-3 shrink-0" />
+                        <span>{f.name}</span>
+                        {isSelected && <Check className="w-3 h-3 shrink-0" />}
+                      </button>
+                    );
+                  })}
+                </div>
+              ) : (
+                !isLoadingFolders && (
+                  <div className="text-[10px] text-slate-400 italic">
+                    Drive'ınızdaki klasörler listelendi. Yeni bir klasör adı yazıp "Klasörü Ayarla" butonuna basarak özel klasör oluşturabilirsiniz.
+                  </div>
+                )
+              )}
+            </div>
+          )}
+
+          {folderSaveStatus && (
+            <div className="text-xs font-extrabold text-emerald-600 dark:text-emerald-400 flex items-center gap-1.5 animate-in fade-in">
+              <CheckCircle2 className="w-4 h-4" />
+              <span>{folderSaveStatus}</span>
+            </div>
+          )}
         </div>
 
         {authStatus.isAuthenticated ? (
@@ -246,7 +385,7 @@ export const SettingsSection: React.FC<Props> = ({
                   <span className="text-indigo-600 dark:text-indigo-400 font-mono font-bold">{authStatus.user?.email || 'Aktif Oturum'}</span>
                 </div>
                 <p className="text-[11px] text-slate-600 dark:text-slate-400">
-                  Verileriniz Google Drive’daki <code className="bg-slate-100 dark:bg-slate-800 px-1.5 py-0.5 rounded text-indigo-600 dark:text-indigo-400 font-mono text-[11px]">adminspace</code> klasörünüzde saklanır. Değişiklik yaptığınızda üst menüdeki <strong>Eşitle</strong> butonu parlar. Butona basarak verilerinizi kolayca eşitleyebilirsiniz.
+                  Verileriniz Google Drive’daki <code className="bg-slate-100 dark:bg-slate-800 px-1.5 py-0.5 rounded text-indigo-600 dark:text-indigo-400 font-mono text-[11px]">{driveFolderName || 'adminspace'}</code> klasörünüzde saklanır. Değişiklik yaptığınızda üst menüdeki <strong>Eşitle</strong> butonu parlar. Butona basarak verilerinizi kolayca eşitleyebilirsiniz.
                 </p>
               </div>
 

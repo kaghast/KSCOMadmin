@@ -292,6 +292,13 @@ export const NoteModal: React.FC<Props> = ({
   const markerRef = useRef<L.Marker | null>(null);
   const savedMarkersRef = useRef<{ [key: string]: L.Marker }>({});
 
+  // Full screen map mode state & refs
+  const [isFullScreenMap, setIsFullScreenMap] = useState(false);
+  const fullScreenMapContainerRef = useRef<HTMLDivElement>(null);
+  const fullScreenMapInstanceRef = useRef<L.Map | null>(null);
+  const fullScreenMarkerRef = useRef<L.Marker | null>(null);
+  const fullScreenSavedMarkersRef = useRef<{ [key: string]: L.Marker }>({});
+
   // Deduplicated list of all previous location names & coordinates
   const allPreviousLocations = useMemo(() => {
     const locMap = new Map<string, NoteLocation>();
@@ -331,6 +338,9 @@ export const NoteModal: React.FC<Props> = ({
 
     if (mapInstanceRef.current) {
       mapInstanceRef.current.setView([loc.lat, loc.lng], 14);
+    }
+    if (fullScreenMapInstanceRef.current) {
+      fullScreenMapInstanceRef.current.setView([loc.lat, loc.lng], 14);
     }
   };
 
@@ -469,6 +479,7 @@ export const NoteModal: React.FC<Props> = ({
   // Cleanup Leaflet Map on close or unmount
   useEffect(() => {
     if (!isOpen) {
+      setIsFullScreenMap(false);
       if (mapInstanceRef.current) {
         try {
           mapInstanceRef.current.remove();
@@ -479,8 +490,166 @@ export const NoteModal: React.FC<Props> = ({
         markerRef.current = null;
         savedMarkersRef.current = {};
       }
+      if (fullScreenMapInstanceRef.current) {
+        try {
+          fullScreenMapInstanceRef.current.remove();
+        } catch (e) {
+          console.error(e);
+        }
+        fullScreenMapInstanceRef.current = null;
+        fullScreenMarkerRef.current = null;
+        fullScreenSavedMarkersRef.current = {};
+      }
     }
   }, [isOpen]);
+
+  // Cleanup full screen map instance when closing full screen mode
+  useEffect(() => {
+    if (!isFullScreenMap && fullScreenMapInstanceRef.current) {
+      try {
+        fullScreenMapInstanceRef.current.remove();
+      } catch (e) {
+        console.error(e);
+      }
+      fullScreenMapInstanceRef.current = null;
+      fullScreenMarkerRef.current = null;
+      fullScreenSavedMarkersRef.current = {};
+
+      // Invalidate inline map size after switching back to normal modal
+      setTimeout(() => {
+        if (mapInstanceRef.current) {
+          mapInstanceRef.current.invalidateSize();
+          if (location) {
+            mapInstanceRef.current.setView([location.lat, location.lng], 14);
+          }
+        }
+      }, 100);
+    }
+  }, [isFullScreenMap, location]);
+
+  // Full Screen Leaflet Map Initialization & Updates
+  useEffect(() => {
+    if (!isOpen || !isFullScreenMap || !fullScreenMapContainerRef.current) return;
+
+    const timer = setTimeout(() => {
+      if (!fullScreenMapContainerRef.current) return;
+
+      const initLat = location?.lat || 41.0082;
+      const initLng = location?.lng || 28.9784;
+
+      if (fullScreenMapInstanceRef.current) {
+        const container = fullScreenMapInstanceRef.current.getContainer();
+        if (!container || !fullScreenMapContainerRef.current.contains(container)) {
+          try {
+            fullScreenMapInstanceRef.current.remove();
+          } catch (e) {
+            console.error(e);
+          }
+          fullScreenMapInstanceRef.current = null;
+          fullScreenMarkerRef.current = null;
+          fullScreenSavedMarkersRef.current = {};
+        }
+      }
+
+      if (!fullScreenMapInstanceRef.current) {
+        const map = L.map(fullScreenMapContainerRef.current, {
+          center: [initLat, initLng],
+          zoom: location ? 14 : 11,
+          zoomControl: true,
+        });
+
+        L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+          attribution: '&copy; OpenStreetMap',
+        }).addTo(map);
+
+        const customIcon = L.divIcon({
+          className: 'custom-note-pin-fs',
+          html: `<div style="background-color: #4f46e5; width: 32px; height: 32px; border-radius: 50%; border: 3px solid white; box-shadow: 0 4px 12px rgba(79, 70, 229, 0.6); display: flex; align-items: center; justify-content: center;">
+                  <div style="width: 10px; height: 10px; background-color: white; border-radius: 50%;"></div>
+                </div>`,
+          iconSize: [32, 32],
+          iconAnchor: [16, 16],
+        });
+
+        map.on('click', (e: L.LeafletMouseEvent) => {
+          const { lat, lng } = e.latlng;
+          const newLocName = locationName.trim() || `Lokasyon (${lat.toFixed(3)}, ${lng.toFixed(3)})`;
+          const newLoc: NoteLocation = {
+            id: location?.id || `loc-${Date.now()}`,
+            name: newLocName,
+            lat,
+            lng,
+          };
+          setLocation(newLoc);
+
+          if (!fullScreenMarkerRef.current) {
+            fullScreenMarkerRef.current = L.marker([lat, lng], { icon: customIcon }).addTo(map);
+          } else {
+            fullScreenMarkerRef.current.setLatLng([lat, lng]);
+          }
+        });
+
+        fullScreenMapInstanceRef.current = map;
+      } else {
+        fullScreenMapInstanceRef.current.invalidateSize();
+      }
+
+      const map = fullScreenMapInstanceRef.current;
+      if (!map) return;
+
+      // Render saved markers
+      Object.values(fullScreenSavedMarkersRef.current).forEach((m) => m.remove());
+      fullScreenSavedMarkersRef.current = {};
+
+      const savedIcon = L.divIcon({
+        className: 'saved-note-pin-fs',
+        html: `<div style="background-color: #059669; width: 26px; height: 26px; border-radius: 50%; border: 2px solid white; box-shadow: 0 2px 6px rgba(0,0,0,0.3); display: flex; align-items: center; justify-content: center;">
+                <div style="width: 8px; height: 8px; background-color: white; border-radius: 50%;"></div>
+              </div>`,
+        iconSize: [26, 26],
+        iconAnchor: [13, 13],
+      });
+
+      allPreviousLocations.forEach((loc) => {
+        if (location && (location.id === loc.id || location.name.toLowerCase() === loc.name.toLowerCase())) {
+          return;
+        }
+
+        const marker = L.marker([loc.lat, loc.lng], { icon: savedIcon })
+          .addTo(map)
+          .bindTooltip(loc.name, { permanent: false, direction: 'top' });
+
+        marker.on('click', () => {
+          handleSelectPreviousLocation(loc);
+        });
+
+        fullScreenSavedMarkersRef.current[loc.id || loc.name] = marker;
+      });
+
+      if (location) {
+        map.setView([location.lat, location.lng], 14);
+        const activeIcon = L.divIcon({
+          className: 'custom-note-pin-active-fs',
+          html: `<div style="background-color: #4f46e5; width: 34px; height: 34px; border-radius: 50%; border: 3px solid white; box-shadow: 0 4px 12px rgba(79, 70, 229, 0.5); display: flex; align-items: center; justify-content: center;">
+                  <div style="width: 10px; height: 10px; background-color: white; border-radius: 50%;"></div>
+                </div>`,
+          iconSize: [34, 34],
+          iconAnchor: [17, 17],
+        });
+
+        if (!fullScreenMarkerRef.current) {
+          fullScreenMarkerRef.current = L.marker([location.lat, location.lng], { icon: activeIcon }).addTo(map);
+        } else {
+          fullScreenMarkerRef.current.setLatLng([location.lat, location.lng]);
+        }
+      } else if (fullScreenMarkerRef.current) {
+        fullScreenMarkerRef.current.remove();
+        fullScreenMarkerRef.current = null;
+      }
+    }, 120);
+
+    return () => clearTimeout(timer);
+  }, [isOpen, isFullScreenMap, location, allPreviousLocations]);
 
   // Leaflet Map Initialization & Updates
   useEffect(() => {
@@ -655,6 +824,9 @@ export const NoteModal: React.FC<Props> = ({
     if (mapInstanceRef.current) {
       mapInstanceRef.current.setView([lat, lng], 14);
     }
+    if (fullScreenMapInstanceRef.current) {
+      fullScreenMapInstanceRef.current.setView([lat, lng], 14);
+    }
   };
 
   // Get GPS Current Position
@@ -698,6 +870,9 @@ export const NoteModal: React.FC<Props> = ({
 
         if (mapInstanceRef.current) {
           mapInstanceRef.current.setView([lat, lng], 15);
+        }
+        if (fullScreenMapInstanceRef.current) {
+          fullScreenMapInstanceRef.current.setView([lat, lng], 15);
         }
       },
       (err) => {
@@ -1544,20 +1719,32 @@ export const NoteModal: React.FC<Props> = ({
                     )}
                   </div>
 
-                  <button
-                    type="button"
-                    onClick={handleGetCurrentPosition}
-                    disabled={isLocating}
-                    className="px-2.5 py-1.5 bg-indigo-600 hover:bg-indigo-700 text-white text-[11px] font-bold rounded-xl shadow-2xs flex items-center gap-1 transition-all cursor-pointer shrink-0 disabled:opacity-50"
-                    title="Mevcut GPS Konumumu Getir"
-                  >
-                    {isLocating ? (
-                      <Loader2 className="w-3.5 h-3.5 animate-spin" />
-                    ) : (
-                      <Compass className="w-3.5 h-3.5" />
-                    )}
-                    <span className="hidden sm:inline">Konum Al</span>
-                  </button>
+                  <div className="flex items-center gap-1.5 shrink-0">
+                    <button
+                      type="button"
+                      onClick={handleGetCurrentPosition}
+                      disabled={isLocating}
+                      className="px-2.5 py-1.5 bg-indigo-600 hover:bg-indigo-700 text-white text-[11px] font-bold rounded-xl shadow-2xs flex items-center gap-1 transition-all cursor-pointer shrink-0 disabled:opacity-50"
+                      title="Mevcut GPS Konumumu Getir"
+                    >
+                      {isLocating ? (
+                        <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                      ) : (
+                        <Compass className="w-3.5 h-3.5" />
+                      )}
+                      <span className="hidden sm:inline">Konum Al</span>
+                    </button>
+
+                    <button
+                      type="button"
+                      onClick={() => setIsFullScreenMap(true)}
+                      className="px-2.5 py-1.5 bg-indigo-50 hover:bg-indigo-100 text-indigo-700 border border-indigo-200 text-[11px] font-extrabold rounded-xl shadow-2xs flex items-center gap-1 transition-all cursor-pointer shrink-0"
+                      title="Haritayı Tam Ekran Aç ve Kolayca Pinle"
+                    >
+                      <Maximize2 className="w-3.5 h-3.5 text-indigo-600" />
+                      <span>Tam Ekran</span>
+                    </button>
+                  </div>
                 </div>
 
                 <input
@@ -1579,8 +1766,17 @@ export const NoteModal: React.FC<Props> = ({
                   className="w-full px-2.5 py-1 text-xs bg-slate-50 border border-slate-200 rounded-xl focus:outline-hidden text-slate-800 font-medium"
                 />
 
-                <div className="h-28 w-full rounded-xl overflow-hidden border border-slate-200 relative bg-slate-100 shadow-inner">
+                <div className="h-28 w-full rounded-xl overflow-hidden border border-slate-200 relative bg-slate-100 shadow-inner group">
                   <div ref={mapContainerRef} className="w-full h-full z-0" />
+                  <button
+                    type="button"
+                    onClick={() => setIsFullScreenMap(true)}
+                    className="absolute top-2 right-2 z-[10] px-2 py-1 bg-slate-900/85 hover:bg-slate-900 text-white text-[10px] font-extrabold rounded-lg shadow-md backdrop-blur-xs flex items-center gap-1 transition-all cursor-pointer border border-slate-700"
+                    title="Haritayı Tam Ekran Aç ve Kolayca Pinle"
+                  >
+                    <Maximize2 className="w-3 h-3 text-indigo-400" />
+                    <span>Tam Ekran Pinle</span>
+                  </button>
                 </div>
               </div>
             </div>
@@ -2148,6 +2344,180 @@ export const NoteModal: React.FC<Props> = ({
             </button>
           </div>
         </div>
+
+        {/* TAM EKRAN HARİTA & LOKASYON PİNLEME MODAL OVERLAY */}
+        {isFullScreenMap && (
+          <div className="fixed inset-0 z-[200] bg-slate-950/95 flex flex-col p-3 sm:p-5 backdrop-blur-md animate-in fade-in duration-200 text-slate-100">
+            {/* Header Bar */}
+            <div className="flex flex-wrap items-center justify-between gap-3 pb-3 border-b border-slate-800 shrink-0">
+              <div className="flex items-center gap-2.5">
+                <div className="p-2.5 bg-indigo-600/30 text-indigo-400 border border-indigo-500/40 rounded-2xl shadow-lg">
+                  <MapPin className="w-5 h-5" />
+                </div>
+                <div>
+                  <h3 className="text-sm sm:text-base font-black text-white flex items-center gap-2">
+                    Tam Ekran Lokasyon Pinleme
+                  </h3>
+                  <p className="text-[11px] text-slate-400">
+                    Haritaya tıklayarak nokta seçin, arama yapın veya GPS konumunuzu iğneleyin.
+                  </p>
+                </div>
+              </div>
+
+              <div className="flex items-center gap-2">
+                {/* Pinned location info badge */}
+                {location ? (
+                  <div className="hidden sm:flex items-center gap-2 px-3 py-1.5 bg-emerald-950/90 border border-emerald-500/50 text-emerald-300 rounded-xl text-xs font-extrabold shadow-lg">
+                    <CheckCircle2 className="w-4 h-4 text-emerald-400 shrink-0" />
+                    <span className="truncate max-w-[200px]">{locationName || location.name}</span>
+                    <span className="text-[10px] text-emerald-400/80 font-mono">
+                      ({location.lat.toFixed(3)}, {location.lng.toFixed(3)})
+                    </span>
+                  </div>
+                ) : (
+                  <div className="hidden sm:flex items-center gap-1.5 px-3 py-1.5 bg-amber-950/80 border border-amber-500/40 text-amber-300 rounded-xl text-xs font-bold">
+                    <Compass className="w-4 h-4 text-amber-400 shrink-0 animate-pulse" />
+                    <span>Haritadan Bir Nokta Seçin</span>
+                  </div>
+                )}
+
+                <button
+                  type="button"
+                  onClick={() => setIsFullScreenMap(false)}
+                  className="px-4 py-2 bg-gradient-to-r from-emerald-600 to-indigo-600 hover:from-emerald-500 hover:to-indigo-500 text-white font-extrabold text-xs rounded-xl shadow-lg flex items-center gap-1.5 transition-all cursor-pointer"
+                >
+                  <CheckCircle2 className="w-4 h-4" />
+                  <span>Pinle & Forma Dön</span>
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => setIsFullScreenMap(false)}
+                  className="p-2 bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-white rounded-xl transition-all cursor-pointer"
+                  title="Tam Ekrandan Çık"
+                >
+                  <X className="w-5 h-5" />
+                </button>
+              </div>
+            </div>
+
+            {/* Toolbar: Search, GPS, Name Input, Saved Places */}
+            <div className="py-3 flex flex-wrap items-center gap-2.5 shrink-0">
+              {/* Search Bar */}
+              <div className="relative flex-1 min-w-[260px]">
+                <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none text-slate-400">
+                  <Search className="w-4 h-4 text-indigo-400" />
+                </div>
+                <input
+                  type="text"
+                  value={placeQuery}
+                  onChange={(e) => handleSearchPlaces(e.target.value)}
+                  placeholder="Adres veya mekan ara (Örn: Kadıköy Sahil, Taksim...)"
+                  className="w-full pl-9 pr-8 py-2 bg-slate-900 border border-slate-700 rounded-xl text-xs text-white placeholder-slate-500 font-medium focus:outline-hidden focus:ring-2 focus:ring-indigo-500"
+                />
+                {isSearchingPlace && (
+                  <div className="absolute inset-y-0 right-0 pr-3 flex items-center pointer-events-none">
+                    <Loader2 className="w-4 h-4 text-indigo-400 animate-spin" />
+                  </div>
+                )}
+
+                {/* Search Autocomplete Results Dropdown */}
+                {showPlaceDropdown && placeResults.length > 0 && (
+                  <div className="absolute top-full left-0 right-0 mt-1 bg-slate-900 border border-slate-700 rounded-xl shadow-2xl z-50 max-h-56 overflow-y-auto divide-y divide-slate-800">
+                    {placeResults.map((p, idx) => (
+                      <div
+                        key={idx}
+                        onClick={() => handleSelectPlace(p)}
+                        className="p-2.5 hover:bg-slate-800 transition-colors cursor-pointer text-xs flex items-start gap-2"
+                      >
+                        <MapPin className="w-4 h-4 text-indigo-400 shrink-0 mt-0.5" />
+                        <div className="min-w-0">
+                          <div className="font-bold text-white truncate">{p.display_name.split(',')[0]}</div>
+                          <div className="text-[10px] text-slate-400 truncate">{p.display_name}</div>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+
+              {/* Pin Location Name Input */}
+              <div className="w-48 sm:w-64">
+                <input
+                  type="text"
+                  value={locationName}
+                  onChange={(e) => {
+                    const val = e.target.value;
+                    setLocationName(val);
+                    if (location) {
+                      setLocation({ ...location, name: val });
+                    }
+                  }}
+                  placeholder="Lokasyon Adı (Örn: Kadıköy Ofis)"
+                  className="w-full px-3 py-2 bg-slate-900 border border-slate-700 rounded-xl text-xs text-white placeholder-slate-500 font-medium focus:outline-hidden focus:ring-2 focus:ring-indigo-500"
+                />
+              </div>
+
+              {/* GPS Geolocation Button */}
+              <button
+                type="button"
+                onClick={handleGetCurrentPosition}
+                disabled={isLocating}
+                className="px-3.5 py-2 bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-extrabold rounded-xl shadow-md flex items-center gap-1.5 transition-all cursor-pointer shrink-0 disabled:opacity-50"
+              >
+                {isLocating ? <Loader2 className="w-4 h-4 animate-spin" /> : <Compass className="w-4 h-4" />}
+                <span>GPS Konumumu Al</span>
+              </button>
+
+              {/* Saved Locations Quick Selector */}
+              {allPreviousLocations.length > 0 && (
+                <select
+                  onChange={(e) => {
+                    const found = allPreviousLocations.find((l) => l.id === e.target.value || l.name === e.target.value);
+                    if (found) handleSelectPreviousLocation(found);
+                  }}
+                  className="px-3 py-2 bg-slate-900 border border-slate-700 text-slate-200 rounded-xl text-xs font-medium focus:outline-hidden focus:ring-2 focus:ring-indigo-500"
+                  value={location?.id || ''}
+                >
+                  <option value="">-- Kayıtlı Konum Seç --</option>
+                  {allPreviousLocations.map((loc, i) => (
+                    <option key={i} value={loc.id || loc.name}>
+                      📍 {loc.name}
+                    </option>
+                  ))}
+                </select>
+              )}
+            </div>
+
+            {/* Map Container Box */}
+            <div className="flex-1 min-h-0 w-full rounded-2xl overflow-hidden border border-slate-800 relative bg-slate-900 shadow-2xl">
+              <div ref={fullScreenMapContainerRef} className="w-full h-full z-0" />
+
+              {/* Floating Bottom Action Banner */}
+              <div className="absolute bottom-4 left-1/2 -translate-x-1/2 z-[1000] px-5 py-2.5 bg-slate-900/90 border border-slate-700/80 backdrop-blur-md rounded-2xl shadow-2xl text-center flex flex-wrap items-center justify-center gap-3 max-w-[90vw]">
+                <span className="text-xs font-bold text-slate-200 flex items-center gap-1.5">
+                  {location ? (
+                    <span className="text-emerald-400 font-extrabold flex items-center gap-1.5">
+                      <CheckCircle2 className="w-4 h-4" />
+                      <span>{locationName || location.name} seçildi ({location.lat.toFixed(3)}, {location.lng.toFixed(3)})</span>
+                    </span>
+                  ) : (
+                    <span>📌 Haritaya tıklayarak yeni bir konum iğneleyin.</span>
+                  )}
+                </span>
+
+                <button
+                  type="button"
+                  onClick={() => setIsFullScreenMap(false)}
+                  className="px-4 py-1.5 bg-emerald-600 hover:bg-emerald-500 text-white font-black text-xs rounded-xl shadow-lg transition-all cursor-pointer flex items-center gap-1.5"
+                >
+                  <Check className="w-4 h-4" />
+                  <span>Onayla ve Forma Dön</span>
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
       </div>
     </div>
   );

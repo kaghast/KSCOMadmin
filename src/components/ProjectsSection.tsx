@@ -611,7 +611,18 @@ export const ProjectsSection: React.FC<Props> = ({
   );
 
   const linkedContactsList = combinedContactIds
-    .map((resName) => allContactsMap.get(resName))
+    .map((resName) => {
+      const found = allContactsMap.get(resName);
+      if (found) return found;
+      return {
+        resourceName: resName,
+        displayName: resName.startsWith('people/')
+          ? `Kişi (${resName.replace('people/', '')})`
+          : resName,
+        email: '',
+        phone: '',
+      };
+    })
     .filter(Boolean) as ContactItem[];
 
   // Handle Export Markdown to Google Drive
@@ -1728,7 +1739,18 @@ export const ProjectsSection: React.FC<Props> = ({
         );
 
         const cardLinkedContactsList = cardContactIds
-          .map((resName) => allContactsMap.get(resName))
+          .map((resName) => {
+            const found = allContactsMap.get(resName);
+            if (found) return found;
+            return {
+              resourceName: resName,
+              displayName: resName.startsWith('people/')
+                ? `Kişi (${resName.replace('people/', '')})`
+                : resName,
+              email: '',
+              phone: '',
+            };
+          })
           .filter(Boolean) as ContactItem[];
 
         return (
@@ -2754,7 +2776,9 @@ export const ProjectsSection: React.FC<Props> = ({
                   )}
 
                   {remoteEmails.map((e) => {
-                    const isLinked = activeProject?.linkedEmailIds?.includes(e.id);
+                    const isLinked = detailTask
+                      ? detailTask.linkedEmailIds?.includes(e.id)
+                      : activeProject?.linkedEmailIds?.includes(e.id);
                     return (
                       <div
                         key={e.id}
@@ -2836,7 +2860,9 @@ export const ProjectsSection: React.FC<Props> = ({
                   )}
 
                   {remoteEvents.map((ev) => {
-                    const isLinked = activeProject?.linkedEventIds?.includes(ev.id);
+                    const isLinked = detailTask
+                      ? detailTask.linkedEventIds?.includes(ev.id)
+                      : activeProject?.linkedEventIds?.includes(ev.id);
                     return (
                       <div
                         key={ev.id}
@@ -2916,7 +2942,9 @@ export const ProjectsSection: React.FC<Props> = ({
                   )}
 
                   {remoteDriveFiles.map((f) => {
-                    const isLinked = activeProject?.linkedDriveFileIds?.includes(f.id);
+                    const isLinked = detailTask
+                      ? detailTask.linkedDriveFileIds?.includes(f.id)
+                      : activeProject?.linkedDriveFileIds?.includes(f.id);
                     const fileUrl =
                       f.webViewLink && f.webViewLink !== '#'
                         ? f.webViewLink
@@ -3007,9 +3035,9 @@ export const ProjectsSection: React.FC<Props> = ({
                   )}
 
                   {remoteContacts.map((c) => {
-                    const isLinked = activeProject?.linkedContactResourceNames?.includes(
-                      c.resourceName
-                    );
+                    const isLinked = detailTask
+                      ? detailTask.linkedContactResourceNames?.includes(c.resourceName)
+                      : activeProject?.linkedContactResourceNames?.includes(c.resourceName);
                     const contactUrl = c.email
                       ? `mailto:${c.email}`
                       : `https://contacts.google.com/search/${encodeURIComponent(c.displayName)}`;

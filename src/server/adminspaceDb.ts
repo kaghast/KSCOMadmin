@@ -903,13 +903,28 @@ export function deleteNoteFromDb(id: string) {
   saveDbToDisk();
 }
 
-// Helper function to find or create a single 'adminspace' folder in Google Drive
+// Helper function to find or create the sync folder in Google Drive
 // Prevents duplicate folder creation due to race conditions and cleans up any existing duplicate folders in Drive
 let cachedAdminSpaceFolderId: string | null = null;
 let cachedAdminSpaceFolderLink: string | null = null;
+let cachedAdminSpaceFolderName: string | null = null;
 let pendingFolderPromise: Promise<{ folderId: string; folderLink?: string } | null> | null = null;
 
+export function clearAdminSpaceFolderCache() {
+  cachedAdminSpaceFolderId = null;
+  cachedAdminSpaceFolderLink = null;
+  cachedAdminSpaceFolderName = null;
+}
+
 export async function getOrCreateAdminSpaceFolder(drive: any): Promise<{ folderId: string; folderLink?: string } | null> {
+  const targetFolderName = (getSettingFromDb('driveFolderName') || 'adminspace').trim() || 'adminspace';
+
+  if (cachedAdminSpaceFolderName !== targetFolderName) {
+    cachedAdminSpaceFolderId = null;
+    cachedAdminSpaceFolderLink = null;
+    cachedAdminSpaceFolderName = targetFolderName;
+  }
+
   if (cachedAdminSpaceFolderId) {
     return { folderId: cachedAdminSpaceFolderId, folderLink: cachedAdminSpaceFolderLink || undefined };
   }
@@ -920,9 +935,9 @@ export async function getOrCreateAdminSpaceFolder(drive: any): Promise<{ folderI
 
   pendingFolderPromise = (async () => {
     try {
-      // Search for all non-trashed 'adminspace' folders in Google Drive
+      // Search for all non-trashed target folders in Google Drive
       const searchRes = await drive.files.list({
-        q: "mimeType = 'application/vnd.google-apps.folder' and name = 'adminspace' and trashed = false",
+        q: `mimeType = 'application/vnd.google-apps.folder' and name = '${targetFolderName.replace(/'/g, "\\'")}' and trashed = false`,
         fields: 'files(id, name, webViewLink, createdTime)',
         orderBy: 'createdTime desc',
       });
@@ -933,10 +948,11 @@ export async function getOrCreateAdminSpaceFolder(drive: any): Promise<{ folderI
         const primaryFolder = files[0];
         cachedAdminSpaceFolderId = primaryFolder.id!;
         cachedAdminSpaceFolderLink = primaryFolder.webViewLink || null;
+        cachedAdminSpaceFolderName = targetFolderName;
 
-        // Clean up any duplicate 'adminspace' folders in Google Drive
+        // Clean up any duplicate folders with the same name in Google Drive
         if (files.length > 1) {
-          console.warn(`[Drive Sync] Found ${files.length} 'adminspace' folders in Google Drive. Keeping primary (${primaryFolder.id}) and trashing duplicates...`);
+          console.warn(`[Drive Sync] Found ${files.length} '${targetFolderName}' folders in Google Drive. Keeping primary (${primaryFolder.id}) and trashing duplicates...`);
           for (let i = 1; i < files.length; i++) {
             const dup = files[i];
             if (dup.id) {
@@ -945,7 +961,7 @@ export async function getOrCreateAdminSpaceFolder(drive: any): Promise<{ folderI
                   fileId: dup.id,
                   requestBody: { trashed: true },
                 });
-                console.log(`[Drive Sync] Moved duplicate 'adminspace' folder (${dup.id}) to trash.`);
+                console.log(`[Drive Sync] Moved duplicate '${targetFolderName}' folder (${dup.id}) to trash.`);
               } catch (e) {
                 console.error(`[Drive Sync] Could not trash duplicate folder ${dup.id}:`, e);
               }
@@ -956,10 +972,10 @@ export async function getOrCreateAdminSpaceFolder(drive: any): Promise<{ folderI
         return { folderId: primaryFolder.id!, folderLink: primaryFolder.webViewLink || undefined };
       }
 
-      // If no 'adminspace' folder exists, create one
+      // If no folder exists, create one
       const createFolderRes = await drive.files.create({
         requestBody: {
-          name: 'adminspace',
+          name: targetFolderName,
           mimeType: 'application/vnd.google-apps.folder',
         },
         fields: 'id, webViewLink',
@@ -971,12 +987,13 @@ export async function getOrCreateAdminSpaceFolder(drive: any): Promise<{ folderI
       if (folderId) {
         cachedAdminSpaceFolderId = folderId;
         cachedAdminSpaceFolderLink = folderLink || null;
+        cachedAdminSpaceFolderName = targetFolderName;
         return { folderId, folderLink: folderLink || undefined };
       }
 
       return null;
     } catch (err) {
-      console.error('Error getting or creating adminspace folder in Google Drive:', err);
+      console.error(`Error getting or creating ${targetFolderName} folder in Google Drive:`, err);
       return null;
     } finally {
       pendingFolderPromise = null;
@@ -1863,6 +1880,9 @@ export function saveSettingToDb(key: string, value: string) {
   if (!dbInstance) return;
   try {
     dbInstance.run('INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)', [key, value]);
+    if (key === 'driveFolderName') {
+      clearAdminSpaceFolderCache();
+    }
     markLocalDataModified();
     saveDbToDisk();
   } catch (err) {

@@ -192,6 +192,9 @@ export default function App() {
   const [timezone, setTimezone] = useState<string>(() => {
     return localStorage.getItem('adminspace_timezone') || 'Europe/Istanbul';
   });
+  const [driveFolderName, setDriveFolderName] = useState<string>(() => {
+    return localStorage.getItem('adminspace_drive_folder_name') || 'adminspace';
+  });
 
   useEffect(() => {
     if (theme === 'dark') {
@@ -211,8 +214,13 @@ export default function App() {
     fetch('/api/adminspace/settings')
       .then((res) => res.json())
       .then((data) => {
-        if (data && data.settings && data.settings.timezone) {
-          setTimezone(data.settings.timezone);
+        if (data && data.settings) {
+          if (data.settings.timezone) {
+            setTimezone(data.settings.timezone);
+          }
+          if (data.settings.driveFolderName) {
+            setDriveFolderName(data.settings.driveFolderName);
+          }
         }
       })
       .catch(() => {});
@@ -227,6 +235,16 @@ export default function App() {
       body: JSON.stringify({ key: 'timezone', value: timezone }),
     }).catch(() => {});
   }, [timezone]);
+
+  useEffect(() => {
+    localStorage.setItem('adminspace_drive_folder_name', driveFolderName);
+    // Persist driveFolderName setting to backend DB
+    fetch('/api/adminspace/settings', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ key: 'driveFolderName', value: driveFolderName }),
+    }).catch(() => {});
+  }, [driveFolderName]);
 
   // Auth State
   const [authStatus, setAuthStatus] = useState<AuthStatus>({
@@ -652,7 +670,18 @@ export default function App() {
       const linkedEmailsList = emails.filter((e) => proj.linkedEmailIds?.includes(e.id));
       const linkedEventsList = calendarEvents.filter((evt) => proj.linkedEventIds?.includes(evt.id));
       const linkedDriveFilesList = driveFiles.filter((f) => proj.linkedDriveFileIds?.includes(f.id));
-      const linkedContactsList = contacts.filter((c) => proj.linkedContactResourceNames?.includes(c.resourceName));
+      const linkedContactsList = (proj.linkedContactResourceNames || []).map((resName) => {
+        const found = contacts.find((c) => c.resourceName === resName);
+        if (found) return found;
+        return {
+          resourceName: resName,
+          displayName: resName.startsWith('people/')
+            ? `Kişi (${resName.replace('people/', '')})`
+            : resName,
+          email: '',
+          phone: '',
+        };
+      });
 
       await fetch(`/api/projects/${projectId}/export-markdown`, {
         method: 'POST',
@@ -1402,6 +1431,8 @@ export default function App() {
               onLanguageChange={setLanguage}
               timezone={timezone}
               onTimezoneChange={setTimezone}
+              driveFolderName={driveFolderName}
+              onDriveFolderNameChange={setDriveFolderName}
               noteTypes={noteTypes}
               onSaveNoteType={handleSaveNoteType}
               onDeleteNoteType={handleDeleteNoteType}

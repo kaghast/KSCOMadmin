@@ -2208,6 +2208,34 @@ app.post('/api/adminspace/settings', async (req, res) => {
   res.json({ success: true, key, value });
 });
 
+app.get('/api/adminspace/drive-folders', async (req, res) => {
+  const authClient = getAuthenticatedClient(req);
+  if (!authClient) {
+    return res.status(401).json({ error: 'Google OAuth oturumu gerekli' });
+  }
+
+  try {
+    const drive = google.drive({ version: 'v3', auth: authClient });
+    const response = await drive.files.list({
+      q: "mimeType = 'application/vnd.google-apps.folder' and trashed = false",
+      fields: 'files(id, name, webViewLink, createdTime, modifiedTime)',
+      orderBy: 'name',
+      pageSize: 100,
+    });
+
+    const folders = (response.data.files || []).map((f) => ({
+      id: f.id,
+      name: f.name,
+      link: f.webViewLink,
+    }));
+
+    res.json({ folders });
+  } catch (err: any) {
+    console.error('Error fetching Google Drive folders:', err);
+    res.status(500).json({ error: 'Google Drive klasörleri alınamadı.' });
+  }
+});
+
 // Global Express Error Handler
 app.use((err: any, req: express.Request, res: express.Response, next: express.NextFunction) => {
   console.error('Unhandled Express Error:', err);
